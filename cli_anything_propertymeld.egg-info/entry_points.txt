@@ -1,0 +1,2 @@
+[console_scripts]
+pm = cli_anything.propertymeld.cli:cli
