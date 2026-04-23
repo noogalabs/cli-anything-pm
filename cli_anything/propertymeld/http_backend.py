@@ -1,8 +1,5 @@
 """
-Property Meld plain-HTTP backend.
-
-Uses cookie-based session auth (no Playwright at runtime) for browser-session
-API endpoints that the Nexus API does not expose.
+Property Meld plain-HTTP backend — cookie-based session auth, no Playwright.
 
 Auth flow:
   1. Load sessionid cookie from PM_CREDS_PATH JSON file.
@@ -10,7 +7,9 @@ Auth flow:
   3. GET requests need only the sessionid cookie.
   4. POST/PUT/PATCH also need X-CSRFToken header.
 
-Endpoint base: https://app.propertymeld.com/{MULTITENANT}/m/{MULTITENANT}/api/
+Two API contexts:
+  Management: https://app.propertymeld.com/{MULTITENANT}/m/{MULTITENANT}/api/
+  Nexus Partner: https://app.propertymeld.com/{NEXUS_ACCOUNT_ID}/n/{NEXUS_ACCOUNT_ID}/api/
 """
 import json
 import os
@@ -25,7 +24,9 @@ CREDS_PATH = os.environ.get(
     "PM_CREDS_PATH", os.path.expanduser("~/.claude/credentials/property-meld.json")
 )
 MULTITENANT = os.environ.get("PM_MULTITENANT_ID", "3287")
+NEXUS_ACCOUNT_ID = os.environ.get("PM_NEXUS_ACCOUNT_ID", "338")
 BASE = f"https://app.propertymeld.com/{MULTITENANT}/m/{MULTITENANT}"
+NEXUS_BASE = f"https://app.propertymeld.com/{NEXUS_ACCOUNT_ID}/n/{NEXUS_ACCOUNT_ID}"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
 _csrf_cache: dict = {}
@@ -99,6 +100,100 @@ def _http_post(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> An
         f"{BASE}/api/{path}",
         data=data,
         method="POST",
+        headers={
+            "Cookie": cookie_hdr,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-CSRFToken": csrf_token,
+            "X-Requested-With": "XMLHttpRequest",
+            "User-Agent": UA,
+            "Referer": f"{BASE}/melds/",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="ignore")
+        print(json.dumps({"error": f"HTTP {e.code}", "detail": body[:300]}), file=sys.stderr)
+        sys.exit(1)
+
+
+def _get_nexus_csrf(cookie_hdr: str) -> str:
+    """Fetch and cache CSRF token from the Nexus Partner API keys page."""
+    if _csrf_cache.get("nexus_token"):
+        return _csrf_cache["nexus_token"]
+
+    req = urllib.request.Request(
+        f"{NEXUS_BASE}/nexus/api-keys/",
+        headers={"Cookie": cookie_hdr, "User-Agent": UA, "Accept": "text/html"},
+    )
+    with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
+        html = resp.read().decode("utf-8", errors="ignore")
+
+    m = re.search(r"window\.PM\.csrf_token\s*=\s*[\"']([\w-]+)[\"']", html)
+    if not m:
+        print(json.dumps({"error": "Could not extract CSRF token from Nexus page"}), file=sys.stderr)
+        sys.exit(2)
+
+    _csrf_cache["nexus_token"] = m.group(1)
+    return _csrf_cache["nexus_token"]
+
+
+def _http_get_nexus(path: str, cookie_hdr: str) -> Any:
+    """GET from the Nexus Partner context (/338/n/338/api/...)."""
+    req = urllib.request.Request(
+        f"{NEXUS_BASE}/api/{path}",
+        headers={
+            "Cookie": cookie_hdr,
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "User-Agent": UA,
+            "Referer": f"{NEXUS_BASE}/nexus/api-keys/",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="ignore")
+        print(json.dumps({"error": f"HTTP {e.code}", "detail": body[:300]}), file=sys.stderr)
+        sys.exit(1)
+
+
+def _http_post_nexus(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> Any:
+    """POST to the Nexus Partner context (/338/n/338/api/...)."""
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        f"{NEXUS_BASE}/api/{path}",
+        data=data,
+        method="POST",
+        headers={
+            "Cookie": cookie_hdr,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-CSRFToken": csrf_token,
+            "X-Requested-With": "XMLHttpRequest",
+            "User-Agent": UA,
+            "Referer": f"{NEXUS_BASE}/nexus/api-keys/",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="ignore")
+        print(json.dumps({"error": f"HTTP {e.code}", "detail": body[:300]}), file=sys.stderr)
+        sys.exit(1)
+
+
+def _http_patch(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> Any:
+    """PATCH a browser-session API path, return parsed JSON."""
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        f"{BASE}/api/{path}",
+        data=data,
+        method="PATCH",
         headers={
             "Cookie": cookie_hdr,
             "Content-Type": "application/json",
@@ -210,4 +305,88 @@ def clone_meld(meld_id: str, brief_description: Optional[str] = None) -> dict:
         "new_meld_id": new_id,
         "brief_description": desc,
         "reference_id": result.get("reference_id"),
+    }
+
+
+def assign_tech(meld_id: str, tech_name: str) -> dict:
+    """Assign an in-house tech to a meld by name (plain HTTP, no Playwright).
+
+    Args:
+        meld_id: Meld ID to assign the tech to.
+        tech_name: Partial name match (case-insensitive). e.g. "Carlos" or "Carlos Calel".
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+
+    agents = _http_get("agents/?limit=100", cookie_hdr)
+    if isinstance(agents, dict):
+        agents = agents.get("results", [])
+
+    tech_lower = tech_name.lower()
+    match = None
+    for agent in agents:
+        full_name = f"{agent.get('first_name', '')} {agent.get('last_name', '')}".lower().strip()
+        if tech_lower in full_name or full_name.startswith(tech_lower):
+            match = agent
+            break
+
+    if not match:
+        available = ", ".join(
+            f"{a.get('first_name', '')} {a.get('last_name', '')}".strip()
+            for a in agents
+        )
+        return {"ok": False, "error": f"Tech '{tech_name}' not found.", "available": available}
+
+    agent_obj = dict(match)
+    agent_obj["type"] = "ManagementAgent"
+    agent_obj["composite_id"] = f"2-{match['id']}"
+
+    _http_patch(
+        f"melds/{meld_id}/assign-maintenance/",
+        {"maintenance": [agent_obj]},
+        cookie_hdr,
+        csrf_token,
+    )
+    return {
+        "ok": True,
+        "meld_id": meld_id,
+        "assigned_to": f"{match.get('first_name', '')} {match.get('last_name', '')}".strip(),
+        "agent_id": match["id"],
+    }
+
+
+def list_api_keys() -> dict:
+    """List existing Nexus partner API keys (client IDs only — secrets not shown)."""
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    data = _http_get_nexus("nexus/api-keys/", cookie_hdr)
+    keys = [
+        {
+            "id": k["id"],
+            "friendly_name": k.get("friendly_name", ""),
+            "created": k.get("created", ""),
+            "client_id": k.get("oauth_app", {}).get("client_id", ""),
+            "is_active": k.get("is_active", True),
+        }
+        for k in (data if isinstance(data, list) else [])
+    ]
+    return {"ok": True, "count": len(keys), "keys": keys}
+
+
+def rotate_api_key(key_name: Optional[str] = None) -> dict:
+    """Create a new Nexus partner API key. Returns client_id and client_secret (shown once)."""
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_nexus_csrf(cookie_hdr)
+    payload = {"friendly_name": key_name or "Ascend Property Management (via API)"}
+    result = _http_post_nexus("nexus/api-keys/", payload, cookie_hdr, csrf_token)
+    oauth = result.get("oauth_app", {})
+    return {
+        "ok": True,
+        "key_id": result.get("id"),
+        "friendly_name": result.get("friendly_name"),
+        "client_id": oauth.get("client_id"),
+        "client_secret": oauth.get("client_secret"),
+        "note": "client_secret shown once — store it immediately",
     }
