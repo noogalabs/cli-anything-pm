@@ -17,7 +17,7 @@ import sys
 
 import click
 
-from . import api_backend, browser_backend, http_backend
+from . import api_backend, http_backend
 from .utils import output_json
 
 
@@ -135,8 +135,8 @@ def list_vendors(limit, as_json):
 @click.option("--tech", required=True, help="Tech name (partial match ok)")
 @click.option("--json", "as_json", is_flag=True, default=True)
 def assign_tech(work_order_id, tech, as_json):
-    """Assign an in-house tech to a work order (browser backend)."""
-    result = browser_backend.assign_tech(work_order_id, tech)
+    """Assign an in-house tech to a work order (plain HTTP, no Playwright)."""
+    result = http_backend.assign_tech(work_order_id, tech)
     output_json(result)
 
 
@@ -155,17 +155,16 @@ def api_keys():
 def rotate_api_key(update_railway, as_json):
     """Create a new Nexus partner API key and output client_id + client_secret.
 
-    Automates: Switch Account → Nexus Partner → API Keys → Create API Key.
     The client_secret is shown ONCE — this command captures it for you.
 
     With --update-railway, also runs:
       railway variables --set PM_NEXUS_CLIENT_ID=<new_id>
       railway variables --set PM_NEXUS_CLIENT_SECRET=<new_secret>
     """
-    import subprocess
-    result = browser_backend.rotate_api_key()
+    result = http_backend.rotate_api_key()
 
     if result.get("ok") and update_railway:
+        import subprocess
         client_id = result["client_id"]
         client_secret = result["client_secret"]
         for var, val in [("PM_NEXUS_CLIENT_ID", client_id), ("PM_NEXUS_CLIENT_SECRET", client_secret)]:
@@ -184,7 +183,7 @@ def rotate_api_key(update_railway, as_json):
 @click.option("--json", "as_json", is_flag=True, default=True)
 def list_api_keys(as_json):
     """List existing Nexus partner API keys (client IDs only — secrets not shown)."""
-    result = browser_backend.list_api_keys()
+    result = http_backend.list_api_keys()
     output_json(result)
 
 
