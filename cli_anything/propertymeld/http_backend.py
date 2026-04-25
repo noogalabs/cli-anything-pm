@@ -187,6 +187,32 @@ def _http_post_nexus(path: str, payload: dict, cookie_hdr: str, csrf_token: str)
         sys.exit(1)
 
 
+def _http_put(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> Any:
+    """PUT to a browser-session API path, return parsed JSON."""
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        f"{BASE}/api/{path}",
+        data=data,
+        method="PUT",
+        headers={
+            "Cookie": cookie_hdr,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-CSRFToken": csrf_token,
+            "X-Requested-With": "XMLHttpRequest",
+            "User-Agent": UA,
+            "Referer": f"{BASE}/melds/",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="ignore")
+        print(json.dumps({"error": f"HTTP {e.code}", "detail": body[:300]}), file=sys.stderr)
+        sys.exit(1)
+
+
 def _http_patch(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> Any:
     """PATCH a browser-session API path, return parsed JSON."""
     data = json.dumps(payload).encode()
@@ -390,3 +416,141 @@ def rotate_api_key(key_name: Optional[str] = None) -> dict:
         "client_secret": oauth.get("client_secret"),
         "note": "client_secret shown once — store it immediately",
     }
+
+
+def merge_meld(meld_id: str, into_meld_id: str) -> dict:
+    """Merge source meld into destination meld. Both melds must be at the same unit/property.
+
+    The source meld will be marked MANAGER_CANCELED with "(Merged)" in PM.
+
+    Args:
+        meld_id: Source meld ID to merge (will be cancelled).
+        into_meld_id: Destination meld ID to merge into (absorbs the source).
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_post(f"melds/{meld_id}/merge/", {"meld": int(into_meld_id)}, cookie_hdr, csrf_token)
+    return {"ok": True, "merged_meld_id": meld_id, "into_meld_id": into_meld_id, "result": result}
+
+
+def complete_meld(meld_id: str, completion_notes: Optional[str] = None) -> dict:
+    """Mark a meld complete from the manager side.
+
+    Meld must be in PENDING_COMPLETION status. Raises HTTP 403 otherwise.
+
+    Args:
+        meld_id: Meld ID to mark complete.
+        completion_notes: Optional completion notes.
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload: dict = {}
+    if completion_notes:
+        payload["completion_notes"] = completion_notes
+    result = _http_patch(f"melds/{meld_id}/complete/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "meld_id": meld_id, "completion_notes": completion_notes, "result": result}
+
+
+def cancel_meld(meld_id: str, reason: Optional[str] = None) -> dict:
+    """Cancel a meld from the manager side.
+
+    Args:
+        meld_id: Meld ID to cancel.
+        reason: Cancellation reason (recommended for audit trail).
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload: dict = {}
+    if reason:
+        payload["manager_cancellation_reason"] = reason
+    result = _http_patch(f"melds/{meld_id}/cancel/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "meld_id": meld_id, "reason": reason, "result": result}
+
+
+def schedule_appointment(meld_id: str, dtstart: str, duration_hours: float = 2.0) -> dict:
+    """Schedule an in-house tech appointment window on a meld.
+
+    Args:
+        meld_id: Meld ID.
+        dtstart: ISO 8601 datetime string, e.g. '2026-04-27T14:00:00-04:00'.
+        duration_hours: Appointment duration in hours (default 2).
+
+    The meld must have an in-house tech assigned — PM creates the managementappointment
+    object at assignment time. This sets the availability_segment (the actual time window).
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+
+    # Get the management appointment ID from the meld
+    meld = _http_get(f"melds/{meld_id}/", cookie_hdr)
+    appts = meld.get("managementappointment", [])
+    if not appts:
+        return {"ok": False, "error": "No in-house tech assignment found on this meld"}
+    appt_id = appts[0]["id"]
+
+    duration_seconds = int(duration_hours * 3600)
+    payload = {
+        "availability_segment": {
+            "event": {
+                "dtstart": dtstart,
+                "duration": duration_seconds,
+            },
+            "meld": int(meld_id),
+        }
+    }
+    result = _http_put(f"management-appointments/{appt_id}/schedule/", payload, cookie_hdr, csrf_token)
+    appt_seg = result.get("availability_segment") or {}
+    event = (appt_seg.get("event") or {}) if isinstance(appt_seg, dict) else {}
+    return {
+        "ok": True,
+        "meld_id": meld_id,
+        "appointment_id": appt_id,
+        "dtstart": event.get("dtstart", dtstart),
+        "duration_hours": duration_hours,
+        "result": result,
+    }
+
+
+def list_tenants(search: Optional[str] = None, limit: int = 100) -> list:
+    """List tenants, optionally filtered client-side by name or email.
+
+    Args:
+        search: Case-insensitive substring matched against first_name, last_name, or email.
+        limit: Maximum number of results to return (after client-side filter).
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    # Fetch all tenants (API does not support server-side name/email filtering)
+    results: list = []
+    page_size = 200
+    page = _http_get(f"tenants/?limit={page_size}", cookie_hdr)
+    results.extend(page.get("results", []))
+    # Paginate if needed and we haven't hit the requested limit
+    while page.get("next") and len(results) < limit * 3:
+        next_url = page["next"].split("/api/")[-1]
+        page = _http_get(next_url, cookie_hdr)
+        results.extend(page.get("results", []))
+
+    if search:
+        needle = search.lower()
+        results = [
+            t for t in results
+            if needle in (t.get("first_name") or "").lower()
+            or needle in (t.get("last_name") or "").lower()
+            or needle in ((t.get("user") or {}).get("email") or "").lower()
+            or needle in ((t.get("contact") or {}).get("cell_phone") or "")
+            or needle in ((t.get("contact") or {}).get("home_phone") or "")
+        ]
+
+    return results[:limit]
+
+
+def get_tenant(tenant_id: str) -> dict:
+    """Get a single tenant by ID."""
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    return _http_get(f"tenants/{tenant_id}/", cookie_hdr)

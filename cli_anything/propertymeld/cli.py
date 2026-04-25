@@ -94,6 +94,47 @@ def clone_meld(meld_id, description, as_json):
     output_json(result)
 
 
+@work_orders.command("merge")
+@click.option("--meld-id", required=True, help="Source meld ID to merge (will be cancelled)")
+@click.option("--into", "into_meld_id", required=True, help="Destination meld ID (absorbs the source)")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def merge_meld(meld_id, into_meld_id, as_json):
+    """Merge a meld into another meld. Both must be at the same unit."""
+    result = http_backend.merge_meld(meld_id, into_meld_id)
+    output_json(result)
+
+
+@work_orders.command("complete")
+@click.option("--meld-id", required=True, help="Meld ID to mark complete")
+@click.option("--notes", default=None, help="Completion notes")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def complete_meld(meld_id, notes, as_json):
+    """Mark a meld complete from the manager side (meld must be PENDING_COMPLETION)."""
+    result = http_backend.complete_meld(meld_id, completion_notes=notes)
+    output_json(result)
+
+
+@work_orders.command("cancel")
+@click.option("--meld-id", required=True, help="Meld ID to cancel")
+@click.option("--reason", default=None, help="Cancellation reason")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def cancel_meld(meld_id, reason, as_json):
+    """Cancel a meld from the manager side."""
+    result = http_backend.cancel_meld(meld_id, reason=reason)
+    output_json(result)
+
+
+@work_orders.command("schedule")
+@click.option("--meld-id", required=True, help="Meld ID (must have in-house tech assigned)")
+@click.option("--dtstart", required=True, help="Start datetime ISO 8601, e.g. 2026-04-27T14:00:00-04:00")
+@click.option("--hours", default=2.0, show_default=True, type=float, help="Duration in hours")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def schedule_appointment(meld_id, dtstart, hours, as_json):
+    """Schedule an in-house tech appointment window on a meld."""
+    result = http_backend.schedule_appointment(meld_id, dtstart, duration_hours=hours)
+    output_json(result)
+
+
 # ── properties group ───────────────────────────────────────────────────────────
 
 @cli.group()
@@ -109,6 +150,33 @@ def list_properties(limit, as_json):
     """List all properties."""
     results = api_backend.list_properties(limit=limit)
     output_json(results)
+
+
+# ── tenants group ─────────────────────────────────────────────────────────────
+
+@cli.group()
+def tenants():
+    """Tenant commands."""
+    pass
+
+
+@tenants.command("list")
+@click.option("--search", default=None, help="Filter by name, email, or phone (case-insensitive)")
+@click.option("--limit", default=100, show_default=True)
+@click.option("--json", "as_json", is_flag=True, default=True)
+def list_tenants(search, limit, as_json):
+    """List tenants, optionally filtered by name, email, or phone."""
+    results = http_backend.list_tenants(search=search, limit=limit)
+    output_json(results)
+
+
+@tenants.command("get")
+@click.argument("tenant_id")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def get_tenant(tenant_id, as_json):
+    """Get a single tenant by ID."""
+    result = http_backend.get_tenant(tenant_id)
+    output_json(result)
 
 
 # ── vendors group ──────────────────────────────────────────────────────────────
