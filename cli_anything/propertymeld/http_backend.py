@@ -554,3 +554,73 @@ def get_tenant(tenant_id: str) -> dict:
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     return _http_get(f"tenants/{tenant_id}/", cookie_hdr)
+
+
+def assign_vendor(meld_id: str, vendor_id: str, account_prefix: str = "1") -> dict:
+    """Assign an external vendor to a meld by numeric ID.
+
+    Args:
+        meld_id: Meld ID.
+        vendor_id: Vendor ID.
+        account_prefix: Account prefix for composite_id (default "1").
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+
+    vendor_obj = {
+        "type": "Vendor",
+        "id": int(vendor_id),
+        "composite_id": f"{account_prefix}-{vendor_id}",
+    }
+
+    result = _http_patch(
+        f"melds/{int(meld_id)}/assign-maintenance/",
+        {"maintenance": [vendor_obj]},
+        cookie_hdr,
+        csrf_token,
+    )
+    return {
+        "ok": True,
+        "meld_id": meld_id,
+        "vendor_id": vendor_id,
+        "account_prefix": account_prefix,
+        "result": result,
+    }
+
+
+def assign_vendor_by_name(meld_id: str, vendor_name: str, account_prefix: str = "1") -> dict:
+    """Assign an external vendor to a meld by name (partial match).
+
+    Mirrors assign_tech() but for vendors. Looks up the vendor by partial
+    name match (case-insensitive), then delegates to assign_vendor() with
+    the matched id.
+
+    Args:
+        meld_id: Meld ID to assign the vendor to.
+        vendor_name: Partial name match. e.g. "Rogers" or "Rogers Electric".
+        account_prefix: Account prefix for composite_id (default "1").
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+
+    vendors = _http_get("vendors/?limit=100", cookie_hdr)
+    if isinstance(vendors, dict):
+        vendors = vendors.get("results", [])
+
+    vendor_lower = vendor_name.lower()
+    match = None
+    for v in vendors:
+        full = (v.get("name") or "").lower()
+        if vendor_lower in full or full.startswith(vendor_lower):
+            match = v
+            break
+
+    if not match:
+        available = ", ".join((v.get("name") or "") for v in vendors)
+        return {"ok": False, "error": f"Vendor '{vendor_name}' not found.", "available": available}
+
+    result = assign_vendor(meld_id, str(match["id"]), account_prefix=account_prefix)
+    if isinstance(result, dict) and result.get("ok"):
+        result["assigned_to"] = match.get("name", "")
+    return result

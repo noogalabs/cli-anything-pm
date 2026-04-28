@@ -208,6 +208,17 @@ def assign_tech(work_order_id, tech, as_json):
     output_json(result)
 
 
+@cli.command("assign-vendor")
+@click.option("--work-order-id", required=True, help="Meld ID")
+@click.option("--vendor", required=True, help="Vendor name (partial match ok)")
+@click.option("--account", default="1", show_default=True, help="Account prefix for composite_id")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def assign_vendor_cmd(work_order_id, vendor, account, as_json):
+    """Assign an external vendor to a work order by name (partial match)."""
+    result = http_backend.assign_vendor_by_name(work_order_id, vendor, account_prefix=account)
+    output_json(result)
+
+
 # ── api-keys ──────────────────────────────────────────────────────────────────
 
 @cli.group("api-keys")
