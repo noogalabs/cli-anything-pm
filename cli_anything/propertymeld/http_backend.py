@@ -556,6 +556,25 @@ def get_tenant(tenant_id: str) -> dict:
     return _http_get(f"tenants/{tenant_id}/", cookie_hdr)
 
 
+def list_files(meld_id: str) -> list:
+    """List files (photos, attachments) on a meld via cookie HTTP.
+
+    Nexus API meld JSON does not include files; this hits the
+    cookie-auth /api/melds/{id}/files/ sub-endpoint.
+
+    Used by the pre-complete audit hook gate (photo presence check)
+    and by pm-photos download tooling.
+
+    Each item has: filename, signed_url, full_compressed, id, meld,
+    uploader, created. Photo detection is filename-extension based
+    (no content_type field exists).
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    data = _http_get(f"melds/{meld_id}/files/?limit=100", cookie_hdr)
+    return data.get("results", data) if isinstance(data, dict) else data
+
+
 def assign_vendor(meld_id: str, vendor_id: str, account_prefix: str = "1") -> dict:
     """Assign an external vendor to a meld by numeric ID.
 

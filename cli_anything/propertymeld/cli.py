@@ -66,6 +66,15 @@ def get_comments(meld_id, as_json):
     output_json(results)
 
 
+@work_orders.command("files")
+@click.argument("meld_id")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def get_files(meld_id, as_json):
+    """List files attached to a work order (plain HTTP, no Playwright)."""
+    results = http_backend.list_files(meld_id)
+    output_json(results)
+
+
 @work_orders.command("send-message")
 @click.option("--meld-id", required=True, help="Meld ID")
 @click.option("--text", required=True, help="Message body")
