@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="snapcli-pm",
+    name="cli-anything-pm",
     version="0.1.0",
     packages=find_packages(),
     install_requires=["click>=8.0", "playwright>=1.40", "requests>=2.31"],
