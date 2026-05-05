@@ -643,3 +643,336 @@ def assign_vendor_by_name(meld_id: str, vendor_name: str, account_prefix: str = 
     if isinstance(result, dict) and result.get("ok"):
         result["assigned_to"] = match.get("name", "")
     return result
+
+
+# ── int-PK guard ──────────────────────────────────────────────────────────────
+# PM API endpoints expect the integer PK (e.g. 12701108), not the human-facing
+# short code (e.g. 'T5LKWTDB'). Passing a short code returns HTTP 404 because the
+# Django URL pattern is <int:pk>. This guard catches the mismatch at the SDK
+# boundary instead of at the API boundary, so the error is actionable. Applied
+# to Phase-2-backport functions only in this commit; existing functions
+# (assign_tech, complete_meld, etc.) keep their current shape — separate
+# follow-up if/when we want fleet-wide enforcement.
+def _validate_meld_id(meld_id) -> int:
+    """Coerce meld_id to int PK. Reject PM short codes.
+
+    Raises ValueError on short-code input (e.g. 'T5LKWTDB') with a message
+    pointing at `pm work-orders list` for resolution.
+    """
+    try:
+        return int(meld_id)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"meld_id must be the integer PK (e.g. 12701108), got {meld_id!r}. "
+            f"PM short codes (e.g. 'T5LKWTDB') are not accepted; use 'pm work-orders list' to find the int PK."
+        )
+
+
+def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, duration_hours: float = 2.0) -> dict:
+    """Schedule an external vendor appointment window on a meld.
+
+    Args:
+        meld_id: Meld ID.
+        vendor_id: Vendor ID.
+        dtstart: ISO 8601 datetime string, e.g. '2026-04-27T14:00:00-04:00'.
+        duration_hours: Appointment duration in hours (default 2).
+
+    The meld must have the vendor assigned — PM creates the vendorassignment
+    object at assignment time. This sets the availability_segment (the actual time window).
+    """
+    meld_id = _validate_meld_id(meld_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+
+    # Get the vendor assignment ID from the meld
+    meld = _http_get(f"melds/{meld_id}/", cookie_hdr)
+    # added 2026-04-29 by collie via dane dispatch — Wave 1.5 meld_state_change instrumentation per UU TODO
+    # Reuse the existing meld fetch above to capture prior_state — no extra GET needed.
+    prior_state = "unknown"
+    if isinstance(meld, dict):
+        prior_state = str(meld.get("status") or meld.get("state") or "unknown")
+    vendor_assignments = meld.get("vendorassignment", [])
+    if not vendor_assignments:
+        return {"ok": False, "error": "No vendor assignment found on this meld"}
+
+    # Find the assignment for the specific vendor
+    vendor_assign_id = None
+    for va in vendor_assignments:
+        if str(va.get("vendor_id")) == str(vendor_id) or str(va.get("id")) == str(vendor_id):
+            vendor_assign_id = va.get("id")
+            break
+
+    if not vendor_assign_id and vendor_assignments:
+        # If no match found, use the first one
+        vendor_assign_id = vendor_assignments[0]["id"]
+
+    if not vendor_assign_id:
+        return {"ok": False, "error": f"Vendor {vendor_id} not assigned to this meld"}
+
+    duration_seconds = int(duration_hours * 3600)
+    payload = {
+        "availability_segment": {
+            "event": {
+                "dtstart": dtstart,
+                "duration": duration_seconds,
+            },
+            "meld": int(meld_id),
+        }
+    }
+    result = _http_put(f"vendor-assignments/{vendor_assign_id}/schedule/", payload, cookie_hdr, csrf_token)
+    # added 2026-04-29 by collie via dane dispatch — Wave 1.5 meld_state_change instrumentation per UU TODO
+    _emit_meld_state_change(
+        meld_id, prior_state, "scheduled", "scheduled_vendor_appointment",
+        vendor_id=int(vendor_id), assignment_id=vendor_assign_id,
+        dtstart=dtstart, triggered_by="manager",
+    )
+    appt_seg = result.get("availability_segment") or {}
+    event = (appt_seg.get("event") or {}) if isinstance(appt_seg, dict) else {}
+    return {
+        "ok": True,
+        "meld_id": meld_id,
+        "vendor_id": vendor_id,
+        "assignment_id": vendor_assign_id,
+        "dtstart": event.get("dtstart", dtstart),
+        "duration_hours": duration_hours,
+        "result": result,
+    }
+
+
+def list_projects(meld_id: Optional[str] = None, limit: int = 100) -> list:
+    """List projects associated with a meld or account."""
+    if meld_id is not None:
+        meld_id = _validate_meld_id(meld_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    path = f"melds/{meld_id}/projects/" if meld_id else f"projects/?limit={limit}"
+    data = _http_get(path, cookie_hdr)
+    return data.get("results", data) if isinstance(data, dict) else data
+
+
+def get_project(project_id: str) -> dict:
+    """Get a single project by ID."""
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    return _http_get(f"projects/{project_id}/", cookie_hdr)
+
+
+def create_project(name: str, description: str = "", meld_id: Optional[str] = None) -> dict:
+    """Create a new project."""
+    if meld_id is not None:
+        meld_id = _validate_meld_id(meld_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload = {"name": name, "description": description}
+    if meld_id:
+        payload["meld_id"] = int(meld_id)
+    result = _http_post("projects/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "project_id": result.get("id"), "result": result}
+
+
+def update_project(project_id: str, name: Optional[str] = None, description: Optional[str] = None, status: Optional[str] = None) -> dict:
+    """Update a project."""
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload = {}
+    if name:
+        payload["name"] = name
+    if description:
+        payload["description"] = description
+    if status:
+        payload["status"] = status
+    result = _http_patch(f"projects/{project_id}/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "project_id": project_id, "result": result}
+
+
+def delete_project(project_id: str) -> dict:
+    """Delete or archive a project."""
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_patch(f"projects/{project_id}/", {"status": "archived"}, cookie_hdr, csrf_token)
+    return {"ok": True, "project_id": project_id, "result": result}
+
+
+# ── Estimates ─────────────────────────────────────────────────────────────────
+
+def list_estimates(meld_id: Optional[str] = None, limit: int = 100, status: Optional[str] = None) -> list:
+    """List estimates for a meld or account."""
+    if meld_id is not None:
+        meld_id = _validate_meld_id(meld_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    if meld_id:
+        path = f"estimates/meld/{meld_id}/"
+    else:
+        path = f"estimates/?limit={limit}"
+        if status:
+            path += f"&status={status}"
+    data = _http_get(path, cookie_hdr)
+    return data.get("results", data) if isinstance(data, dict) else data
+
+
+def get_estimate(estimate_id: str) -> dict:
+    """Get a single estimate by ID."""
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    return _http_get(f"estimates/{estimate_id}/", cookie_hdr)
+
+
+def create_estimate(meld_id: str, estimate_number: str, amount: str, description: str = "", due_date: Optional[str] = None, project_id: Optional[str] = None) -> dict:
+    """Create a new estimate linked to a meld."""
+    meld_id = _validate_meld_id(meld_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload = {
+        "meld_id": int(meld_id),
+        "estimate_number": estimate_number,
+        "description": description,
+        "amount": float(amount),
+    }
+    if due_date:
+        payload["due_date"] = due_date
+    if project_id:
+        payload["project_id"] = int(project_id)
+    result = _http_post("estimates/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "estimate_id": result.get("id"), "result": result}
+
+
+def update_estimate(estimate_id: str, estimate_number: Optional[str] = None, amount: Optional[str] = None, description: Optional[str] = None, status: Optional[str] = None) -> dict:
+    """Update an invoice."""
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload = {}
+    if estimate_number:
+        payload["estimate_number"] = estimate_number
+    if amount:
+        payload["amount"] = float(amount)
+    if description:
+        payload["description"] = description
+    if status:
+        payload["status"] = status
+    result = _http_patch(f"estimates/{estimate_id}/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "estimate_id": estimate_id, "result": result}
+
+
+def link_estimate_to_meld(estimate_id: str, meld_id: str) -> dict:
+    """Link an estimate to a meld."""
+    meld_id = _validate_meld_id(meld_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_patch(f"estimates/{estimate_id}/", {"meld_id": int(meld_id)}, cookie_hdr, csrf_token)
+    return {"ok": True, "estimate_id": estimate_id, "meld_id": meld_id, "result": result}
+
+
+# ── Receipts ─────────────────────────────────────────────────────────────────
+
+def list_receipts(meld_id: Optional[str] = None, limit: int = 100) -> list:
+    """List receipts for a meld or account."""
+    if meld_id is not None:
+        meld_id = _validate_meld_id(meld_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    if meld_id:
+        path = f"melds/{meld_id}/receipts/"
+    else:
+        path = f"receipts/?limit={limit}"
+    data = _http_get(path, cookie_hdr)
+    return data.get("results", data) if isinstance(data, dict) else data
+
+
+def get_receipt(receipt_id: str) -> dict:
+    """Get a single receipt by ID."""
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    return _http_get(f"receipts/{receipt_id}/", cookie_hdr)
+
+
+def upload_receipt(meld_id: str, file_path: str, description: str = "", linked_estimate_id: Optional[str] = None) -> dict:
+    """Upload a receipt file for a meld."""
+    meld_id = _validate_meld_id(meld_id)
+    import os as _os
+    from pathlib import Path as _Path
+
+    if not _os.path.exists(file_path):
+        return {"ok": False, "error": f"File not found: {file_path}"}
+
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+
+    # Build multipart form data
+    file_name = _Path(file_path).name
+    with open(file_path, "rb") as f:
+        file_data = f.read()
+
+    boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
+    body_parts = []
+    body_parts.append(f"--{boundary}".encode())
+    body_parts.append(b'Content-Disposition: form-data; name="meld_id"')
+    body_parts.append(b"")
+    body_parts.append(str(meld_id).encode())
+
+    if description:
+        body_parts.append(f"--{boundary}".encode())
+        body_parts.append(b'Content-Disposition: form-data; name="description"')
+        body_parts.append(b"")
+        body_parts.append(description.encode())
+
+    if linked_estimate_id:
+        body_parts.append(f"--{boundary}".encode())
+        body_parts.append(b'Content-Disposition: form-data; name="linked_estimate_id"')
+        body_parts.append(b"")
+        body_parts.append(str(linked_estimate_id).encode())
+
+    body_parts.append(f"--{boundary}".encode())
+    body_parts.append(f'Content-Disposition: form-data; name="file"; filename="{file_name}"'.encode())
+    body_parts.append(b"Content-Type: application/octet-stream")
+    body_parts.append(b"")
+    body_parts.append(file_data)
+    body_parts.append(f"--{boundary}--".encode())
+    body_parts.append(b"")
+
+    body = b"\r\n".join(body_parts)
+
+    req = urllib.request.Request(
+        f"{BASE}/api/melds/{int(meld_id)}/receipts/",
+        data=body,
+        method="POST",
+        headers={
+            "Cookie": cookie_hdr,
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Accept": "application/json",
+            "X-CSRFToken": csrf_token,
+            "X-Requested-With": "XMLHttpRequest",
+            "User-Agent": UA,
+            "Referer": f"{BASE}/melds/",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=30) as resp:
+            result = json.loads(resp.read())
+            return {"ok": True, "receipt_id": result.get("id"), "result": result}
+    except urllib.error.HTTPError as e:
+        body_err = e.read().decode("utf-8", errors="ignore")
+        return {"ok": False, "error": f"HTTP {e.code}", "detail": body_err[:300]}
+
+
+def link_receipt_to_invoice(receipt_id: str, estimate_id: str) -> dict:
+    """Link a receipt to an invoice."""
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_patch(f"receipts/{receipt_id}/", {"linked_estimate_id": int(estimate_id)}, cookie_hdr, csrf_token)
+    return {"ok": True, "receipt_id": receipt_id, "estimate_id": estimate_id, "result": result}
+
+
+# ── Vendor Invitations ───────────────────────────────────────────────────────
+
+

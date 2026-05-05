@@ -197,3 +197,82 @@ class TestTenantsCLI:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["first_name"] == "Jane"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Phase 2 backport coverage: projects / estimates / receipts / vendor-invites /
+# work-orders schedule-vendor
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+MOCK_PROJECT = {"id": 7001, "name": "Q2 Renovations", "description": "Bldg-A common-area refresh"}
+MOCK_ESTIMATE = {"id": 8001, "estimate_number": "INV-2026-001", "amount": "1250.00", "status": "draft"}
+MOCK_RECEIPT = {"id": 9001, "filename": "home-depot-2026-04-29.pdf", "linked_estimate_id": 8001}
+
+
+class TestProjectsCLI:
+    def test_create_project_passes_args(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.create_project",
+                   return_value=MOCK_PROJECT) as mock_fn:
+            result = runner.invoke(cli, ["projects", "create",
+                                         "--name", "Q2 Renovations",
+                                         "--description", "Bldg-A refresh"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["id"] == 7001
+        mock_fn.assert_called_once_with("Q2 Renovations",
+                                        description="Bldg-A refresh",
+                                        meld_id=None)
+
+
+class TestEstimatesCLI:
+    def test_create_estimate_passes_args(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.create_estimate",
+                   return_value=MOCK_ESTIMATE) as mock_fn:
+            result = runner.invoke(cli, ["estimates", "create",
+                                         "--meld-id", "T5LKWTDB",
+                                         "--estimate-number", "INV-2026-001",
+                                         "--amount", "1250.00"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["estimate_number"] == "INV-2026-001"
+        # Positional + kwarg shape per cli wiring
+        call = mock_fn.call_args
+        assert call.args[0] == "T5LKWTDB"
+        assert call.args[1] == "INV-2026-001"
+        assert call.args[2] == "1250.00"
+
+
+class TestReceiptsCLI:
+    def test_upload_receipt_passes_file_path(self, runner, tmp_path):
+        receipt_file = tmp_path / "rcpt.pdf"
+        receipt_file.write_bytes(b"%PDF-1.4 fake\n")
+        with patch("cli_anything.propertymeld.http_backend.upload_receipt",
+                   return_value=MOCK_RECEIPT) as mock_fn:
+            result = runner.invoke(cli, ["receipts", "upload",
+                                         "--meld-id", "T5LKWTDB",
+                                         "--file", str(receipt_file)])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["id"] == 9001
+        mock_fn.assert_called_once()
+        call = mock_fn.call_args
+        assert call.args[0] == "T5LKWTDB"
+        assert call.args[1] == str(receipt_file)
+
+
+class TestWorkOrdersScheduleVendorCLI:
+    def test_schedule_vendor_passes_args(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.schedule_vendor_appointment",
+                   return_value={"id": 5555, "scheduled_dtstart": "2026-05-06T14:00:00-04:00"}) as mock_fn:
+            result = runner.invoke(cli, ["work-orders", "schedule-vendor",
+                                         "--meld-id", "T5LKWTDB",
+                                         "--vendor-id", "10",
+                                         "--dtstart", "2026-05-06T14:00:00-04:00",
+                                         "--hours", "3"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["id"] == 5555
+        mock_fn.assert_called_once_with("T5LKWTDB", "10",
+                                        "2026-05-06T14:00:00-04:00",
+                                        duration_hours=3.0)

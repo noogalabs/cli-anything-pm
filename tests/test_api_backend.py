@@ -128,3 +128,23 @@ class TestProbe:
             result = api_backend.probe()
         assert result["ok"] is True
         assert "test-tok" in result["token_prefix"]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# int-PK guard — Phase A backport
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+from cli_anything.propertymeld import http_backend
+
+
+class TestValidateMeldIdGuard:
+    def test_int_passthrough(self):
+        assert http_backend._validate_meld_id(12701108) == 12701108
+        assert http_backend._validate_meld_id("12701108") == 12701108
+
+    def test_rejects_short_code(self):
+        with pytest.raises(ValueError) as exc:
+            http_backend._validate_meld_id("T5LKWTDB")
+        assert "T5LKWTDB" in str(exc.value)
+        assert "integer PK" in str(exc.value)
