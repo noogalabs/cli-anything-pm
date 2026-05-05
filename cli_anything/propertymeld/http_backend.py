@@ -795,43 +795,19 @@ def get_project(project_id: str) -> dict:
     return _http_get(f"projects/{project_id}/", cookie_hdr)
 
 
-def create_project(name: str, description: str = "", meld_id: Optional[str] = None) -> dict:
-    """Create a new project."""
-    if meld_id is not None:
-        meld_id = _validate_meld_id(meld_id)
-    creds = _load_creds()
-    cookie_hdr = _cookie_header(creds)
-    csrf_token = _get_csrf_token(cookie_hdr)
-    payload = {"name": name, "description": description}
-    if meld_id:
-        payload["meld_id"] = int(meld_id)
-    result = _http_post("projects/", payload, cookie_hdr, csrf_token)
-    return {"ok": True, "project_id": result.get("id"), "result": result}
-
-
-def update_project(project_id: str, name: Optional[str] = None, description: Optional[str] = None, status: Optional[str] = None) -> dict:
-    """Update a project."""
-    creds = _load_creds()
-    cookie_hdr = _cookie_header(creds)
-    csrf_token = _get_csrf_token(cookie_hdr)
-    payload = {}
-    if name:
-        payload["name"] = name
-    if description:
-        payload["description"] = description
-    if status:
-        payload["status"] = status
-    result = _http_patch(f"projects/{project_id}/", payload, cookie_hdr, csrf_token)
-    return {"ok": True, "project_id": project_id, "result": result}
-
-
-def delete_project(project_id: str) -> dict:
-    """Delete or archive a project."""
-    creds = _load_creds()
-    cookie_hdr = _cookie_header(creds)
-    csrf_token = _get_csrf_token(cookie_hdr)
-    result = _http_patch(f"projects/{project_id}/", {"status": "archived"}, cookie_hdr, csrf_token)
-    return {"ok": True, "project_id": project_id, "result": result}
+# create/update/delete project — DROPPED per Item 3 spike (5/05).
+# Endpoint POST /api/projects/ is reachable but the create payload schema is
+# incomplete in the Haiku-coauthored snapcli stub. Verified required fields:
+# name + description + start_date + due_date + coordinators[] + project_type
+# + unit (active unit reference). The "unit" field shape is unknown — passing
+# the unit.id int (e.g. 1754499) returns HTTP 500. Needs Safari Web Inspector
+# capture of the actual /api/projects/ POST payload from the manager UI to
+# discover the correct shape (likely needs unit_pk, address-tied lookup, or
+# a search-string indirection). update + delete commands remained untested
+# because of the create-cycle dependency for safe verification.
+#
+# list_projects + get_project are verified working and remain available.
+# See tracking task task_<TBD> for endpoint-discovery follow-up.
 
 
 # ── Estimates ─────────────────────────────────────────────────────────────────
