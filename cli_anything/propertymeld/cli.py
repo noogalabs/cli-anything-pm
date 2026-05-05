@@ -70,8 +70,17 @@ def get_comments(meld_id, as_json):
 @click.argument("meld_id")
 @click.option("--json", "as_json", is_flag=True, default=True)
 def get_files(meld_id, as_json):
-    """List files attached to a work order (plain HTTP, no Playwright)."""
+    """List files attached to a work order (manager + tenant + vendor uploads)."""
     results = http_backend.list_files(meld_id)
+    output_json(results)
+
+
+@work_orders.command("work-entries")
+@click.argument("meld_id")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def get_work_entries(meld_id, as_json):
+    """List per-visit work-entries (checkin/checkout/hours/agent/notes) for a meld."""
+    results = http_backend.list_work_entries(meld_id)
     output_json(results)
 
 
