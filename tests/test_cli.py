@@ -116,6 +116,81 @@ class TestWorkOrdersFilesCLI:
         mock_fn.assert_called_once_with("T5LKWTDB")
 
 
+class TestListFilesMergesAllSources:
+    """list_files() hits manager + tenant + vendor endpoints and tags uploader_role."""
+
+    def _stub_http_get(self, manager_items, tenant_items, vendor_items):
+        def _side(path, cookie_hdr):
+            if "tenant-files" in path:
+                return {"results": tenant_items}
+            if "vendor-files" in path:
+                return {"results": vendor_items}
+            return {"results": manager_items}
+        return _side
+
+    def test_merges_three_sources_with_uploader_role(self):
+        from cli_anything.propertymeld import http_backend
+        side = self._stub_http_get(
+            [{"id": 1, "filename": "mgr.pdf"}],
+            [{"id": 2, "filename": "tenant.jpg"}],
+            [{"id": 3, "filename": "vendor.png"}],
+        )
+        with patch("cli_anything.propertymeld.http_backend._load_creds", return_value={}), \
+             patch("cli_anything.propertymeld.http_backend._cookie_header", return_value=""), \
+             patch("cli_anything.propertymeld.http_backend._http_get", side_effect=side):
+            result = http_backend.list_files("12701108")
+        assert len(result) == 3
+        roles = {f["uploader_role"] for f in result}
+        assert roles == {"manager", "tenant", "vendor"}
+        mgr = next(f for f in result if f["uploader_role"] == "manager")
+        assert mgr["filename"] == "mgr.pdf"
+
+    def test_merges_when_some_endpoints_empty(self):
+        from cli_anything.propertymeld import http_backend
+        side = self._stub_http_get(
+            [{"id": 1, "filename": "mgr-only.pdf"}],
+            [],
+            [],
+        )
+        with patch("cli_anything.propertymeld.http_backend._load_creds", return_value={}), \
+             patch("cli_anything.propertymeld.http_backend._cookie_header", return_value=""), \
+             patch("cli_anything.propertymeld.http_backend._http_get", side_effect=side):
+            result = http_backend.list_files("12701108")
+        assert len(result) == 1
+        assert result[0]["uploader_role"] == "manager"
+
+    def test_handles_flat_list_response(self):
+        from cli_anything.propertymeld import http_backend
+        def side(path, cookie_hdr):
+            if "tenant-files" in path:
+                return [{"id": 9, "filename": "flat.jpg"}]
+            if "vendor-files" in path:
+                return []
+            return {"results": []}
+        with patch("cli_anything.propertymeld.http_backend._load_creds", return_value={}), \
+             patch("cli_anything.propertymeld.http_backend._cookie_header", return_value=""), \
+             patch("cli_anything.propertymeld.http_backend._http_get", side_effect=side):
+            result = http_backend.list_files("12701108")
+        assert len(result) == 1
+        assert result[0]["uploader_role"] == "tenant"
+
+
+class TestWorkOrdersWorkEntriesCLI:
+    def test_work_entries_outputs_list(self, runner):
+        mock_entries = [
+            {"id": 1, "checkin": "2026-05-01T08:00:00Z", "checkout": "2026-05-01T10:30:00Z",
+             "hours": 2.5, "agent_name": "Carlos", "description": "AC tune-up",
+             "long_description": "Replaced filter, cleaned coils."},
+        ]
+        with patch("cli_anything.propertymeld.http_backend.list_work_entries",
+                   return_value=mock_entries) as mock_fn:
+            result = runner.invoke(cli, ["work-orders", "work-entries", "12701108"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data[0]["agent_name"] == "Carlos"
+        mock_fn.assert_called_once_with("12701108")
+
+
 class TestAssignVendorCLI:
     def test_assign_vendor_passes_partial_name(self, runner):
         with patch("cli_anything.propertymeld.http_backend.assign_vendor_by_name",

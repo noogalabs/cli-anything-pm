@@ -559,19 +559,56 @@ def get_tenant(tenant_id: str) -> dict:
 def list_files(meld_id: str) -> list:
     """List files (photos, attachments) on a meld via cookie HTTP.
 
-    Nexus API meld JSON does not include files; this hits the
-    cookie-auth /api/melds/{id}/files/ sub-endpoint.
+    Fetches all 3 photo endpoints in parallel and merges into a single list:
+      GET /api/melds/{id}/files/         — manager uploads
+      GET /api/melds/{id}/tenant-files/  — tenant uploads
+      GET /api/melds/{id}/vendor-files/  — vendor uploads
+
+    Each merged file gains an "uploader_role" field set to one of
+    "manager", "tenant", or "vendor" so downstream consumers can filter
+    by source. Other fields (filename, signed_url, full_compressed, id,
+    meld, uploader, created) come straight from the source endpoint.
 
     Used by the pre-complete audit hook gate (photo presence check)
     and by pm-photos download tooling.
-
-    Each item has: filename, signed_url, full_compressed, id, meld,
-    uploader, created. Photo detection is filename-extension based
-    (no content_type field exists).
     """
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
-    data = _http_get(f"melds/{meld_id}/files/?limit=100", cookie_hdr)
+
+    sources = [
+        ("manager", f"melds/{meld_id}/files/?limit=100"),
+        ("tenant",  f"melds/{meld_id}/tenant-files/?limit=100"),
+        ("vendor",  f"melds/{meld_id}/vendor-files/?limit=100"),
+    ]
+
+    merged: list = []
+    for role, path in sources:
+        data = _http_get(path, cookie_hdr)
+        items = data.get("results", data) if isinstance(data, dict) else data
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, dict):
+                item["uploader_role"] = role
+            merged.append(item)
+    return merged
+
+
+def list_work_entries(meld_id: str) -> list:
+    """List per-visit work-entries on a meld via cookie HTTP.
+
+    GET /api/melds/{id}/work-entries/ — endpoint verified by Blue 5/04.
+    Returns chronological per-visit logs with checkin/checkout/hours/agent
+    /description/long_description fields. snapcli (api_backend) has zero
+    coverage of this endpoint — work-entries was the THIRD notes location
+    flagged in feedback_pm_work_entries_endpoint per agent memory.
+
+    Used to inspect tech work logs for completion-quality auditing and
+    when comparing against completion_notes / maintenance_notes.
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    data = _http_get(f"melds/{meld_id}/work-entries/", cookie_hdr)
     return data.get("results", data) if isinstance(data, dict) else data
 
 
