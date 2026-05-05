@@ -284,5 +284,189 @@ def probe():
     output_json(result)
 
 
-if __name__ == "__main__":
-    cli()
+
+@work_orders.command("schedule-vendor")
+@click.option("--meld-id", required=True, help="Meld ID (must have vendor assigned)")
+@click.option("--vendor-id", required=True, help="Vendor ID")
+@click.option("--dtstart", required=True, help="Start datetime ISO 8601, e.g. 2026-04-27T14:00:00-04:00")
+@click.option("--hours", default=2.0, show_default=True, type=float, help="Duration in hours")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def schedule_vendor_appointment(meld_id, vendor_id, dtstart, hours, as_json):
+    """Schedule an external vendor appointment window on a meld."""
+    result = http_backend.schedule_vendor_appointment(meld_id, vendor_id, dtstart, duration_hours=hours)
+    output_json(result)
+
+
+# ── projects group ────────────────────────────────────────────────────────────
+
+@cli.group()
+def projects():
+    """Project commands."""
+    pass
+
+
+@projects.command("list")
+@click.option("--meld-id", default=None, help="Filter by meld ID")
+@click.option("--limit", default=100, show_default=True)
+@click.option("--json", "as_json", is_flag=True, default=True)
+def list_projects(meld_id, limit, as_json):
+    """List projects."""
+    results = http_backend.list_projects(meld_id=meld_id, limit=limit)
+    output_json(results)
+
+
+@projects.command("get")
+@click.argument("project_id")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def get_project(project_id, as_json):
+    """Get a single project by ID."""
+    result = http_backend.get_project(project_id)
+    output_json(result)
+
+
+@projects.command("create")
+@click.option("--name", required=True, help="Project name")
+@click.option("--description", default="", help="Project description")
+@click.option("--meld-id", default=None, help="Optional meld ID to associate")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def create_project(name, description, meld_id, as_json):
+    """Create a new project."""
+    result = http_backend.create_project(name, description=description, meld_id=meld_id)
+    output_json(result)
+
+
+@projects.command("update")
+@click.argument("project_id")
+@click.option("--name", default=None, help="New project name")
+@click.option("--description", default=None, help="New description")
+@click.option("--status", default=None, help="Status: active|archived")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def update_project(project_id, name, description, status, as_json):
+    """Update a project."""
+    result = http_backend.update_project(project_id, name=name, description=description, status=status)
+    output_json(result)
+
+
+@projects.command("delete")
+@click.argument("project_id")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def delete_project(project_id, as_json):
+    """Delete/archive a project."""
+    result = http_backend.delete_project(project_id)
+    output_json(result)
+
+
+# ── estimates group ────────────────────────────────────────────────────────────
+
+@cli.group()
+def estimates():
+    """Estimate commands."""
+    pass
+
+
+@estimates.command("list")
+@click.option("--meld-id", default=None, help="Filter by meld ID")
+@click.option("--status", default=None, help="Filter by status: all|draft|issued|paid")
+@click.option("--limit", default=100, show_default=True)
+@click.option("--json", "as_json", is_flag=True, default=True)
+def list_estimates(meld_id, status, limit, as_json):
+    """List estimates."""
+    results = http_backend.list_estimates(meld_id=meld_id, status=status, limit=limit)
+    output_json(results)
+
+
+@estimates.command("get")
+@click.argument("estimate_id")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def get_estimate(estimate_id, as_json):
+    """Get a single estimate by ID."""
+    result = http_backend.get_estimate(estimate_id)
+    output_json(result)
+
+
+@estimates.command("create")
+@click.option("--meld-id", required=True, help="Meld ID")
+@click.option("--estimate-number", required=True, help="Estimate number")
+@click.option("--amount", required=True, help="Estimate amount")
+@click.option("--description", default="", help="Description")
+@click.option("--due-date", default=None, help="Due date (YYYY-MM-DD)")
+@click.option("--project-id", default=None, help="Optional project ID")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def create_estimate(meld_id, estimate_number, amount, description, due_date, project_id, as_json):
+    """Create a new invoice."""
+    result = http_backend.create_estimate(meld_id, estimate_number, amount, description=description, due_date=due_date, project_id=project_id)
+    output_json(result)
+
+
+@estimates.command("update")
+@click.argument("estimate_id")
+@click.option("--estimate-number", default=None, help="Estimate number")
+@click.option("--amount", default=None, help="Amount")
+@click.option("--description", default=None, help="Description")
+@click.option("--status", default=None, help="Status: draft|issued|paid")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def update_estimate(estimate_id, estimate_number, amount, description, status, as_json):
+    """Update an invoice."""
+    result = http_backend.update_estimate(estimate_id, estimate_number=estimate_number, amount=amount, description=description, status=status)
+    output_json(result)
+
+
+@estimates.command("link")
+@click.argument("estimate_id")
+@click.option("--meld-id", required=True, help="Meld ID to link to")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def link_invoice(estimate_id, meld_id, as_json):
+    """Link an estimate to a meld."""
+    result = http_backend.link_estimate_to_meld(estimate_id, meld_id)
+    output_json(result)
+
+
+# ── receipts group ────────────────────────────────────────────────────────────
+
+@cli.group()
+def receipts():
+    """Receipt commands."""
+    pass
+
+
+@receipts.command("list")
+@click.option("--meld-id", default=None, help="Filter by meld ID")
+@click.option("--limit", default=100, show_default=True)
+@click.option("--json", "as_json", is_flag=True, default=True)
+def list_receipts(meld_id, limit, as_json):
+    """List receipts."""
+    results = http_backend.list_receipts(meld_id=meld_id, limit=limit)
+    output_json(results)
+
+
+@receipts.command("get")
+@click.argument("receipt_id")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def get_receipt(receipt_id, as_json):
+    """Get a single receipt by ID."""
+    result = http_backend.get_receipt(receipt_id)
+    output_json(result)
+
+
+@receipts.command("upload")
+@click.option("--meld-id", required=True, help="Meld ID")
+@click.option("--file", "file_path", required=True, type=click.Path(exists=True), help="File path to upload")
+@click.option("--description", default="", help="Receipt description")
+@click.option("--estimate-id", default=None, help="Optional estimate ID to link")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def upload_receipt(meld_id, file_path, description, estimate_id, as_json):
+    """Upload a receipt file."""
+    result = http_backend.upload_receipt(meld_id, file_path, description=description, linked_estimate_id=estimate_id)
+    output_json(result)
+
+
+@receipts.command("link")
+@click.argument("receipt_id")
+@click.option("--estimate-id", required=True, help="Estimate ID to link to")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def link_receipt(receipt_id, estimate_id, as_json):
+    """Link a receipt to an invoice."""
+    result = http_backend.link_receipt_to_invoice(receipt_id, estimate_id)
+    output_json(result)
+
+
