@@ -286,18 +286,25 @@ MOCK_RECEIPT = {"id": 9001, "filename": "home-depot-2026-04-29.pdf", "linked_est
 
 
 class TestProjectsCLI:
-    def test_create_project_passes_args(self, runner):
-        with patch("cli_anything.propertymeld.http_backend.create_project",
-                   return_value=MOCK_PROJECT) as mock_fn:
-            result = runner.invoke(cli, ["projects", "create",
-                                         "--name", "Q2 Renovations",
-                                         "--description", "Bldg-A refresh"])
+    """projects create/update/delete dropped per Item 3 spike — list + get only."""
+
+    def test_list_outputs_json(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.list_projects",
+                   return_value=[MOCK_PROJECT]) as mock_fn:
+            result = runner.invoke(cli, ["projects", "list"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert isinstance(data, list)
+        assert data[0]["id"] == 7001
+        mock_fn.assert_called_once()
+
+    def test_get_outputs_single_json(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.get_project",
+                   return_value=MOCK_PROJECT):
+            result = runner.invoke(cli, ["projects", "get", "7001"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["id"] == 7001
-        mock_fn.assert_called_once_with("Q2 Renovations",
-                                        description="Bldg-A refresh",
-                                        meld_id=None)
 
 
 class TestEstimatesCLI:

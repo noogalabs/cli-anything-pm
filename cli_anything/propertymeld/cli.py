@@ -333,36 +333,15 @@ def get_project(project_id, as_json):
     output_json(result)
 
 
-@projects.command("create")
-@click.option("--name", required=True, help="Project name")
-@click.option("--description", default="", help="Project description")
-@click.option("--meld-id", default=None, help="Optional meld ID to associate")
-@click.option("--json", "as_json", is_flag=True, default=True)
-def create_project(name, description, meld_id, as_json):
-    """Create a new project."""
-    result = http_backend.create_project(name, description=description, meld_id=meld_id)
-    output_json(result)
-
-
-@projects.command("update")
-@click.argument("project_id")
-@click.option("--name", default=None, help="New project name")
-@click.option("--description", default=None, help="New description")
-@click.option("--status", default=None, help="Status: active|archived")
-@click.option("--json", "as_json", is_flag=True, default=True)
-def update_project(project_id, name, description, status, as_json):
-    """Update a project."""
-    result = http_backend.update_project(project_id, name=name, description=description, status=status)
-    output_json(result)
-
-
-@projects.command("delete")
-@click.argument("project_id")
-@click.option("--json", "as_json", is_flag=True, default=True)
-def delete_project(project_id, as_json):
-    """Delete/archive a project."""
-    result = http_backend.delete_project(project_id)
-    output_json(result)
+# projects create/update/delete CLI commands — DROPPED per Item 3 spike
+# (5/05). POST /api/projects/ is reachable but payload schema is incomplete
+# in the Haiku-coauthored snapcli stub: known-required fields are name +
+# description + start_date + due_date + coordinators[] + project_type +
+# unit, but the "unit" field shape is unknown (passing unit.id int returns
+# HTTP 500). Update + delete remained untested because they depend on a
+# safe create+delete cycle. list + get commands remain available and
+# verified. Endpoint-discovery follow-up tracked separately — re-add the
+# CLI subcommands once the create payload is captured via Safari.
 
 
 # ── estimates group ────────────────────────────────────────────────────────────
