@@ -977,6 +977,89 @@ def upload_receipt(meld_id: str, file_path: str, description: str = "", linked_e
         return {"ok": False, "error": f"HTTP {e.code}", "detail": body_err[:300]}
 
 
+def upload_meld_file(meld_id: str, file_path: str, uploader_role: str = "manager", description: str = "") -> dict:
+    """Upload a file attachment to a meld via cookie HTTP.
+
+    Routes by uploader_role:
+      manager → POST /api/melds/{id}/files/         (manager session)
+      tenant  → POST /api/melds/{id}/tenant-files/  (manager-side backfill)
+      vendor  → POST /api/melds/{id}/vendor-files/  (manager-side backfill)
+
+    Closes the file-upload coverage gap flagged 5/07: previously only
+    receipts had upload coverage; manager + tenant + vendor file uploads
+    now work via this single function with --as flag.
+    """
+    meld_id = _validate_meld_id(meld_id)
+    import os as _os
+    from pathlib import Path as _Path
+
+    if not _os.path.exists(file_path):
+        return {"ok": False, "error": f"File not found: {file_path}"}
+
+    role_to_endpoint = {
+        "manager": "files",
+        "tenant": "tenant-files",
+        "vendor": "vendor-files",
+    }
+    if uploader_role not in role_to_endpoint:
+        return {"ok": False, "error": f"Unknown uploader_role '{uploader_role}'. Use manager|tenant|vendor."}
+    endpoint = role_to_endpoint[uploader_role]
+
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+
+    file_name = _Path(file_path).name
+    with open(file_path, "rb") as f:
+        file_data = f.read()
+
+    boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
+    body_parts = []
+    body_parts.append(f"--{boundary}".encode())
+    body_parts.append(b'Content-Disposition: form-data; name="meld_id"')
+    body_parts.append(b"")
+    body_parts.append(str(meld_id).encode())
+
+    if description:
+        body_parts.append(f"--{boundary}".encode())
+        body_parts.append(b'Content-Disposition: form-data; name="description"')
+        body_parts.append(b"")
+        body_parts.append(description.encode())
+
+    body_parts.append(f"--{boundary}".encode())
+    body_parts.append(f'Content-Disposition: form-data; name="file"; filename="{file_name}"'.encode())
+    body_parts.append(b"Content-Type: application/octet-stream")
+    body_parts.append(b"")
+    body_parts.append(file_data)
+    body_parts.append(f"--{boundary}--".encode())
+    body_parts.append(b"")
+
+    body = b"\r\n".join(body_parts)
+
+    req = urllib.request.Request(
+        f"{BASE}/api/melds/{int(meld_id)}/{endpoint}/",
+        data=body,
+        method="POST",
+        headers={
+            "Cookie": cookie_hdr,
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Accept": "application/json",
+            "X-CSRFToken": csrf_token,
+            "X-Requested-With": "XMLHttpRequest",
+            "User-Agent": UA,
+            "Referer": f"{BASE}/melds/",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=30) as resp:
+            result = json.loads(resp.read())
+            return {"ok": True, "uploader_role": uploader_role, "file_id": result.get("id"), "result": result}
+    except urllib.error.HTTPError as e:
+        body_err = e.read().decode("utf-8", errors="ignore")
+        return {"ok": False, "error": f"HTTP {e.code}", "uploader_role": uploader_role, "detail": body_err[:300]}
+
+
 def link_receipt_to_invoice(receipt_id: str, estimate_id: str) -> dict:
     """Link a receipt to an invoice."""
     creds = _load_creds()
