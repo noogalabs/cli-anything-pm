@@ -84,6 +84,28 @@ def get_work_entries(meld_id, as_json):
     output_json(results)
 
 
+@work_orders.command("upload-file")
+@click.argument("meld_id")
+@click.argument("file_path", type=click.Path(exists=True, dir_okay=False))
+@click.option("--as", "uploader_role", type=click.Choice(["manager", "tenant", "vendor"]),
+              default="manager", help="Uploader role determines target endpoint.")
+@click.option("--description", default="", help="Optional file description.")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def upload_file(meld_id, file_path, uploader_role, description, as_json):
+    """Upload a file (photo, doc) to a meld.
+
+    Routes by --as:
+      manager → POST /api/melds/{id}/files/         (default)
+      tenant  → POST /api/melds/{id}/tenant-files/  (manager-side backfill)
+      vendor  → POST /api/melds/{id}/vendor-files/  (manager-side backfill)
+
+    Tenant + vendor endpoints may require additional auth — failure
+    surfaces verbatim from PM API.
+    """
+    result = http_backend.upload_meld_file(meld_id, file_path, uploader_role, description)
+    output_json(result)
+
+
 @work_orders.command("send-message")
 @click.option("--meld-id", required=True, help="Meld ID")
 @click.option("--text", required=True, help="Message body")
