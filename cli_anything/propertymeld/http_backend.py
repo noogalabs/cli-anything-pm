@@ -241,6 +241,32 @@ def _http_patch(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> A
         sys.exit(1)
 
 
+def _http_get_optional_results(path: str, cookie_hdr: str, note_label: str) -> tuple[list, Optional[str]]:
+    """GET an optional list endpoint and downgrade 404s to an empty list + note."""
+    req = urllib.request.Request(
+        f"{BASE}/api/{path}",
+        headers={
+            "Cookie": cookie_hdr,
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "User-Agent": UA,
+            "Referer": f"{BASE}/melds/",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="ignore")
+        if e.code == 404:
+            return [], f"{note_label} endpoint unavailable (404): /api/{path}"
+        print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
+        sys.exit(1)
+
+    items = data.get("results", data) if isinstance(data, dict) else data
+    return (items if isinstance(items, list) else []), None
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def get_comments(meld_id: str) -> list:
@@ -612,6 +638,58 @@ def list_work_entries(meld_id: str) -> list:
     cookie_hdr = _cookie_header(creds)
     data = _http_get(f"melds/{meld_id}/work-entries/", cookie_hdr)
     return data.get("results", data) if isinstance(data, dict) else data
+
+
+def _list_photo_source(meld_id: str, endpoint: str, role: str, optional: bool = False) -> tuple[list, Optional[str]]:
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    path = f"melds/{meld_id}/{endpoint}/?limit=100"
+    if optional:
+        items, note = _http_get_optional_results(path, cookie_hdr, role)
+    else:
+        data = _http_get(path, cookie_hdr)
+        items = data.get("results", data) if isinstance(data, dict) else data
+        note = None
+
+    tagged: list = []
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict):
+                item = dict(item)
+                item["uploader_role"] = role
+            tagged.append(item)
+    return tagged, note
+
+
+def inspect_meld(meld_id: str) -> dict:
+    """Aggregate meld detail, photos, notes, work entries, and comments."""
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    meld = _http_get(f"melds/{meld_id}/", cookie_hdr)
+
+    manager_photos, _ = _list_photo_source(meld_id, "files", "manager")
+    tenant_photos, tenant_note = _list_photo_source(meld_id, "tenant-files", "tenant", optional=True)
+    vendor_photos, vendor_note = _list_photo_source(meld_id, "vendor-files", "vendor", optional=True)
+
+    result = {
+        "meld": meld,
+        "photos": {
+            "manager": manager_photos,
+            "tenant": tenant_photos,
+            "vendor": vendor_photos,
+        },
+        "notes": {
+            "completion_notes": meld.get("completion_notes"),
+            "maintenance_notes": meld.get("maintenance_notes"),
+            "work_entries": list_work_entries(meld_id),
+            "comments": get_comments(meld_id),
+        },
+    }
+    if tenant_note:
+        result["photos"]["tenant_note"] = tenant_note
+    if vendor_note:
+        result["photos"]["vendor_note"] = vendor_note
+    return result
 
 
 def assign_vendor(meld_id: str, vendor_id: str, account_prefix: str = "1") -> dict:
@@ -1077,4 +1155,3 @@ def link_receipt_to_invoice(receipt_id: str, estimate_id: str) -> dict:
 
 
 # ── Vendor Invitations ───────────────────────────────────────────────────────
-
