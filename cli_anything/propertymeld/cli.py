@@ -18,7 +18,7 @@ import sys
 import click
 
 from . import api_backend, http_backend
-from .utils import output_json
+from .utils import output_json, resolve_meld_id
 
 
 @click.group()
@@ -34,6 +34,10 @@ def cli():
 def work_orders():
     """Work order commands."""
     pass
+
+
+def _normalize_meld_id(meld_id):
+    return resolve_meld_id(meld_id) if meld_id is not None else None
 
 
 @work_orders.command("list")
@@ -53,6 +57,7 @@ def list_work_orders(status, limit, as_json):
 @click.option("--json", "as_json", is_flag=True, default=True)
 def get_work_order(meld_id, as_json):
     """Get a single work order by ID."""
+    meld_id = _normalize_meld_id(meld_id)
     result = api_backend.get_work_order(meld_id)
     output_json(result)
 
@@ -62,6 +67,7 @@ def get_work_order(meld_id, as_json):
 @click.option("--json", "as_json", is_flag=True, default=True)
 def get_comments(meld_id, as_json):
     """Get comments/notes for a work order (plain HTTP, no Playwright)."""
+    meld_id = _normalize_meld_id(meld_id)
     results = http_backend.get_comments(meld_id)
     output_json(results)
 
@@ -71,6 +77,7 @@ def get_comments(meld_id, as_json):
 @click.option("--json", "as_json", is_flag=True, default=True)
 def get_files(meld_id, as_json):
     """List files attached to a work order (manager + tenant + vendor uploads)."""
+    meld_id = _normalize_meld_id(meld_id)
     results = http_backend.list_files(meld_id)
     output_json(results)
 
@@ -80,6 +87,7 @@ def get_files(meld_id, as_json):
 @click.option("--json", "as_json", is_flag=True, default=True)
 def get_work_entries(meld_id, as_json):
     """List per-visit work-entries (checkin/checkout/hours/agent/notes) for a meld."""
+    meld_id = _normalize_meld_id(meld_id)
     results = http_backend.list_work_entries(meld_id)
     output_json(results)
 
@@ -102,6 +110,7 @@ def upload_file(meld_id, file_path, uploader_role, description, as_json):
     Tenant + vendor endpoints may require additional auth — failure
     surfaces verbatim from PM API.
     """
+    meld_id = _normalize_meld_id(meld_id)
     result = http_backend.upload_meld_file(meld_id, file_path, uploader_role, description)
     output_json(result)
 
@@ -115,6 +124,7 @@ def upload_file(meld_id, file_path, uploader_role, description, as_json):
 @click.option("--json", "as_json", is_flag=True, default=True)
 def send_message(meld_id, text, hide_tenant, hide_vendor, hide_owner, as_json):
     """Post a message/comment on a meld (plain HTTP, no Playwright)."""
+    meld_id = _normalize_meld_id(meld_id)
     result = http_backend.send_message(
         meld_id, text,
         hidden_from_tenant=hide_tenant,
@@ -130,6 +140,7 @@ def send_message(meld_id, text, hide_tenant, hide_vendor, hide_owner, as_json):
 @click.option("--json", "as_json", is_flag=True, default=True)
 def clone_meld(meld_id, description, as_json):
     """Clone a meld — creates a new meld with the same details (plain HTTP)."""
+    meld_id = _normalize_meld_id(meld_id)
     result = http_backend.clone_meld(meld_id, brief_description=description)
     output_json(result)
 
@@ -140,6 +151,8 @@ def clone_meld(meld_id, description, as_json):
 @click.option("--json", "as_json", is_flag=True, default=True)
 def merge_meld(meld_id, into_meld_id, as_json):
     """Merge a meld into another meld. Both must be at the same unit."""
+    meld_id = _normalize_meld_id(meld_id)
+    into_meld_id = _normalize_meld_id(into_meld_id)
     result = http_backend.merge_meld(meld_id, into_meld_id)
     output_json(result)
 
@@ -150,6 +163,7 @@ def merge_meld(meld_id, into_meld_id, as_json):
 @click.option("--json", "as_json", is_flag=True, default=True)
 def complete_meld(meld_id, notes, as_json):
     """Mark a meld complete from the manager side (meld must be PENDING_COMPLETION)."""
+    meld_id = _normalize_meld_id(meld_id)
     result = http_backend.complete_meld(meld_id, completion_notes=notes)
     output_json(result)
 
@@ -160,6 +174,7 @@ def complete_meld(meld_id, notes, as_json):
 @click.option("--json", "as_json", is_flag=True, default=True)
 def cancel_meld(meld_id, reason, as_json):
     """Cancel a meld from the manager side."""
+    meld_id = _normalize_meld_id(meld_id)
     result = http_backend.cancel_meld(meld_id, reason=reason)
     output_json(result)
 
@@ -171,6 +186,7 @@ def cancel_meld(meld_id, reason, as_json):
 @click.option("--json", "as_json", is_flag=True, default=True)
 def schedule_appointment(meld_id, dtstart, hours, as_json):
     """Schedule an in-house tech appointment window on a meld."""
+    meld_id = _normalize_meld_id(meld_id)
     result = http_backend.schedule_appointment(meld_id, dtstart, duration_hours=hours)
     output_json(result)
 
@@ -244,6 +260,7 @@ def list_vendors(limit, as_json):
 @click.option("--json", "as_json", is_flag=True, default=True)
 def assign_tech(work_order_id, tech, as_json):
     """Assign an in-house tech to a work order (plain HTTP, no Playwright)."""
+    work_order_id = _normalize_meld_id(work_order_id)
     result = http_backend.assign_tech(work_order_id, tech)
     output_json(result)
 
@@ -255,6 +272,7 @@ def assign_tech(work_order_id, tech, as_json):
 @click.option("--json", "as_json", is_flag=True, default=True)
 def assign_vendor_cmd(work_order_id, vendor, account, as_json):
     """Assign an external vendor to a work order by name (partial match)."""
+    work_order_id = _normalize_meld_id(work_order_id)
     result = http_backend.assign_vendor_by_name(work_order_id, vendor, account_prefix=account)
     output_json(result)
 
@@ -324,6 +342,7 @@ def probe():
 @click.option("--json", "as_json", is_flag=True, default=True)
 def schedule_vendor_appointment(meld_id, vendor_id, dtstart, hours, as_json):
     """Schedule an external vendor appointment window on a meld."""
+    meld_id = _normalize_meld_id(meld_id)
     result = http_backend.schedule_vendor_appointment(meld_id, vendor_id, dtstart, duration_hours=hours)
     output_json(result)
 
@@ -342,6 +361,7 @@ def projects():
 @click.option("--json", "as_json", is_flag=True, default=True)
 def list_projects(meld_id, limit, as_json):
     """List projects."""
+    meld_id = _normalize_meld_id(meld_id)
     results = http_backend.list_projects(meld_id=meld_id, limit=limit)
     output_json(results)
 
@@ -381,6 +401,7 @@ def estimates():
 @click.option("--json", "as_json", is_flag=True, default=True)
 def list_estimates(meld_id, status, limit, as_json):
     """List estimates."""
+    meld_id = _normalize_meld_id(meld_id)
     results = http_backend.list_estimates(meld_id=meld_id, status=status, limit=limit)
     output_json(results)
 
@@ -404,6 +425,7 @@ def get_estimate(estimate_id, as_json):
 @click.option("--json", "as_json", is_flag=True, default=True)
 def create_estimate(meld_id, estimate_number, amount, description, due_date, project_id, as_json):
     """Create a new invoice."""
+    meld_id = _normalize_meld_id(meld_id)
     result = http_backend.create_estimate(meld_id, estimate_number, amount, description=description, due_date=due_date, project_id=project_id)
     output_json(result)
 
@@ -427,6 +449,7 @@ def update_estimate(estimate_id, estimate_number, amount, description, status, a
 @click.option("--json", "as_json", is_flag=True, default=True)
 def link_invoice(estimate_id, meld_id, as_json):
     """Link an estimate to a meld."""
+    meld_id = _normalize_meld_id(meld_id)
     result = http_backend.link_estimate_to_meld(estimate_id, meld_id)
     output_json(result)
 
@@ -445,6 +468,7 @@ def receipts():
 @click.option("--json", "as_json", is_flag=True, default=True)
 def list_receipts(meld_id, limit, as_json):
     """List receipts."""
+    meld_id = _normalize_meld_id(meld_id)
     results = http_backend.list_receipts(meld_id=meld_id, limit=limit)
     output_json(results)
 
@@ -466,6 +490,7 @@ def get_receipt(receipt_id, as_json):
 @click.option("--json", "as_json", is_flag=True, default=True)
 def upload_receipt(meld_id, file_path, description, estimate_id, as_json):
     """Upload a receipt file."""
+    meld_id = _normalize_meld_id(meld_id)
     result = http_backend.upload_receipt(meld_id, file_path, description=description, linked_estimate_id=estimate_id)
     output_json(result)
 
@@ -478,5 +503,4 @@ def link_receipt(receipt_id, estimate_id, as_json):
     """Link a receipt to an invoice."""
     result = http_backend.link_receipt_to_invoice(receipt_id, estimate_id)
     output_json(result)
-
 
