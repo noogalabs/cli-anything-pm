@@ -20,6 +20,8 @@ import urllib.error
 import urllib.request
 from typing import Any, Optional
 
+from .utils import normalize_http_error
+
 CREDS_PATH = os.environ.get(
     "PM_CREDS_PATH", os.path.expanduser("~/.claude/credentials/property-meld.json")
 )
@@ -89,7 +91,7 @@ def _http_get(path: str, cookie_hdr: str) -> Any:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="ignore")
-        print(json.dumps({"error": f"HTTP {e.code}", "detail": body[:300]}), file=sys.stderr)
+        print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
         sys.exit(1)
 
 
@@ -115,7 +117,7 @@ def _http_post(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> An
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="ignore")
-        print(json.dumps({"error": f"HTTP {e.code}", "detail": body[:300]}), file=sys.stderr)
+        print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
         sys.exit(1)
 
 
@@ -157,7 +159,7 @@ def _http_get_nexus(path: str, cookie_hdr: str) -> Any:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="ignore")
-        print(json.dumps({"error": f"HTTP {e.code}", "detail": body[:300]}), file=sys.stderr)
+        print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
         sys.exit(1)
 
 
@@ -183,7 +185,7 @@ def _http_post_nexus(path: str, payload: dict, cookie_hdr: str, csrf_token: str)
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="ignore")
-        print(json.dumps({"error": f"HTTP {e.code}", "detail": body[:300]}), file=sys.stderr)
+        print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
         sys.exit(1)
 
 
@@ -209,7 +211,7 @@ def _http_put(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> Any
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="ignore")
-        print(json.dumps({"error": f"HTTP {e.code}", "detail": body[:300]}), file=sys.stderr)
+        print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
         sys.exit(1)
 
 
@@ -235,7 +237,7 @@ def _http_patch(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> A
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="ignore")
-        print(json.dumps({"error": f"HTTP {e.code}", "detail": body[:300]}), file=sys.stderr)
+        print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
         sys.exit(1)
 
 
@@ -974,7 +976,9 @@ def upload_receipt(meld_id: str, file_path: str, description: str = "", linked_e
             return {"ok": True, "receipt_id": result.get("id"), "result": result}
     except urllib.error.HTTPError as e:
         body_err = e.read().decode("utf-8", errors="ignore")
-        return {"ok": False, "error": f"HTTP {e.code}", "detail": body_err[:300]}
+        error = normalize_http_error(e.code, body_err)
+        error["ok"] = False
+        return error
 
 
 def upload_meld_file(meld_id: str, file_path: str, uploader_role: str = "manager", description: str = "") -> dict:
@@ -1057,7 +1061,10 @@ def upload_meld_file(meld_id: str, file_path: str, uploader_role: str = "manager
             return {"ok": True, "uploader_role": uploader_role, "file_id": result.get("id"), "result": result}
     except urllib.error.HTTPError as e:
         body_err = e.read().decode("utf-8", errors="ignore")
-        return {"ok": False, "error": f"HTTP {e.code}", "uploader_role": uploader_role, "detail": body_err[:300]}
+        error = normalize_http_error(e.code, body_err)
+        error["ok"] = False
+        error["uploader_role"] = uploader_role
+        return error
 
 
 def link_receipt_to_invoice(receipt_id: str, estimate_id: str) -> dict:
@@ -1070,5 +1077,4 @@ def link_receipt_to_invoice(receipt_id: str, estimate_id: str) -> dict:
 
 
 # ── Vendor Invitations ───────────────────────────────────────────────────────
-
 

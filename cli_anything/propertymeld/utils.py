@@ -60,6 +60,38 @@ def print_error(message: str) -> None:
     print(json.dumps({"error": message}), file=sys.stderr)
 
 
+def _is_html_response(body: str) -> bool:
+    text = (body or "").lstrip().lower()
+    return text.startswith("<") or "<html" in text
+
+
+def normalize_http_error(status_code: int, body: str) -> dict:
+    """Normalize PM error bodies, especially raw HTML error pages."""
+    if _is_html_response(body):
+        excerpt = " ".join((body or "").split())[:200]
+        return {
+            "error": f"HTTP {status_code}",
+            "status_code": status_code,
+            "body_excerpt": excerpt,
+        }
+
+    detail = (body or "").strip()
+    try:
+        parsed = json.loads(detail)
+    except (TypeError, ValueError):
+        parsed = None
+
+    if isinstance(parsed, dict):
+        parsed.setdefault("error", f"HTTP {status_code}")
+        parsed.setdefault("status_code", status_code)
+        return parsed
+
+    result = {"error": f"HTTP {status_code}", "status_code": status_code}
+    if detail:
+        result["detail"] = detail[:300]
+    return result
+
+
 def _api_get_json(path: str, params: dict | None = None) -> Any:
     """Make a direct authenticated Nexus API GET request."""
     import ssl
