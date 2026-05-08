@@ -347,6 +347,16 @@ def schedule_vendor_appointment(meld_id, vendor_id, dtstart, hours, as_json):
     output_json(result)
 
 
+@work_orders.command("inspect")
+@click.argument("meld_id")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def inspect_work_order(meld_id, as_json):
+    """Inspect a work order across detail, photos, notes, work entries, and comments."""
+    meld_id = _normalize_meld_id(meld_id)
+    result = http_backend.inspect_meld(meld_id)
+    output_json(result)
+
+
 # ── projects group ────────────────────────────────────────────────────────────
 
 @cli.group()
@@ -503,4 +513,3 @@ def link_receipt(receipt_id, estimate_id, as_json):
     """Link a receipt to an invoice."""
     result = http_backend.link_receipt_to_invoice(receipt_id, estimate_id)
     output_json(result)
-
