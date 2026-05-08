@@ -60,6 +60,110 @@ def print_error(message: str) -> None:
     print(json.dumps({"error": message}), file=sys.stderr)
 
 
+def _api_get_json(path: str, params: dict | None = None) -> Any:
+    """Make a direct authenticated Nexus API GET request."""
+    import ssl
+    import urllib.parse
+    import urllib.request
+
+    token = get_token()
+    url = f"{API_BASE}{path}"
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Multitenant-Id": MULTITENANT_ID,
+            "User-Agent": UA,
+            "Accept": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, context=ssl.create_default_context(), timeout=15) as resp:
+        return json.loads(resp.read())
+
+
+def _extract_results(data: Any) -> list:
+    if isinstance(data, dict):
+        results = data.get("results", data)
+        return results if isinstance(results, list) else []
+    return data if isinstance(data, list) else []
+
+
+def _find_matching_meld(items: list, ref_id: str) -> dict | None:
+    target = ref_id.strip().upper()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        for key in ("ref_id", "reference_id"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip().upper() == target:
+                return item
+    return None
+
+
+def resolve_meld_id(maybe_ref_or_int: str) -> str:
+    """Return internal int meld_id for a numeric ID or human ref_id."""
+    import urllib.error
+
+    raw = str(maybe_ref_or_int).strip()
+    if raw.isdigit():
+        return raw
+
+    queries = [
+        {"ref_id": raw, "limit": 25},
+        {"reference_id": raw, "limit": 25},
+        {"search": raw, "limit": 25},
+    ]
+    for params in queries:
+        try:
+            data = _api_get_json("/meld/", params)
+        except urllib.error.HTTPError as exc:
+            if exc.code in (400, 404):
+                continue
+            print_error(f"API error {exc.code}: {exc.reason}")
+            raise SystemExit(1)
+        except urllib.error.URLError as exc:
+            print_error(f"Network error: {exc.reason}")
+            raise SystemExit(1)
+        match = _find_matching_meld(_extract_results(data), raw)
+        if match and match.get("id") is not None:
+            resolved = str(match["id"])
+            print(f"[resolved {raw} -> {resolved}]", file=sys.stderr)
+            return resolved
+
+    next_path = "/meld/?limit=100"
+    while next_path:
+        try:
+            data = _api_get_json(next_path)
+        except urllib.error.HTTPError as exc:
+            print_error(f"API error {exc.code}: {exc.reason}")
+            raise SystemExit(1)
+        except urllib.error.URLError as exc:
+            print_error(f"Network error: {exc.reason}")
+            raise SystemExit(1)
+
+        match = _find_matching_meld(_extract_results(data), raw)
+        if match and match.get("id") is not None:
+            resolved = str(match["id"])
+            print(f"[resolved {raw} -> {resolved}]", file=sys.stderr)
+            return resolved
+        if isinstance(data, dict) and data.get("next"):
+            next_url = data["next"]
+            if next_url.startswith(API_BASE):
+                next_path = next_url[len(API_BASE):]
+            elif "/api/v2" in next_url:
+                next_path = next_url.split("/api/v2", 1)[1]
+            else:
+                next_path = None
+        else:
+            next_path = None
+
+    print_error(f"Meld ref_id '{raw}' not found.")
+    raise SystemExit(2)
+
+
 def clear_token_cache() -> None:
     """Clear cached token (for testing)."""
     _token_cache.clear()
