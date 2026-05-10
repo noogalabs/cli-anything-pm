@@ -106,17 +106,44 @@ def get_work_order(meld_id: str) -> dict:
 
 
 def list_properties(limit: int = 100) -> list:
-    """List all properties."""
-    data = _api_get("/property/", {"limit": limit})
-    results = data.get("results", data) if isinstance(data, dict) else data
-    return results
+    """List properties up to `limit`, walking DRF `next` link pagination.
+
+    Previous behavior returned only the first page (`limit` capped at the
+    server-side page size, ~100). When the underlying record set was larger
+    than 100, the help text "List all properties" silently lied. Now: walk
+    `next` until we have `limit` items or the chain ends.
+    """
+    return _paginate_until("/property/", limit)
 
 
 def list_vendors(limit: int = 100) -> list:
-    """List all vendors."""
-    data = _api_get("/vendor/", {"limit": limit})
-    results = data.get("results", data) if isinstance(data, dict) else data
-    return results
+    """List vendors up to `limit`. See list_properties for pagination notes."""
+    return _paginate_until("/vendor/", limit)
+
+
+def _paginate_until(path: str, limit: int) -> list:
+    """Walk DRF `next` links until `limit` items collected or chain exhausted."""
+    page_size = max(1, min(limit, 100))
+    next_path: Optional[str] = path
+    params: Optional[dict] = {"limit": page_size}
+    results: list = []
+    while next_path and len(results) < limit:
+        data = _api_get(next_path, params)
+        page_items = data.get("results", data) if isinstance(data, dict) else data
+        if not isinstance(page_items, list):
+            return page_items if isinstance(page_items, list) else []
+        results.extend(page_items)
+        if not isinstance(data, dict):
+            break
+        raw_next = data.get("next")
+        if not raw_next:
+            break
+        if "/api/v2" in raw_next:
+            next_path = raw_next.split("/api/v2", 1)[1]
+            params = None  # the `next` URL already has limit + cursor baked in
+        else:
+            break
+    return results[:limit]
 
 
 def probe() -> dict:

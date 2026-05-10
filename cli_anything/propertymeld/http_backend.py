@@ -95,6 +95,48 @@ def _http_get(path: str, cookie_hdr: str) -> Any:
         sys.exit(1)
 
 
+def _paginate_all(path: str, cookie_hdr: str, max_pages: int = 50) -> list:
+    """Walk the DRF `next` link chain and concatenate `results` arrays.
+
+    Many cookie-API list endpoints return at most 100 items per page (and
+    often default to 25). Helpers that read only the first page silently
+    truncate when the underlying record set is larger — this masked photo
+    sources past 100 items in the inspect aggregator and capped name-based
+    tech/vendor matching at the first 100 records. Use this helper anywhere
+    the caller's intent is "all of them, not just page 1".
+
+    `max_pages` is a defensive cap to prevent runaway pagination on a
+    misconfigured endpoint; raise it if a real list legitimately exceeds it.
+    """
+    results: list = []
+    pages = 0
+    next_path: Optional[str] = path
+    while next_path and pages < max_pages:
+        page = _http_get(next_path, cookie_hdr)
+        pages += 1
+        if isinstance(page, dict):
+            page_items = page.get("results")
+            if isinstance(page_items, list):
+                results.extend(page_items)
+            else:
+                # Non-paginated dict — return whatever it gave us
+                return page_items if isinstance(page_items, list) else []
+            raw_next = page.get("next")
+            if not raw_next:
+                next_path = None
+            elif "/api/" in raw_next:
+                next_path = raw_next.split("/api/", 1)[1]
+            else:
+                next_path = None
+        elif isinstance(page, list):
+            # Endpoint returned a flat list (no pagination wrapper)
+            results.extend(page)
+            next_path = None
+        else:
+            next_path = None
+    return results
+
+
 def _http_post(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> Any:
     """POST to a browser-session API path, return parsed JSON."""
     data = json.dumps(payload).encode()
@@ -373,9 +415,10 @@ def assign_tech(meld_id: str, tech_name: str) -> dict:
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
 
-    agents = _http_get("agents/?limit=100", cookie_hdr)
-    if isinstance(agents, dict):
-        agents = agents.get("results", [])
+    # Paginate the full agent roster — the previous first-100-only call
+    # silently false-negatived on any tech beyond the first page once the
+    # team grew past that threshold.
+    agents = _paginate_all("agents/?limit=100", cookie_hdr)
 
     tech_lower = tech_name.lower()
     match = None
@@ -552,18 +595,14 @@ def list_tenants(search: Optional[str] = None, limit: int = 100) -> list:
     """
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
-    # Fetch all tenants (API does not support server-side name/email filtering)
-    results: list = []
+    # Fetch tenants. The API does not support server-side name/email
+    # filtering on this endpoint, so search has to happen client-side.
+    # When search is set we must paginate the full roster — the previous
+    # `limit * 3` cap could miss matches that live on later pages of a
+    # large tenant list. Without search, stop after the requested limit.
     page_size = 200
-    page = _http_get(f"tenants/?limit={page_size}", cookie_hdr)
-    results.extend(page.get("results", []))
-    # Paginate if needed and we haven't hit the requested limit
-    while page.get("next") and len(results) < limit * 3:
-        next_url = page["next"].split("/api/")[-1]
-        page = _http_get(next_url, cookie_hdr)
-        results.extend(page.get("results", []))
-
     if search:
+        results = _paginate_all(f"tenants/?limit={page_size}", cookie_hdr)
         needle = search.lower()
         results = [
             t for t in results
@@ -573,7 +612,15 @@ def list_tenants(search: Optional[str] = None, limit: int = 100) -> list:
             or needle in ((t.get("contact") or {}).get("cell_phone") or "")
             or needle in ((t.get("contact") or {}).get("home_phone") or "")
         ]
+        return results[:limit]
 
+    results: list = []
+    page = _http_get(f"tenants/?limit={page_size}", cookie_hdr)
+    results.extend(page.get("results", []))
+    while page.get("next") and len(results) < limit:
+        next_url = page["next"].split("/api/")[-1]
+        page = _http_get(next_url, cookie_hdr)
+        results.extend(page.get("results", []))
     return results[:limit]
 
 
@@ -603,6 +650,11 @@ def list_files(meld_id: str) -> list:
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
 
+    # Paginate each photo source — capping at the first page silently
+    # under-counts when a meld has >100 manager/tenant/vendor uploads. The
+    # pre-complete audit hook treats this list as authoritative for the
+    # photo-presence gate, so an under-count would let a meld through
+    # without proof of work in edge cases.
     sources = [
         ("manager", f"melds/{meld_id}/files/?limit=100"),
         ("tenant",  f"melds/{meld_id}/tenant-files/?limit=100"),
@@ -611,11 +663,7 @@ def list_files(meld_id: str) -> list:
 
     merged: list = []
     for role, path in sources:
-        data = _http_get(path, cookie_hdr)
-        items = data.get("results", data) if isinstance(data, dict) else data
-        if not isinstance(items, list):
-            continue
-        for item in items:
+        for item in _paginate_all(path, cookie_hdr):
             if isinstance(item, dict):
                 item["uploader_role"] = role
             merged.append(item)
@@ -644,20 +692,26 @@ def _list_photo_source(meld_id: str, endpoint: str, role: str, optional: bool = 
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     path = f"melds/{meld_id}/{endpoint}/?limit=100"
+    note = None
     if optional:
-        items, note = _http_get_optional_results(path, cookie_hdr, role)
+        # The optional path may legitimately 403 (tenant/vendor endpoints
+        # without elevated session); preserve its single-page note semantics
+        # but still walk pagination on success so the inspect aggregator
+        # never silently truncates above 100 items.
+        items_first, note = _http_get_optional_results(path, cookie_hdr, role)
+        if note is not None:
+            items: list = items_first if isinstance(items_first, list) else []
+        else:
+            items = _paginate_all(path, cookie_hdr)
     else:
-        data = _http_get(path, cookie_hdr)
-        items = data.get("results", data) if isinstance(data, dict) else data
-        note = None
+        items = _paginate_all(path, cookie_hdr)
 
     tagged: list = []
-    if isinstance(items, list):
-        for item in items:
-            if isinstance(item, dict):
-                item = dict(item)
-                item["uploader_role"] = role
-            tagged.append(item)
+    for item in items:
+        if isinstance(item, dict):
+            item = dict(item)
+            item["uploader_role"] = role
+        tagged.append(item)
     return tagged, note
 
 
@@ -740,9 +794,8 @@ def assign_vendor_by_name(meld_id: str, vendor_name: str, account_prefix: str = 
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
 
-    vendors = _http_get("vendors/?limit=100", cookie_hdr)
-    if isinstance(vendors, dict):
-        vendors = vendors.get("results", [])
+    # Paginate the full vendor book; previously capped at first 100.
+    vendors = _paginate_all("vendors/?limit=100", cookie_hdr)
 
     vendor_lower = vendor_name.lower()
     match = None
@@ -899,7 +952,13 @@ def list_estimates(meld_id: Optional[str] = None, limit: int = 100, status: Opti
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     if meld_id:
-        path = f"estimates/meld/{meld_id}/"
+        # Apply --status / --limit to the meld-scoped path too. Previously
+        # both flags were silently dropped when meld_id was set, so an
+        # operator filtering for `--status open --limit 5` against a
+        # specific meld would get back the whole estimate set unfiltered.
+        path = f"estimates/meld/{meld_id}/?limit={limit}"
+        if status:
+            path += f"&status={status}"
     else:
         path = f"estimates/?limit={limit}"
         if status:
