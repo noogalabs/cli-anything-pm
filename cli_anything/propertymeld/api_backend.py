@@ -49,16 +49,37 @@ def _api_get(path: str, params: Optional[dict] = None) -> Any:
 
 
 def list_work_orders(status: Optional[str] = None, limit: int = 25) -> list:
-    """List work orders, optionally filtered by status."""
-    params: dict = {"limit": limit}
+    """List work orders, optionally filtered by status.
+
+    PM Nexus accepts UPPER_CASE_SNAKE_CASE values for the `status` filter and
+    rejects anything else (HTTP 400 "Select a valid choice"). The valid set
+    observed via Nexus introspection on tenant 3287:
+
+        PENDING_ASSIGNMENT
+        PENDING_VENDOR
+        PENDING_MORE_MANAGEMENT_AVAILABILITY
+        COMPLETED
+        MANAGER_CANCELED
+
+    The CLI exposes friendlier slugs ("open", "pending", "completed",
+    "canceled"). "open" maps to ALL three PENDING_* states sent as repeated
+    `status=` query params, which Nexus interprets as a logical OR.
+    """
+    params: list[tuple[str, str]] = [("limit", str(limit))]
     if status:
-        status_map = {
-            "open": "open",
-            "pending": "pending_completion",
-            "completed": "completed",
-            "canceled": "canceled",
+        slug_to_states = {
+            "open": [
+                "PENDING_ASSIGNMENT",
+                "PENDING_VENDOR",
+                "PENDING_MORE_MANAGEMENT_AVAILABILITY",
+            ],
+            "pending": ["PENDING_VENDOR"],
+            "completed": ["COMPLETED"],
+            "canceled": ["MANAGER_CANCELED"],
         }
-        params["status"] = status_map.get(status.lower(), status)
+        states = slug_to_states.get(status.lower(), [status])
+        for s in states:
+            params.append(("status", s))
 
     data = _api_get("/meld/", params)
     results = data.get("results", data) if isinstance(data, dict) else data
