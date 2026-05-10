@@ -57,6 +57,8 @@ class TestListWorkOrders:
         assert results[0]["id"] == 1001
 
     def test_status_filter_passed_as_param(self):
+        # 'open' fans out to all 3 PENDING_* states sent as repeated status=
+        # params per Nexus DRF MultipleChoiceFilter shape (901d1f4).
         with patch("urllib.request.urlopen") as mock_open:
             mock_open.side_effect = [
                 make_response(TOKEN_RESPONSE),
@@ -65,7 +67,9 @@ class TestListWorkOrders:
             api_backend.list_work_orders(status="open")
         call_args = mock_open.call_args_list[1]
         url = call_args[0][0].full_url
-        assert "status=open" in url
+        assert "status=PENDING_ASSIGNMENT" in url
+        assert "status=PENDING_VENDOR" in url
+        assert "status=PENDING_MORE_MANAGEMENT_AVAILABILITY" in url
 
     def test_handles_flat_list_response(self):
         """Some endpoints return a flat list, not {results: [...]}."""
