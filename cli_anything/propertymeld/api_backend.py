@@ -41,7 +41,21 @@ def _api_get(path: str, params: Optional[dict] = None) -> Any:
         with urllib.request.urlopen(req, context=ssl.create_default_context(), timeout=15) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        print_error(f"API error {e.code}: {e.reason}")
+        # Surface the response body so DRF validation errors like
+        # `{"status":["Select a valid choice. open is not one of the available choices."]}`
+        # actually reach the operator. Previously the body was discarded and
+        # callers saw only "API error 400: Bad Request", which masked the
+        # exact lowercase-vs-UPPER_CASE_SNAKE_CASE enum bug fixed in 901d1f4.
+        try:
+            body = e.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+        from .utils import normalize_http_error
+        try:
+            detail = normalize_http_error(e.code, body)
+        except Exception:
+            detail = {"error": f"API error {e.code}: {e.reason}", "status_code": e.code}
+        print(json.dumps(detail), file=sys.stderr)
         sys.exit(1)
     except urllib.error.URLError as e:
         print_error(f"Network error: {e.reason}")

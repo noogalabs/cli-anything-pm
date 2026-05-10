@@ -10,20 +10,40 @@ API_BASE = "https://app.propertymeld.com/api/v2"
 MULTITENANT_ID = os.environ.get("PM_MULTITENANT_ID", "3287")
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
+import time
+
 _token_cache: dict = {}
+# Refresh the token a bit before the server-stated expiry so a request never
+# starts with a token that expires mid-flight.
+_TOKEN_EXPIRY_SAFETY_SEC = 60
 
 
 def get_token() -> str:
-    """Fetch or return cached OAuth2 bearer token."""
-    if _token_cache.get("token"):
-        return _token_cache["token"]
+    """Fetch or return cached OAuth2 bearer token.
 
+    The cache keys on the client_id + client_secret currently in env so a
+    rotation that swaps the credential pair invalidates the cache automatically.
+    Tokens are also expired against the server-stated `expires_in` (minus a
+    60s safety window) so a long-running process doesn't hand out a token
+    that's about to be rejected. Without this, a stale in-process token can
+    survive past server-side revocation and produce confusing 'API Key no
+    longer active' errors with no clear repro.
+    """
     client_id = os.environ.get("PM_CLIENT_ID", "")
     client_secret = os.environ.get("PM_CLIENT_SECRET", "")
 
     if not client_id or not client_secret:
         print_error("PM_CLIENT_ID or PM_CLIENT_SECRET not set in environment.")
         sys.exit(2)
+
+    cache_key = (client_id, client_secret)
+    cached = _token_cache.get("entry")
+    if (
+        cached
+        and cached.get("key") == cache_key
+        and cached.get("expires_at", 0) > time.time() + _TOKEN_EXPIRY_SAFETY_SEC
+    ):
+        return cached["token"]
 
     import urllib.parse
     import urllib.request
@@ -46,8 +66,13 @@ def get_token() -> str:
     with urllib.request.urlopen(req, context=ssl.create_default_context(), timeout=15) as resp:
         body = json.loads(resp.read())
 
-    _token_cache["token"] = body["access_token"]
-    return _token_cache["token"]
+    expires_in = int(body.get("expires_in", 3600))
+    _token_cache["entry"] = {
+        "key": cache_key,
+        "token": body["access_token"],
+        "expires_at": time.time() + expires_in,
+    }
+    return body["access_token"]
 
 
 def output_json(data: Any) -> None:

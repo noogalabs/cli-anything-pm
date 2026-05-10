@@ -295,8 +295,13 @@ def rotate_api_key(update_railway, as_json):
     The client_secret is shown ONCE — this command captures it for you.
 
     With --update-railway, also runs:
-      railway variables --set PM_NEXUS_CLIENT_ID=<new_id>
-      railway variables --set PM_NEXUS_CLIENT_SECRET=<new_secret>
+      railway variables --set PM_CLIENT_ID=<new_id>
+      railway variables --set PM_CLIENT_SECRET=<new_secret>
+
+    These names match what utils.get_token() actually reads. Older versions
+    of this command wrote PM_NEXUS_CLIENT_ID/PM_NEXUS_CLIENT_SECRET, which
+    Railway accepted but the runtime ignored — silent rotation that never
+    took effect.
     """
     result = http_backend.rotate_api_key()
 
@@ -304,7 +309,7 @@ def rotate_api_key(update_railway, as_json):
         import subprocess
         client_id = result["client_id"]
         client_secret = result["client_secret"]
-        for var, val in [("PM_NEXUS_CLIENT_ID", client_id), ("PM_NEXUS_CLIENT_SECRET", client_secret)]:
+        for var, val in [("PM_CLIENT_ID", client_id), ("PM_CLIENT_SECRET", client_secret)]:
             proc = subprocess.run(
                 ["railway", "variables", "--set", f"{var}={val}"],
                 capture_output=True, text=True
