@@ -11,14 +11,16 @@ Two API contexts:
   Management: https://app.propertymeld.com/{MULTITENANT}/m/{MULTITENANT}/api/
   Nexus Partner: https://app.propertymeld.com/{NEXUS_ACCOUNT_ID}/n/{NEXUS_ACCOUNT_ID}/api/
 """
+import functools
 import json
 import os
 import re
 import ssl
+import subprocess
 import sys
 import urllib.error
 import urllib.request
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .utils import normalize_http_error
 
@@ -33,6 +35,86 @@ UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
 _csrf_cache: dict = {}
 _ssl_ctx = ssl.create_default_context()
+
+
+class SessionExpired(Exception):
+    """Raised by HTTP helpers on 401 so public API calls can retry once."""
+
+    def __init__(self, http_error: urllib.error.HTTPError) -> None:
+        self.http_error = http_error
+        super().__init__(f"PropertyMeld session expired (HTTP {http_error.code})")
+
+
+_RECAPTURE_SCRIPT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "scripts",
+    "pm-recapture-session-playwright.py",
+)
+
+
+def _attempt_recapture() -> bool:
+    """Refresh the PM session cookie via the Playwright recapture helper."""
+    if not os.path.exists(_RECAPTURE_SCRIPT):
+        print(
+            json.dumps({"error": "Playwright recapture script not found", "path": _RECAPTURE_SCRIPT}),
+            file=sys.stderr,
+        )
+        return False
+
+    print(json.dumps({"event": "auto_recapture_attempt", "script": _RECAPTURE_SCRIPT}), file=sys.stderr)
+    try:
+        result = subprocess.run(
+            [sys.executable, _RECAPTURE_SCRIPT],
+            env=os.environ.copy(),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        print(json.dumps({"error": "Recapture timed out (120s)"}), file=sys.stderr)
+        return False
+    except OSError as exc:
+        print(json.dumps({"error": "Recapture spawn failed", "detail": str(exc)}), file=sys.stderr)
+        return False
+
+    if result.returncode != 0:
+        tail = (result.stderr or "")[-300:]
+        print(
+            json.dumps({"error": "Recapture failed", "rc": result.returncode, "stderr_tail": tail}),
+            file=sys.stderr,
+        )
+        return False
+
+    print(json.dumps({"event": "auto_recapture_ok"}), file=sys.stderr)
+    _csrf_cache.clear()
+    return True
+
+
+def with_recapture_retry(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Retry one public API call after a single cookie recapture."""
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except SessionExpired:
+            print(json.dumps({"event": "session_expired_caught", "fn": fn.__name__}), file=sys.stderr)
+            if not _attempt_recapture():
+                print(
+                    json.dumps({"error": "Auto-recapture failed; manual intervention needed", "fn": fn.__name__}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            try:
+                return fn(*args, **kwargs)
+            except SessionExpired:
+                print(
+                    json.dumps({"error": "Still 401 after recapture; manual intervention needed", "fn": fn.__name__}),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+    return wrapper
 
 
 def _load_creds() -> dict:
@@ -62,8 +144,13 @@ def _get_csrf_token(cookie_hdr: str) -> str:
         f"{BASE}/melds/",
         headers={"Cookie": cookie_hdr, "User-Agent": UA, "Accept": "text/html"},
     )
-    with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
-        html = resp.read().decode("utf-8", errors="ignore")
+    try:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
+        raise
 
     m = re.search(r"window\.PM\.csrf_token\s*=\s*[\"']([\w-]+)[\"']", html)
     if not m:
@@ -90,6 +177,8 @@ def _http_get(path: str, cookie_hdr: str) -> Any:
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
         body = e.read().decode("utf-8", errors="ignore")
         print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
         sys.exit(1)
@@ -158,6 +247,8 @@ def _http_post(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> An
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
         body = e.read().decode("utf-8", errors="ignore")
         print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
         sys.exit(1)
@@ -172,8 +263,13 @@ def _get_nexus_csrf(cookie_hdr: str) -> str:
         f"{NEXUS_BASE}/nexus/api-keys/",
         headers={"Cookie": cookie_hdr, "User-Agent": UA, "Accept": "text/html"},
     )
-    with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
-        html = resp.read().decode("utf-8", errors="ignore")
+    try:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
+        raise
 
     m = re.search(r"window\.PM\.csrf_token\s*=\s*[\"']([\w-]+)[\"']", html)
     if not m:
@@ -200,6 +296,8 @@ def _http_get_nexus(path: str, cookie_hdr: str) -> Any:
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
         body = e.read().decode("utf-8", errors="ignore")
         print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
         sys.exit(1)
@@ -226,6 +324,8 @@ def _http_post_nexus(path: str, payload: dict, cookie_hdr: str, csrf_token: str)
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
         body = e.read().decode("utf-8", errors="ignore")
         print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
         sys.exit(1)
@@ -252,6 +352,8 @@ def _http_put(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> Any
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
         body = e.read().decode("utf-8", errors="ignore")
         print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
         sys.exit(1)
@@ -278,6 +380,8 @@ def _http_patch(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> A
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
         body = e.read().decode("utf-8", errors="ignore")
         print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
         sys.exit(1)
@@ -311,14 +415,17 @@ def _http_get_optional_results(path: str, cookie_hdr: str, note_label: str) -> t
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
+@with_recapture_retry
 def get_comments(meld_id: str) -> list:
     """Fetch comments/notes for a meld via cookie-based HTTP (no Playwright)."""
+    meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     data = _http_get(f"comments/?meld={meld_id}&limit=100", cookie_hdr)
     return data.get("results", data) if isinstance(data, dict) else data
 
 
+@with_recapture_retry
 def send_message(
     meld_id: str,
     text: str,
@@ -335,13 +442,14 @@ def send_message(
         hidden_from_vendor: If True, vendor cannot see this message.
         hidden_from_owner: If True, owner cannot see this message.
     """
+    meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
 
     payload: dict = {
         "text": text,
-        "meld": int(meld_id),
+        "meld": meld_id,
     }
     if hidden_from_tenant:
         payload["hidden_from_tenant"] = True
@@ -354,6 +462,7 @@ def send_message(
     return {"ok": True, "comment_id": result.get("id"), "meld": meld_id, "text": text}
 
 
+@with_recapture_retry
 def clone_meld(meld_id: str, brief_description: Optional[str] = None) -> dict:
     """Clone a meld by reading the original and POSTing a copy to /api/melds/.
 
@@ -364,6 +473,7 @@ def clone_meld(meld_id: str, brief_description: Optional[str] = None) -> dict:
         meld_id: Source meld ID to clone.
         brief_description: Override description for the clone (default: "Copy of <original>").
     """
+    meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
@@ -404,6 +514,7 @@ def clone_meld(meld_id: str, brief_description: Optional[str] = None) -> dict:
     }
 
 
+@with_recapture_retry
 def assign_tech(meld_id: str, tech_name: str) -> dict:
     """Assign an in-house tech to a meld by name (plain HTTP, no Playwright).
 
@@ -411,6 +522,7 @@ def assign_tech(meld_id: str, tech_name: str) -> dict:
         meld_id: Meld ID to assign the tech to.
         tech_name: Partial name match (case-insensitive). e.g. "Carlos" or "Carlos Calel".
     """
+    meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
@@ -489,6 +601,7 @@ def rotate_api_key(key_name: Optional[str] = None) -> dict:
     }
 
 
+@with_recapture_retry
 def merge_meld(meld_id: str, into_meld_id: str) -> dict:
     """Merge source meld into destination meld. Both melds must be at the same unit/property.
 
@@ -498,13 +611,16 @@ def merge_meld(meld_id: str, into_meld_id: str) -> dict:
         meld_id: Source meld ID to merge (will be cancelled).
         into_meld_id: Destination meld ID to merge into (absorbs the source).
     """
+    meld_id = _validate_meld_id(meld_id)
+    into_meld_id = _validate_meld_id(into_meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
-    result = _http_post(f"melds/{meld_id}/merge/", {"meld": int(into_meld_id)}, cookie_hdr, csrf_token)
+    result = _http_post(f"melds/{meld_id}/merge/", {"meld": into_meld_id}, cookie_hdr, csrf_token)
     return {"ok": True, "merged_meld_id": meld_id, "into_meld_id": into_meld_id, "result": result}
 
 
+@with_recapture_retry
 def complete_meld(meld_id: str, completion_notes: Optional[str] = None) -> dict:
     """Mark a meld complete from the manager side.
 
@@ -514,6 +630,7 @@ def complete_meld(meld_id: str, completion_notes: Optional[str] = None) -> dict:
         meld_id: Meld ID to mark complete.
         completion_notes: Optional completion notes.
     """
+    meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
@@ -524,6 +641,7 @@ def complete_meld(meld_id: str, completion_notes: Optional[str] = None) -> dict:
     return {"ok": True, "meld_id": meld_id, "completion_notes": completion_notes, "result": result}
 
 
+@with_recapture_retry
 def cancel_meld(meld_id: str, reason: Optional[str] = None) -> dict:
     """Cancel a meld from the manager side.
 
@@ -531,6 +649,7 @@ def cancel_meld(meld_id: str, reason: Optional[str] = None) -> dict:
         meld_id: Meld ID to cancel.
         reason: Cancellation reason (recommended for audit trail).
     """
+    meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
@@ -541,6 +660,7 @@ def cancel_meld(meld_id: str, reason: Optional[str] = None) -> dict:
     return {"ok": True, "meld_id": meld_id, "reason": reason, "result": result}
 
 
+@with_recapture_retry
 def schedule_appointment(meld_id: str, dtstart: str, duration_hours: float = 2.0) -> dict:
     """Schedule an in-house tech appointment window on a meld.
 
@@ -552,6 +672,7 @@ def schedule_appointment(meld_id: str, dtstart: str, duration_hours: float = 2.0
     The meld must have an in-house tech assigned — PM creates the managementappointment
     object at assignment time. This sets the availability_segment (the actual time window).
     """
+    meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
@@ -570,7 +691,7 @@ def schedule_appointment(meld_id: str, dtstart: str, duration_hours: float = 2.0
                 "dtstart": dtstart,
                 "duration": duration_seconds,
             },
-            "meld": int(meld_id),
+            "meld": meld_id,
         }
     }
     result = _http_put(f"management-appointments/{appt_id}/schedule/", payload, cookie_hdr, csrf_token)
@@ -631,6 +752,7 @@ def get_tenant(tenant_id: str) -> dict:
     return _http_get(f"tenants/{tenant_id}/", cookie_hdr)
 
 
+@with_recapture_retry
 def list_files(meld_id: str) -> list:
     """List files (photos, attachments) on a meld via cookie HTTP.
 
@@ -647,6 +769,7 @@ def list_files(meld_id: str) -> list:
     Used by the pre-complete audit hook gate (photo presence check)
     and by pm-photos download tooling.
     """
+    meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
 
@@ -746,6 +869,7 @@ def inspect_meld(meld_id: str) -> dict:
     return result
 
 
+@with_recapture_retry
 def assign_vendor(meld_id: str, vendor_id: str, account_prefix: str = "1") -> dict:
     """Assign an external vendor to a meld by numeric ID.
 
@@ -754,6 +878,7 @@ def assign_vendor(meld_id: str, vendor_id: str, account_prefix: str = "1") -> di
         vendor_id: Vendor ID.
         account_prefix: Account prefix for composite_id (default "1").
     """
+    meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
@@ -765,7 +890,7 @@ def assign_vendor(meld_id: str, vendor_id: str, account_prefix: str = "1") -> di
     }
 
     result = _http_patch(
-        f"melds/{int(meld_id)}/assign-maintenance/",
+        f"melds/{meld_id}/assign-maintenance/",
         {"maintenance": [vendor_obj]},
         cookie_hdr,
         csrf_token,
@@ -779,6 +904,7 @@ def assign_vendor(meld_id: str, vendor_id: str, account_prefix: str = "1") -> di
     }
 
 
+@with_recapture_retry
 def assign_vendor_by_name(meld_id: str, vendor_name: str, account_prefix: str = "1") -> dict:
     """Assign an external vendor to a meld by name (partial match).
 
@@ -791,6 +917,7 @@ def assign_vendor_by_name(meld_id: str, vendor_name: str, account_prefix: str = 
         vendor_name: Partial name match. e.g. "Rogers" or "Rogers Electric".
         account_prefix: Account prefix for composite_id (default "1").
     """
+    meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
 
@@ -820,9 +947,8 @@ def assign_vendor_by_name(meld_id: str, vendor_name: str, account_prefix: str = 
 # short code (e.g. 'T5LKWTDB'). Passing a short code returns HTTP 404 because the
 # Django URL pattern is <int:pk>. This guard catches the mismatch at the SDK
 # boundary instead of at the API boundary, so the error is actionable. Applied
-# to Phase-2-backport functions only in this commit; existing functions
-# (assign_tech, complete_meld, etc.) keep their current shape — separate
-# follow-up if/when we want fleet-wide enforcement.
+# to all meld-path functions in this module so callers fail fast with an
+# actionable error instead of surfacing a PM 404 from the Django <int:pk> path.
 def _validate_meld_id(meld_id) -> int:
     """Coerce meld_id to int PK. Reject PM short codes.
 
@@ -838,6 +964,7 @@ def _validate_meld_id(meld_id) -> int:
         )
 
 
+@with_recapture_retry
 def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, duration_hours: float = 2.0) -> dict:
     """Schedule an external vendor appointment window on a meld.
 
@@ -910,6 +1037,7 @@ def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, dura
     }
 
 
+@with_recapture_retry
 def list_projects(meld_id: Optional[str] = None, limit: int = 100) -> list:
     """List projects associated with a meld or account."""
     if meld_id is not None:
@@ -921,6 +1049,7 @@ def list_projects(meld_id: Optional[str] = None, limit: int = 100) -> list:
     return data.get("results", data) if isinstance(data, dict) else data
 
 
+@with_recapture_retry
 def get_project(project_id: str) -> dict:
     """Get a single project by ID."""
     creds = _load_creds()
@@ -945,6 +1074,7 @@ def get_project(project_id: str) -> dict:
 
 # ── Estimates ─────────────────────────────────────────────────────────────────
 
+@with_recapture_retry
 def list_estimates(meld_id: Optional[str] = None, limit: int = 100, status: Optional[str] = None) -> list:
     """List estimates for a meld or account."""
     if meld_id is not None:
@@ -967,6 +1097,7 @@ def list_estimates(meld_id: Optional[str] = None, limit: int = 100, status: Opti
     return data.get("results", data) if isinstance(data, dict) else data
 
 
+@with_recapture_retry
 def get_estimate(estimate_id: str) -> dict:
     """Get a single estimate by ID."""
     creds = _load_creds()
@@ -974,6 +1105,7 @@ def get_estimate(estimate_id: str) -> dict:
     return _http_get(f"estimates/{estimate_id}/", cookie_hdr)
 
 
+@with_recapture_retry
 def create_estimate(meld_id: str, estimate_number: str, amount: str, description: str = "", due_date: Optional[str] = None, project_id: Optional[str] = None) -> dict:
     """Create a new estimate linked to a meld."""
     meld_id = _validate_meld_id(meld_id)
@@ -994,6 +1126,7 @@ def create_estimate(meld_id: str, estimate_number: str, amount: str, description
     return {"ok": True, "estimate_id": result.get("id"), "result": result}
 
 
+@with_recapture_retry
 def update_estimate(estimate_id: str, estimate_number: Optional[str] = None, amount: Optional[str] = None, description: Optional[str] = None, status: Optional[str] = None) -> dict:
     """Update an invoice."""
     creds = _load_creds()
@@ -1012,6 +1145,7 @@ def update_estimate(estimate_id: str, estimate_number: Optional[str] = None, amo
     return {"ok": True, "estimate_id": estimate_id, "result": result}
 
 
+@with_recapture_retry
 def link_estimate_to_meld(estimate_id: str, meld_id: str) -> dict:
     """Link an estimate to a meld."""
     meld_id = _validate_meld_id(meld_id)
@@ -1024,6 +1158,7 @@ def link_estimate_to_meld(estimate_id: str, meld_id: str) -> dict:
 
 # ── Receipts ─────────────────────────────────────────────────────────────────
 
+@with_recapture_retry
 def list_receipts(meld_id: Optional[str] = None, limit: int = 100) -> list:
     """List receipts for a meld or account."""
     if meld_id is not None:
@@ -1038,6 +1173,7 @@ def list_receipts(meld_id: Optional[str] = None, limit: int = 100) -> list:
     return data.get("results", data) if isinstance(data, dict) else data
 
 
+@with_recapture_retry
 def get_receipt(receipt_id: str) -> dict:
     """Get a single receipt by ID."""
     creds = _load_creds()
@@ -1045,6 +1181,7 @@ def get_receipt(receipt_id: str) -> dict:
     return _http_get(f"receipts/{receipt_id}/", cookie_hdr)
 
 
+@with_recapture_retry
 def upload_receipt(meld_id: str, file_path: str, description: str = "", linked_estimate_id: Optional[str] = None) -> dict:
     """Upload a receipt file for a meld."""
     meld_id = _validate_meld_id(meld_id)
@@ -1112,6 +1249,8 @@ def upload_receipt(meld_id: str, file_path: str, description: str = "", linked_e
             result = json.loads(resp.read())
             return {"ok": True, "receipt_id": result.get("id"), "result": result}
     except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
         body_err = e.read().decode("utf-8", errors="ignore")
         error = normalize_http_error(e.code, body_err)
         error["ok"] = False
@@ -1204,6 +1343,7 @@ def upload_meld_file(meld_id: str, file_path: str, uploader_role: str = "manager
         return error
 
 
+@with_recapture_retry
 def link_receipt_to_invoice(receipt_id: str, estimate_id: str) -> dict:
     """Link a receipt to an invoice."""
     creds = _load_creds()

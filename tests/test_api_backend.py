@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+import urllib.error
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
@@ -102,6 +103,11 @@ class TestGetWorkOrder:
         url = mock_open.call_args_list[1][0][0].full_url
         assert "/meld/1001/" in url
 
+    def test_rejects_short_code(self):
+        with pytest.raises(ValueError) as exc:
+            api_backend.get_work_order("T5LKWTDB")
+        assert "integer PK" in str(exc.value)
+
 
 class TestListProperties:
     def test_returns_property_list(self):
@@ -152,3 +158,41 @@ class TestValidateMeldIdGuard:
             http_backend._validate_meld_id("T5LKWTDB")
         assert "T5LKWTDB" in str(exc.value)
         assert "integer PK" in str(exc.value)
+
+
+class TestRecaptureRetry:
+    def _session_expired(self):
+        return http_backend.SessionExpired(
+            urllib.error.HTTPError(
+                url="https://app.propertymeld.com/test",
+                code=401,
+                msg="Unauthorized",
+                hdrs=None,
+                fp=BytesIO(b""),
+            )
+        )
+
+    def test_retries_once_after_recapture(self):
+        calls = {"count": 0}
+
+        @http_backend.with_recapture_retry
+        def flaky():
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise self._session_expired()
+            return {"ok": True}
+
+        with patch("cli_anything.propertymeld.http_backend._attempt_recapture", return_value=True) as recapture:
+            assert flaky() == {"ok": True}
+        recapture.assert_called_once_with()
+        assert calls["count"] == 2
+
+    def test_raises_exit_when_recapture_fails(self):
+        @http_backend.with_recapture_retry
+        def flaky():
+            raise self._session_expired()
+
+        with patch("cli_anything.propertymeld.http_backend._attempt_recapture", return_value=False):
+            with pytest.raises(SystemExit) as exc:
+                flaky()
+        assert exc.value.code == 1

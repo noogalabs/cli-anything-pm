@@ -107,13 +107,13 @@ class TestWorkOrdersFilesCLI:
     def test_files_outputs_list(self, runner):
         with patch("cli_anything.propertymeld.http_backend.list_files",
                    return_value=MOCK_FILES) as mock_fn:
-            result = runner.invoke(cli, ["work-orders", "files", "T5LKWTDB"])
+            result = runner.invoke(cli, ["work-orders", "files", "12701108"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert isinstance(data, list)
         assert len(data) == 2
         assert data[0]["filename"] == "before.jpg"
-        mock_fn.assert_called_once_with("T5LKWTDB")
+        mock_fn.assert_called_once_with("12701108")
 
 
 class TestListFilesMergesAllSources:
@@ -196,12 +196,12 @@ class TestAssignVendorCLI:
         with patch("cli_anything.propertymeld.http_backend.assign_vendor_by_name",
                    return_value={"ok": True, "vendor_id": 10, "matched_name": "Dyer HVAC"}) as mock_fn:
             result = runner.invoke(cli, ["assign-vendor",
-                                         "--work-order-id", "T5LKWTDB",
+                                         "--work-order-id", "12701108",
                                          "--vendor", "dyer"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["ok"] is True
-        mock_fn.assert_called_once_with("T5LKWTDB", "dyer", account_prefix="1")
+        mock_fn.assert_called_once_with("12701108", "dyer", account_prefix="1")
 
 
 class TestWorkOrdersScheduleCLI:
@@ -209,13 +209,13 @@ class TestWorkOrdersScheduleCLI:
         with patch("cli_anything.propertymeld.http_backend.schedule_appointment",
                    return_value={"id": 4242, "scheduled_dtstart": "2026-04-27T14:00:00-04:00"}) as mock_fn:
             result = runner.invoke(cli, ["work-orders", "schedule",
-                                         "--meld-id", "T5LKWTDB",
+                                         "--meld-id", "12701108",
                                          "--dtstart", "2026-04-27T14:00:00-04:00",
                                          "--hours", "3"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["id"] == 4242
-        mock_fn.assert_called_once_with("T5LKWTDB",
+        mock_fn.assert_called_once_with("12701108",
                                         "2026-04-27T14:00:00-04:00",
                                         duration_hours=3.0)
 
@@ -223,36 +223,36 @@ class TestWorkOrdersScheduleCLI:
 class TestWorkOrdersLifecycleCLI:
     def test_merge_into_destination(self, runner):
         with patch("cli_anything.propertymeld.http_backend.merge_meld",
-                   return_value={"ok": True, "source": "TSRC", "destination": "TDEST"}) as mock_fn:
+                   return_value={"ok": True, "source": "12701108", "destination": "12701109"}) as mock_fn:
             result = runner.invoke(cli, ["work-orders", "merge",
-                                         "--meld-id", "TSRC",
-                                         "--into", "TDEST"])
+                                         "--meld-id", "12701108",
+                                         "--into", "12701109"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data["destination"] == "TDEST"
-        mock_fn.assert_called_once_with("TSRC", "TDEST")
+        assert data["destination"] == "12701109"
+        mock_fn.assert_called_once_with("12701108", "12701109")
 
     def test_complete_with_notes(self, runner):
         with patch("cli_anything.propertymeld.http_backend.complete_meld",
                    return_value={"id": 1001, "status": "COMPLETE"}) as mock_fn:
             result = runner.invoke(cli, ["work-orders", "complete",
-                                         "--meld-id", "T5LKWTDB",
+                                         "--meld-id", "12701108",
                                          "--notes", "Replaced filter."])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["status"] == "COMPLETE"
-        mock_fn.assert_called_once_with("T5LKWTDB", completion_notes="Replaced filter.")
+        mock_fn.assert_called_once_with("12701108", completion_notes="Replaced filter.")
 
     def test_cancel_with_reason(self, runner):
         with patch("cli_anything.propertymeld.http_backend.cancel_meld",
                    return_value={"id": 1002, "status": "CANCELLED"}) as mock_fn:
             result = runner.invoke(cli, ["work-orders", "cancel",
-                                         "--meld-id", "TXYZ",
+                                         "--meld-id", "12701108",
                                          "--reason", "Duplicate"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["status"] == "CANCELLED"
-        mock_fn.assert_called_once_with("TXYZ", reason="Duplicate")
+        mock_fn.assert_called_once_with("12701108", reason="Duplicate")
 
 
 class TestTenantsCLI:
@@ -312,7 +312,7 @@ class TestEstimatesCLI:
         with patch("cli_anything.propertymeld.http_backend.create_estimate",
                    return_value=MOCK_ESTIMATE) as mock_fn:
             result = runner.invoke(cli, ["estimates", "create",
-                                         "--meld-id", "T5LKWTDB",
+                                         "--meld-id", "12701108",
                                          "--estimate-number", "INV-2026-001",
                                          "--amount", "1250.00"])
         assert result.exit_code == 0
@@ -320,7 +320,7 @@ class TestEstimatesCLI:
         assert data["estimate_number"] == "INV-2026-001"
         # Positional + kwarg shape per cli wiring
         call = mock_fn.call_args
-        assert call.args[0] == "T5LKWTDB"
+        assert call.args[0] == "12701108"
         assert call.args[1] == "INV-2026-001"
         assert call.args[2] == "1250.00"
 
@@ -332,14 +332,14 @@ class TestReceiptsCLI:
         with patch("cli_anything.propertymeld.http_backend.upload_receipt",
                    return_value=MOCK_RECEIPT) as mock_fn:
             result = runner.invoke(cli, ["receipts", "upload",
-                                         "--meld-id", "T5LKWTDB",
+                                         "--meld-id", "12701108",
                                          "--file", str(receipt_file)])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["id"] == 9001
         mock_fn.assert_called_once()
         call = mock_fn.call_args
-        assert call.args[0] == "T5LKWTDB"
+        assert call.args[0] == "12701108"
         assert call.args[1] == str(receipt_file)
 
 
@@ -348,13 +348,13 @@ class TestWorkOrdersScheduleVendorCLI:
         with patch("cli_anything.propertymeld.http_backend.schedule_vendor_appointment",
                    return_value={"id": 5555, "scheduled_dtstart": "2026-05-06T14:00:00-04:00"}) as mock_fn:
             result = runner.invoke(cli, ["work-orders", "schedule-vendor",
-                                         "--meld-id", "T5LKWTDB",
+                                         "--meld-id", "12701108",
                                          "--vendor-id", "10",
                                          "--dtstart", "2026-05-06T14:00:00-04:00",
                                          "--hours", "3"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["id"] == 5555
-        mock_fn.assert_called_once_with("T5LKWTDB", "10",
+        mock_fn.assert_called_once_with("12701108", "10",
                                         "2026-05-06T14:00:00-04:00",
                                         duration_hours=3.0)

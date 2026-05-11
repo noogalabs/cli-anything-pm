@@ -15,6 +15,7 @@ import sys
 import urllib.request
 from typing import Any, Optional
 
+from .http_backend import _validate_meld_id
 from .utils import API_BASE, MULTITENANT_ID, UA, get_token, print_error
 
 
@@ -102,6 +103,7 @@ def list_work_orders(status: Optional[str] = None, limit: int = 25) -> list:
 
 def get_work_order(meld_id: str) -> dict:
     """Get a single work order by ID."""
+    meld_id = _validate_meld_id(meld_id)
     return _api_get(f"/meld/{meld_id}/")
 
 
