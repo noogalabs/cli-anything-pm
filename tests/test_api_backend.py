@@ -312,3 +312,130 @@ class TestScheduleVendorAppointment:
             # Verify the PUT was called with the first assignment ID
             call_args = mock_put.call_args
             assert "vendor-assignments/201/" in call_args[0][0]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# projects create / update — PM-Blue queue #3
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestCreateProject:
+    """create_project posts the full required payload to /api/projects/."""
+
+    def _patched(self):
+        return (
+            patch("cli_anything.propertymeld.http_backend._load_creds"),
+            patch("cli_anything.propertymeld.http_backend._cookie_header"),
+            patch("cli_anything.propertymeld.http_backend._get_csrf_token"),
+            patch("cli_anything.propertymeld.http_backend._http_post"),
+        )
+
+    def test_happy_path_returns_project_id_and_posts_full_payload(self):
+        mock_creds_p, mock_cookie_p, mock_csrf_p, mock_post_p = self._patched()
+        with mock_creds_p as mock_creds, mock_cookie_p as mock_cookie, \
+             mock_csrf_p as mock_csrf, mock_post_p as mock_post:
+            mock_creds.return_value = {"cookie": "test"}
+            mock_cookie.return_value = "Cookie: session=xyz"
+            mock_csrf.return_value = "csrf123"
+            mock_post.return_value = {"id": 219852, "name": "Test reno"}
+
+            result = http_backend.create_project(
+                name="Test reno",
+                description="kitchen redo",
+                start_date="2026-06-01",
+                due_date="2026-06-30",
+                coordinators=["7", "11"],
+                project_type="construction",
+                unit={"id": 1754499},
+            )
+
+            assert result["ok"] is True
+            assert result["project_id"] == 219852
+            assert result["result"]["name"] == "Test reno"
+            mock_post.assert_called_once()
+            posted_path, posted_payload, _, _ = mock_post.call_args[0]
+            assert posted_path == "projects/"
+            assert posted_payload["name"] == "Test reno"
+            assert posted_payload["description"] == "kitchen redo"
+            assert posted_payload["start_date"] == "2026-06-01"
+            assert posted_payload["due_date"] == "2026-06-30"
+            assert posted_payload["coordinators"] == [7, 11]
+            assert posted_payload["project_type"] == "construction"
+            assert posted_payload["unit"] == {"id": 1754499}
+
+    def test_http_error_propagates(self):
+        """A 400 from PM should bubble up (caller decides retry/UX)."""
+        mock_creds_p, mock_cookie_p, mock_csrf_p, mock_post_p = self._patched()
+        with mock_creds_p as mock_creds, mock_cookie_p as mock_cookie, \
+             mock_csrf_p as mock_csrf, mock_post_p as mock_post:
+            mock_creds.return_value = {"cookie": "test"}
+            mock_cookie.return_value = "Cookie: session=xyz"
+            mock_csrf.return_value = "csrf123"
+            mock_post.side_effect = urllib.error.HTTPError(
+                url="https://app.propertymeld.com/3287/m/3287/api/projects/",
+                code=400,
+                msg="Bad Request",
+                hdrs=None,
+                fp=BytesIO(b'{"unit": ["Please select an Active Unit"]}'),
+            )
+
+            with pytest.raises(urllib.error.HTTPError) as exc:
+                http_backend.create_project(
+                    name="x",
+                    description="",
+                    start_date="2026-06-01",
+                    due_date="2026-06-30",
+                    coordinators=["7"],
+                    project_type="construction",
+                    unit=1754499,
+                )
+            assert exc.value.code == 400
+
+
+class TestUpdateProject:
+    """update_project PATCHes only the fields the caller explicitly set."""
+
+    def _patched(self):
+        return (
+            patch("cli_anything.propertymeld.http_backend._load_creds"),
+            patch("cli_anything.propertymeld.http_backend._cookie_header"),
+            patch("cli_anything.propertymeld.http_backend._get_csrf_token"),
+            patch("cli_anything.propertymeld.http_backend._http_patch"),
+        )
+
+    def test_happy_path_sends_only_set_fields(self):
+        mock_creds_p, mock_cookie_p, mock_csrf_p, mock_patch_p = self._patched()
+        with mock_creds_p as mock_creds, mock_cookie_p as mock_cookie, \
+             mock_csrf_p as mock_csrf, mock_patch_p as mock_patch_http:
+            mock_creds.return_value = {"cookie": "test"}
+            mock_cookie.return_value = "Cookie: session=xyz"
+            mock_csrf.return_value = "csrf123"
+            mock_patch_http.return_value = {"id": 219852, "name": "Renamed"}
+
+            result = http_backend.update_project(
+                project_id="219852",
+                name="Renamed",
+                status="archived",
+            )
+
+            assert result["ok"] is True
+            assert result["project_id"] == "219852"
+            mock_patch_http.assert_called_once()
+            patched_path, patched_payload, _, _ = mock_patch_http.call_args[0]
+            assert patched_path == "projects/219852/"
+            assert patched_payload == {"name": "Renamed", "status": "archived"}
+
+    def test_no_fields_returns_error_without_patch_call(self):
+        """Empty patch: short-circuit, do not hit PM."""
+        mock_creds_p, mock_cookie_p, mock_csrf_p, mock_patch_p = self._patched()
+        with mock_creds_p as mock_creds, mock_cookie_p as mock_cookie, \
+             mock_csrf_p as mock_csrf, mock_patch_p as mock_patch_http:
+            mock_creds.return_value = {"cookie": "test"}
+            mock_cookie.return_value = "Cookie: session=xyz"
+            mock_csrf.return_value = "csrf123"
+
+            result = http_backend.update_project(project_id="219852")
+
+            assert result["ok"] is False
+            assert "no fields" in result["error"]
+            mock_patch_http.assert_not_called()

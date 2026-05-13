@@ -1057,19 +1057,80 @@ def get_project(project_id: str) -> dict:
     return _http_get(f"projects/{project_id}/", cookie_hdr)
 
 
-# create/update/delete project — DROPPED per Item 3 spike (5/05).
-# Endpoint POST /api/projects/ is reachable but the create payload schema is
-# incomplete in the Haiku-coauthored snapcli stub. Verified required fields:
-# name + description + start_date + due_date + coordinators[] + project_type
-# + unit (active unit reference). The "unit" field shape is unknown — passing
-# the unit.id int (e.g. 1754499) returns HTTP 500. Needs Safari Web Inspector
-# capture of the actual /api/projects/ POST payload from the manager UI to
-# discover the correct shape (likely needs unit_pk, address-tied lookup, or
-# a search-string indirection). update + delete commands remained untested
-# because of the create-cycle dependency for safe verification.
-#
-# list_projects + get_project are verified working and remain available.
-# See tracking task task_<TBD> for endpoint-discovery follow-up.
+# Required POST /api/projects/ fields (from Item 3 spike 5/05, commit 588b934):
+#   name, description, start_date, due_date, coordinators[], project_type, unit
+# The "unit" field shape is being captured via scripts/pm-capture-meld-network.py
+# (PM-Blue queue #3, task_1778698161901_395430). Until that capture lands, the
+# function accepts `unit` as an opaque value passed straight through, so the
+# call site can experiment as capture findings come in. Once the shape is known
+# the signature should tighten + docs should record the discovered form.
+
+
+@with_recapture_retry
+def create_project(
+    name: str,
+    description: str,
+    start_date: str,
+    due_date: str,
+    coordinators: list,
+    project_type: str,
+    unit,
+) -> dict:
+    """Create a new project. Returns {ok, project_id, result} or {ok:False, error, ...}.
+
+    Schema NOTE: `unit` shape is still being captured (see queue #3). Pass
+    whatever shape the capture script proves correct — int PK is known to 500.
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload = {
+        "name": name,
+        "description": description,
+        "start_date": start_date,
+        "due_date": due_date,
+        "coordinators": [int(c) for c in coordinators],
+        "project_type": project_type,
+        "unit": unit,
+    }
+    result = _http_post("projects/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "project_id": result.get("id"), "result": result}
+
+
+@with_recapture_retry
+def update_project(
+    project_id: str,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    start_date: Optional[str] = None,
+    due_date: Optional[str] = None,
+    coordinators: Optional[list] = None,
+    project_type: Optional[str] = None,
+    status: Optional[str] = None,
+) -> dict:
+    """Patch an existing project. Only sends fields the caller explicitly set."""
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload: dict = {}
+    if name is not None:
+        payload["name"] = name
+    if description is not None:
+        payload["description"] = description
+    if start_date is not None:
+        payload["start_date"] = start_date
+    if due_date is not None:
+        payload["due_date"] = due_date
+    if coordinators is not None:
+        payload["coordinators"] = [int(c) for c in coordinators]
+    if project_type is not None:
+        payload["project_type"] = project_type
+    if status is not None:
+        payload["status"] = status
+    if not payload:
+        return {"ok": False, "error": "no fields to update"}
+    result = _http_patch(f"projects/{project_id}/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "project_id": project_id, "result": result}
 
 
 # ── Estimates ─────────────────────────────────────────────────────────────────
