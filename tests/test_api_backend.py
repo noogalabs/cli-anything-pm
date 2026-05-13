@@ -196,3 +196,119 @@ class TestRecaptureRetry:
             with pytest.raises(SystemExit) as exc:
                 flaky()
         assert exc.value.code == 1
+
+
+class TestScheduleVendorAppointment:
+    def test_schedules_vendor_appointment_happy_path(self):
+        """Happy path: vendor found by vendor_id, assignment created."""
+        meld_response = {
+            "id": 12701108,
+            "status": "open",
+            "vendorassignment": [
+                {"id": 201, "vendor_id": 42, "name": "Dyer HVAC"},
+            ]
+        }
+        schedule_response = {
+            "availability_segment": {
+                "event": {
+                    "dtstart": "2026-05-20T14:00:00-04:00",
+                    "duration": 7200,
+                }
+            }
+        }
+
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mock_creds, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mock_cookie, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mock_csrf, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mock_get, \
+             patch("cli_anything.propertymeld.http_backend._http_put") as mock_put, \
+             patch.object(http_backend, "_emit_meld_state_change", create=True) as mock_emit:
+
+            mock_creds.return_value = {"cookie": "test"}
+            mock_cookie.return_value = "Cookie: session=xyz"
+            mock_csrf.return_value = "csrf123"
+            mock_get.return_value = meld_response
+            mock_put.return_value = schedule_response
+
+            result = http_backend.schedule_vendor_appointment(
+                "12701108", "42", "2026-05-20T14:00:00-04:00", duration_hours=2.0
+            )
+
+            assert result["ok"] is True
+            assert result["meld_id"] == 12701108
+            assert result["vendor_id"] == "42"
+            assert result["assignment_id"] == 201
+            assert result["dtstart"] == "2026-05-20T14:00:00-04:00"
+            assert result["duration_hours"] == 2.0
+            mock_put.assert_called_once()
+            mock_emit.assert_called_once()
+
+    def test_returns_error_when_no_vendor_assignment(self):
+        """Missing vendor assignment: vendor_assignments is empty."""
+        meld_response = {
+            "id": 12701108,
+            "status": "open",
+            "vendorassignment": []
+        }
+
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mock_creds, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mock_cookie, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mock_csrf, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mock_get:
+
+            mock_creds.return_value = {"cookie": "test"}
+            mock_cookie.return_value = "Cookie: session=xyz"
+            mock_csrf.return_value = "csrf123"
+            mock_get.return_value = meld_response
+
+            result = http_backend.schedule_vendor_appointment(
+                "12701108", "42", "2026-05-20T14:00:00-04:00"
+            )
+
+            assert result["ok"] is False
+            assert "No vendor assignment" in result["error"]
+
+    def test_uses_first_vendor_assignment_fallback(self):
+        """Multi-vendor fallback: use first assignment when vendor_id doesn't match."""
+        meld_response = {
+            "id": 12701108,
+            "status": "open",
+            "vendorassignment": [
+                {"id": 201, "vendor_id": 10, "name": "First HVAC"},
+                {"id": 202, "vendor_id": 42, "name": "Dyer HVAC"},
+            ]
+        }
+        schedule_response = {
+            "availability_segment": {
+                "event": {
+                    "dtstart": "2026-05-20T14:00:00-04:00",
+                    "duration": 7200,
+                }
+            }
+        }
+
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mock_creds, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mock_cookie, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mock_csrf, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mock_get, \
+             patch("cli_anything.propertymeld.http_backend._http_put") as mock_put, \
+             patch.object(http_backend, "_emit_meld_state_change", create=True) as mock_emit:
+
+            mock_creds.return_value = {"cookie": "test"}
+            mock_cookie.return_value = "Cookie: session=xyz"
+            mock_csrf.return_value = "csrf123"
+            mock_get.return_value = meld_response
+            mock_put.return_value = schedule_response
+
+            # Pass non-matching vendor_id to trigger fallback
+            result = http_backend.schedule_vendor_appointment(
+                "12701108", "999", "2026-05-20T14:00:00-04:00"
+            )
+
+            assert result["ok"] is True
+            # Should use first assignment (id=201) as fallback
+            assert result["assignment_id"] == 201
+            mock_put.assert_called_once()
+            # Verify the PUT was called with the first assignment ID
+            call_args = mock_put.call_args
+            assert "vendor-assignments/201/" in call_args[0][0]
