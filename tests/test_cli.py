@@ -286,7 +286,7 @@ MOCK_RECEIPT = {"id": 9001, "filename": "home-depot-2026-04-29.pdf", "linked_est
 
 
 class TestProjectsCLI:
-    """projects create/update/delete dropped per Item 3 spike — list + get only."""
+    """projects list / get / create / edit. Unit-field shape pending capture (#3)."""
 
     def test_list_outputs_json(self, runner):
         with patch("cli_anything.propertymeld.http_backend.list_projects",
@@ -305,6 +305,48 @@ class TestProjectsCLI:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["id"] == 7001
+
+    def test_create_passes_args(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.create_project",
+                   return_value={"ok": True, "project_id": 7001, "result": MOCK_PROJECT}) as mock_fn:
+            result = runner.invoke(cli, ["projects", "create",
+                                         "--name", "Q2 Renovations",
+                                         "--description", "kitchen redo",
+                                         "--start-date", "2026-06-01",
+                                         "--due-date", "2026-06-30",
+                                         "--coordinator", "7",
+                                         "--coordinator", "11",
+                                         "--project-type", "construction",
+                                         "--unit", "1754499"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["project_id"] == 7001
+        mock_fn.assert_called_once()
+        kw = mock_fn.call_args.kwargs
+        assert kw["name"] == "Q2 Renovations"
+        assert kw["description"] == "kitchen redo"
+        assert kw["start_date"] == "2026-06-01"
+        assert kw["due_date"] == "2026-06-30"
+        assert kw["coordinators"] == ["7", "11"]
+        assert kw["project_type"] == "construction"
+        assert kw["unit"] == "1754499"
+
+    def test_edit_passes_only_set_fields(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.update_project",
+                   return_value={"ok": True, "project_id": "7001", "result": MOCK_PROJECT}) as mock_fn:
+            result = runner.invoke(cli, ["projects", "edit", "7001",
+                                         "--name", "Renamed",
+                                         "--status", "archived"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["project_id"] == "7001"
+        mock_fn.assert_called_once()
+        kw = mock_fn.call_args.kwargs
+        assert kw["project_id"] == "7001"
+        assert kw["name"] == "Renamed"
+        assert kw["status"] == "archived"
+        assert kw["description"] is None
+        assert kw["coordinators"] is None
 
 
 class TestEstimatesCLI:

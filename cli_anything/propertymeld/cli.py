@@ -390,15 +390,59 @@ def get_project(project_id, as_json):
     output_json(result)
 
 
-# projects create/update/delete CLI commands — DROPPED per Item 3 spike
-# (5/05). POST /api/projects/ is reachable but payload schema is incomplete
-# in the Haiku-coauthored snapcli stub: known-required fields are name +
-# description + start_date + due_date + coordinators[] + project_type +
-# unit, but the "unit" field shape is unknown (passing unit.id int returns
-# HTTP 500). Update + delete remained untested because they depend on a
-# safe create+delete cycle. list + get commands remain available and
-# verified. Endpoint-discovery follow-up tracked separately — re-add the
-# CLI subcommands once the create payload is captured via Safari.
+@projects.command("create")
+@click.option("--name", required=True, help="Project name")
+@click.option("--description", default="", help="Project description")
+@click.option("--start-date", required=True, help="ISO date YYYY-MM-DD")
+@click.option("--due-date", required=True, help="ISO date YYYY-MM-DD")
+@click.option("--coordinator", "coordinators", multiple=True, required=True,
+              help="Coordinator user ID (repeat for multiple)")
+@click.option("--project-type", required=True, help="Project type enum (e.g. construction)")
+@click.option("--unit", "unit_value", required=True,
+              help="Unit reference (shape pending capture — pass raw value)")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def create_project_cmd(name, description, start_date, due_date, coordinators,
+                       project_type, unit_value, as_json):
+    """Create a new project. Unit field shape is being captured via
+    scripts/pm-capture-meld-network.py (queue #3) — pass the value the
+    capture proves correct."""
+    result = http_backend.create_project(
+        name=name,
+        description=description,
+        start_date=start_date,
+        due_date=due_date,
+        coordinators=list(coordinators),
+        project_type=project_type,
+        unit=unit_value,
+    )
+    output_json(result)
+
+
+@projects.command("edit")
+@click.argument("project_id")
+@click.option("--name", default=None)
+@click.option("--description", default=None)
+@click.option("--start-date", default=None)
+@click.option("--due-date", default=None)
+@click.option("--coordinator", "coordinators", multiple=True,
+              help="Coordinator user ID (repeat for multiple)")
+@click.option("--project-type", default=None)
+@click.option("--status", default=None, help="e.g. archived")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def edit_project_cmd(project_id, name, description, start_date, due_date,
+                     coordinators, project_type, status, as_json):
+    """Patch an existing project. Only fields explicitly set are sent."""
+    result = http_backend.update_project(
+        project_id=project_id,
+        name=name,
+        description=description,
+        start_date=start_date,
+        due_date=due_date,
+        coordinators=list(coordinators) if coordinators else None,
+        project_type=project_type,
+        status=status,
+    )
+    output_json(result)
 
 
 # ── estimates group ────────────────────────────────────────────────────────────
