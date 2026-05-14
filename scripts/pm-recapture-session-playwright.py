@@ -28,7 +28,7 @@ CREDS_PATH = os.environ.get(
     "PM_CREDS_PATH",
     os.path.expanduser("~/.claude/credentials/property-meld.json"),
 )
-LOGIN_URL = "https://app.propertymeld.com/accounts/login/"
+LOGIN_URL = "https://app.propertymeld.com/login/"
 PM_DOMAIN = "propertymeld.com"
 
 
@@ -76,7 +76,7 @@ def recapture(email: str, password: str) -> list:
             page.fill("input[name='email'], input[type='email'], #id_email", email)
             page.fill("input[type='password'], #id_password", password)
             page.click("[type='submit']")
-            page.wait_for_url(lambda url: "/accounts/login" not in url, timeout=25_000)
+            page.wait_for_url(lambda url: "/login" not in url, timeout=25_000)
         except PWTimeout:
             browser.close()
             raise RuntimeError(
