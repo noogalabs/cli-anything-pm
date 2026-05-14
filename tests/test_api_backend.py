@@ -357,3 +357,324 @@ class TestScheduleVendorAppointment:
             assert result["ok"] is True
             assert result["assignment_request_id"] == 8000
             assert "assignments/8000/segments/" in mp.call_args[0][0]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Project↔meld operations (pm-capture 2026-05-13 — PR #3)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestAddMeldsToProject:
+    """PUT /api/projects/{id}/add-melds/ — verified shape from pm-capture."""
+
+    def _patched(self):
+        return (
+            patch("cli_anything.propertymeld.http_backend._load_creds"),
+            patch("cli_anything.propertymeld.http_backend._cookie_header"),
+            patch("cli_anything.propertymeld.http_backend._get_csrf_token"),
+            patch("cli_anything.propertymeld.http_backend._http_put"),
+        )
+
+    def test_happy_path_single_meld(self):
+        mock_creds_p, mock_cookie_p, mock_csrf_p, mock_put_p = self._patched()
+        with mock_creds_p as mc, mock_cookie_p as mch, mock_csrf_p as mcs, mock_put_p as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mp.return_value = {"id": 222959, "melds": [{"id": 12772756, "project": 222959}]}
+
+            result = http_backend.add_melds_to_project("222959", [12772756])
+
+            assert result["ok"] is True
+            assert result["project_id"] == "222959"
+            path, payload, _, _ = mp.call_args[0]
+            assert path == "projects/222959/add-melds/"
+            assert payload == {"melds": [{"project": "222959", "id": 12772756}]}
+
+    def test_multi_meld(self):
+        mock_creds_p, mock_cookie_p, mock_csrf_p, mock_put_p = self._patched()
+        with mock_creds_p as mc, mock_cookie_p as mch, mock_csrf_p as mcs, mock_put_p as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mp.return_value = {"id": 222959, "melds": []}
+
+            http_backend.add_melds_to_project("222959", [12772756, 12772757])
+
+            _, payload, _, _ = mp.call_args[0]
+            assert payload["melds"] == [
+                {"project": "222959", "id": 12772756},
+                {"project": "222959", "id": 12772757},
+            ]
+
+    def test_empty_meld_list_short_circuits(self):
+        mock_creds_p, mock_cookie_p, mock_csrf_p, mock_put_p = self._patched()
+        with mock_creds_p as mc, mock_cookie_p as mch, mock_csrf_p as mcs, mock_put_p as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+
+            result = http_backend.add_melds_to_project("222959", [])
+
+            assert result["ok"] is False
+            assert "no meld_ids" in result["error"]
+            mp.assert_not_called()
+
+
+class TestCreateMeldInProject:
+    """POST /api/projects/{id}/list-create-meld/ — verified shape from pm-capture."""
+
+    def test_happy_path_mirrors_captured_shape(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_post") as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mp.return_value = {"id": 12772803, "brief_description": "test"}
+
+            result = http_backend.create_meld_in_project(
+                project_id="222959",
+                brief_description="test",
+                description="test",
+                work_category="APPLIANCES",
+                work_type="TURN",
+                due_date="2026-05-16T02:52:41.393Z",
+                unit={"id": 1870266},
+                maintenance=[{"id": 57163, "type": "ManagementAgent"}],
+                work_location="ffff",
+                notify_owner=False,
+                notify_tenants=True,
+            )
+
+            assert result["ok"] is True
+            assert result["meld_id"] == 12772803
+            assert result["project_id"] == "222959"
+            path, payload, _, _ = mp.call_args[0]
+            assert path == "projects/222959/list-create-meld/"
+            # Captured shape — string-typed notify booleans alongside actual bools.
+            assert payload["project"] == "222959"
+            assert payload["notify_owners_string"] == "false"
+            assert payload["notify_tenants_string"] == "true"
+            assert payload["work_category"] == "APPLIANCES"
+            assert payload["work_type"] == "TURN"
+            assert payload["due_date"] == "2026-05-16T02:52:41.393Z"
+            assert payload["brief_description"] == "test"
+            assert payload["maintenance"] == [{"id": 57163, "type": "ManagementAgent"}]
+            assert payload["unit"] == {"id": 1870266}
+
+    def test_maintenance_as_single_dict_gets_wrapped(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_post") as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mp.return_value = {"id": 99}
+
+            http_backend.create_meld_in_project(
+                project_id="222959",
+                brief_description="b",
+                description="d",
+                work_category="APPLIANCES",
+                work_type="TURN",
+                due_date="2026-05-16T00:00:00.000Z",
+                unit={"id": 1},
+                maintenance={"id": 57163},
+            )
+
+            _, payload, _, _ = mp.call_args[0]
+            assert payload["maintenance"] == [{"id": 57163}]
+
+
+class TestPatchMeldProjectLink:
+    """PATCH /api/melds/{id}/ with {"id":<m>,"project":<pid|None>} — pm-capture verified."""
+
+    def _patched(self):
+        return (
+            patch("cli_anything.propertymeld.http_backend._load_creds"),
+            patch("cli_anything.propertymeld.http_backend._cookie_header"),
+            patch("cli_anything.propertymeld.http_backend._get_csrf_token"),
+            patch("cli_anything.propertymeld.http_backend._http_patch"),
+        )
+
+    def test_attach(self):
+        mock_creds_p, mock_cookie_p, mock_csrf_p, mock_patch_p = self._patched()
+        with mock_creds_p as mc, mock_cookie_p as mch, mock_csrf_p as mcs, mock_patch_p as mpt:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mpt.return_value = {"id": 12772756, "project": 222959}
+
+            result = http_backend.patch_meld_project_link("12772756", 222959)
+
+            assert result["ok"] is True
+            assert result["meld_id"] == 12772756
+            assert result["project_id"] == 222959
+            path, payload, _, _ = mpt.call_args[0]
+            assert path == "melds/12772756/"
+            assert payload == {"id": 12772756, "project": 222959}
+
+    def test_detach_sends_null(self):
+        mock_creds_p, mock_cookie_p, mock_csrf_p, mock_patch_p = self._patched()
+        with mock_creds_p as mc, mock_cookie_p as mch, mock_csrf_p as mcs, mock_patch_p as mpt:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mpt.return_value = {"id": 12772756, "project": None}
+
+            result = http_backend.patch_meld_project_link("12772756", None)
+
+            assert result["ok"] is True
+            assert result["project_id"] is None
+            _, payload, _, _ = mpt.call_args[0]
+            assert payload == {"id": 12772756, "project": None}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Top-level project create/edit + meld notes (pm-capture 2nd session 2026-05-13)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestCreateProjectLiveShape:
+    """POST /api/projects/ — verified from 2nd pm-capture (2026-05-13 02:58Z).
+
+    Captured payload was:
+      {name, project_type, description, due_date, start_date,
+       coordinators:[int], meld_location:"Unit", prop:null,
+       unit:{id:int, label:str}}
+    """
+
+    def test_happy_path_mirrors_capture(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_post") as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mp.return_value = {"id": 222962, "name": "vendor assigning"}
+
+            result = http_backend.create_project(
+                name="vendor assigning",
+                project_type="TURN",
+                due_date="2026-05-22T04:00:00.000Z",
+                start_date="2026-05-13T23:59:59-04:00",
+                coordinators=[57163],
+                unit={"id": 1870266, "label": "123 Main St, Chattanooga, TN, 37421"},
+            )
+
+            assert result["ok"] is True
+            assert result["project_id"] == 222962
+            path, payload, _, _ = mp.call_args[0]
+            assert path == "projects/"
+            assert payload["name"] == "vendor assigning"
+            assert payload["project_type"] == "TURN"
+            assert payload["coordinators"] == [57163]
+            assert payload["meld_location"] == "Unit"
+            assert payload["prop"] is None
+            assert payload["unit"] == {"id": 1870266, "label": "123 Main St, Chattanooga, TN, 37421"}
+            assert payload["description"] == ""
+
+
+class TestUpdateProjectLiveShape:
+    """PATCH /api/projects/{id}/ — full-payload-echo verified live 2026-05-14.
+
+    PM rejects partial PATCH on projects (HTTP 400 "field is required" for
+    every omitted required field). update_project fetches the current
+    project first, overlays caller-set fields, and sends the FULL merged
+    payload. The mocked _http_get returns the current state.
+    """
+
+    CURRENT_PROJECT = {
+        "id": 222959,
+        "name": "original",
+        "project_type": "TURN",
+        "description": "old description",
+        "due_date": "2026-05-30T04:00:00Z",
+        "start_date": "2026-05-14T03:00:00Z",
+        "coordinators": [{"id": 57163, "first_name": "David"}],
+        "meld_location": "Unit",
+        "prop": None,
+        "unit": {"id": 1870266, "label": "123 Main St"},
+    }
+
+    def test_happy_path_merges_caller_fields_with_full_echo(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mg, \
+             patch("cli_anything.propertymeld.http_backend._http_patch") as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mg.return_value = dict(self.CURRENT_PROJECT)
+            mp.return_value = {"id": 222959, "name": "renamed"}
+
+            result = http_backend.update_project(
+                project_id="222959",
+                name="renamed",
+                description="new description",
+            )
+
+            assert result["ok"] is True
+            assert result["project_id"] == "222959"
+            mg.assert_called_once()
+            mp.assert_called_once()
+            path, payload, _, _ = mp.call_args[0]
+            assert path == "projects/222959/"
+            # Full payload echo — required fields all present, caller fields override.
+            assert payload["name"] == "renamed"
+            assert payload["description"] == "new description"
+            assert payload["project_type"] == "TURN"
+            assert payload["coordinators"] == [57163]  # coordinator dict flattened to id
+            assert payload["unit"] == {"id": 1870266, "label": "123 Main St"}
+            assert payload["meld_location"] == "Unit"
+            assert payload["due_date"] == "2026-05-30T04:00:00Z"
+            assert payload["start_date"] == "2026-05-14T03:00:00Z"
+
+    def test_passing_no_overrides_still_sends_full_echo(self):
+        """Calling update_project with no overrides is a "ping with echo" — PM accepts."""
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mg, \
+             patch("cli_anything.propertymeld.http_backend._http_patch") as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mg.return_value = dict(self.CURRENT_PROJECT)
+            mp.return_value = {"id": 222959}
+
+            result = http_backend.update_project(project_id="222959")
+
+            assert result["ok"] is True
+            mp.assert_called_once()
+            _, payload, _, _ = mp.call_args[0]
+            # No overrides — echo back the current state verbatim.
+            assert payload["name"] == "original"
+            assert payload["project_type"] == "TURN"
+
+
+class TestUpdateMeldNotes:
+    """PATCH /api/v2/melds/{id}/notes/ — verified from 2nd pm-capture."""
+
+    def test_happy_path(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_patch") as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mp.return_value = {"id": 12772720, "maintenance_notes": "test"}
+
+            result = http_backend.update_meld_notes("12772720", "test")
+
+            assert result["ok"] is True
+            assert result["meld_id"] == 12772720
+            path, payload, _, _ = mp.call_args[0]
+            assert path == "v2/melds/12772720/notes/"
+            assert payload == {"maintenance_notes": "test"}

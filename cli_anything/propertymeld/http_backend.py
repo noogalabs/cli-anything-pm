@@ -1113,19 +1113,257 @@ def get_project(project_id: str) -> dict:
     return _http_get(f"projects/{project_id}/", cookie_hdr)
 
 
-# create/update/delete project — DROPPED per Item 3 spike (5/05).
-# Endpoint POST /api/projects/ is reachable but the create payload schema is
-# incomplete in the Haiku-coauthored snapcli stub. Verified required fields:
-# name + description + start_date + due_date + coordinators[] + project_type
-# + unit (active unit reference). The "unit" field shape is unknown — passing
-# the unit.id int (e.g. 1754499) returns HTTP 500. Needs Safari Web Inspector
-# capture of the actual /api/projects/ POST payload from the manager UI to
-# discover the correct shape (likely needs unit_pk, address-tied lookup, or
-# a search-string indirection). update + delete commands remained untested
-# because of the create-cycle dependency for safe verification.
-#
-# list_projects + get_project are verified working and remain available.
-# See tracking task task_<TBD> for endpoint-discovery follow-up.
+@with_recapture_retry
+def create_project(
+    name: str,
+    project_type: str,
+    due_date: str,
+    start_date: str,
+    coordinators: list,
+    unit: dict,
+    description: str = "",
+    meld_location: str = "Unit",
+    prop: Optional[dict] = None,
+) -> dict:
+    """Create a new project at the top level.
+
+    POST /api/projects/ — verified shape from pm-capture 2026-05-13 (2nd
+    session). The 5/05 spike's `unit` mystery is now solved: the field
+    is a {"id": int, "label": str} dict, NOT the full unit object.
+
+    Required (per capture):
+        name, project_type (e.g. "TURN"), due_date, start_date,
+        coordinators (list of management-agent int ids, e.g. [57163]),
+        unit ({"id": int, "label": str}).
+
+    `meld_location` is a new field introduced in the live shape (captured
+    value: "Unit"). `prop` is null when meld_location="Unit"; set when
+    binding a project to a property instead of a unit.
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload = {
+        "name": name,
+        "project_type": project_type,
+        "description": description,
+        "due_date": due_date,
+        "start_date": start_date,
+        "coordinators": [int(c) for c in coordinators],
+        "meld_location": meld_location,
+        "prop": prop,
+        "unit": unit,
+    }
+    result = _http_post("projects/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "project_id": result.get("id"), "result": result}
+
+
+@with_recapture_retry
+def update_project(
+    project_id: str,
+    name: Optional[str] = None,
+    project_type: Optional[str] = None,
+    description: Optional[str] = None,
+    due_date: Optional[str] = None,
+    start_date: Optional[str] = None,
+    coordinators: Optional[list] = None,
+    meld_location: Optional[str] = None,
+    prop: Optional[dict] = None,
+    unit: Optional[dict] = None,
+) -> dict:
+    """Edit a top-level project.
+
+    PATCH /api/projects/{project_id}/ — verified shape from pm-capture
+    2026-05-13 (2nd session) AND live re-smoke 2026-05-14.
+
+    PM PATCH on projects requires the FULL payload echo (project_type +
+    coordinators + unit + name + start_date + due_date), not a delta.
+    Sending only changed fields returns HTTP 400 with field-required
+    errors for the missing keys (verified live 2026-05-14 03:33Z).
+
+    To make caller ergonomics partial-style: fetch the project first, then
+    overlay only the fields the caller explicitly set, then PATCH the
+    full merged payload. Pre-existing fields come from the live record
+    so we don't lose state across edits.
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+
+    current = _http_get(f"projects/{project_id}/", cookie_hdr)
+    if not isinstance(current, dict):
+        return {"ok": False, "error": "could not fetch current project state for full-payload echo"}
+
+    def _coordinator_id(c):
+        if isinstance(c, dict):
+            return c.get("id")
+        return int(c)
+
+    def _unit_echo(u):
+        if not isinstance(u, dict):
+            return u
+        label = u.get("label")
+        if not label:
+            disp = u.get("display_address")
+            if isinstance(disp, dict):
+                label = disp.get("line_1")
+        return {"id": u.get("id"), "label": label or ""}
+
+    payload: dict = {
+        "name": name if name is not None else current.get("name"),
+        "project_type": project_type if project_type is not None else current.get("project_type"),
+        "description": description if description is not None else (current.get("description") or ""),
+        "due_date": due_date if due_date is not None else current.get("due_date"),
+        "start_date": start_date if start_date is not None else current.get("start_date"),
+        "coordinators": (
+            [int(c) for c in coordinators] if coordinators is not None
+            else [c_id for c_id in (_coordinator_id(c) for c in (current.get("coordinators") or [])) if c_id is not None]
+        ),
+        "meld_location": meld_location if meld_location is not None else (current.get("meld_location") or "Unit"),
+        "prop": prop if prop is not None else current.get("prop"),
+        "unit": unit if unit is not None else _unit_echo(current.get("unit")),
+    }
+
+    result = _http_patch(f"projects/{project_id}/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "project_id": project_id, "result": result}
+
+
+@with_recapture_retry
+def update_meld_notes(meld_id: str, maintenance_notes: str) -> dict:
+    """Update the maintenance notes on a meld.
+
+    PATCH /api/v2/melds/{meld_id}/notes/ — verified shape from pm-capture
+    2026-05-13. Note the /api/v2/ prefix (NOT /api/). Body is simply
+    {"maintenance_notes": "<text>"}.
+
+    This is the maintenance-side notes field — distinct from
+    completion_notes (per fleet memory feedback_pm_two_note_fields).
+    """
+    meld_id = _validate_meld_id(meld_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    # The /api/v2/ prefix is on a separate base path. The existing helper
+    # uses BASE/api/ — we need to override the path explicitly here. The
+    # simplest approach: pass the v2 path as a prefixed string and let
+    # _http_patch use the BASE/api/ joiner. But _http_patch joins onto
+    # /api/, so we just include "v2/..." as the path argument.
+    result = _http_patch(f"v2/melds/{meld_id}/notes/", {"maintenance_notes": maintenance_notes}, cookie_hdr, csrf_token)
+    return {"ok": True, "meld_id": meld_id, "result": result}
+
+
+@with_recapture_retry
+def add_melds_to_project(project_id: str, meld_ids: list) -> dict:
+    """Attach one or more existing melds to a project.
+
+    PUT /api/projects/{project_id}/add-melds/ — verified shape from
+    pm-capture 2026-05-13 (manager UI multi-select on the project page).
+
+    Request body:
+        {"melds": [{"project": "<project_id>", "id": <meld_int>}, ...]}
+
+    The "project" key inside each meld element is a STRING (PM serializes
+    it that way in the manager-UI payload). The id is an int meld PK.
+    """
+    if not meld_ids:
+        return {"ok": False, "error": "no meld_ids provided"}
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload = {
+        "melds": [
+            {"project": str(project_id), "id": _validate_meld_id(mid)}
+            for mid in meld_ids
+        ]
+    }
+    result = _http_put(f"projects/{project_id}/add-melds/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "project_id": project_id, "result": result}
+
+
+@with_recapture_retry
+def create_meld_in_project(
+    project_id: str,
+    brief_description: str,
+    description: str,
+    work_category: str,
+    work_type: str,
+    due_date: str,
+    unit,
+    maintenance,
+    work_location: str = "",
+    tenants: Optional[list] = None,
+    priority: str = "LOW",
+    permission_to_enter: bool = True,
+    tenant_presence_required: bool = False,
+    notify_tenants: bool = True,
+    notify_owner: bool = False,
+    has_pets: bool = False,
+    pets: str = "",
+    tags: Optional[list] = None,
+) -> dict:
+    """Create a new meld INSIDE an existing project.
+
+    POST /api/projects/{project_id}/list-create-meld/ — verified shape from
+    pm-capture 2026-05-13.
+
+    The manager-UI payload uses string-typed "notify_owners_string" /
+    "notify_tenants_string" alongside the boolean fields; the captured run
+    sent both. We mirror that shape verbatim.
+
+    Required (per capture):
+        brief_description, description, work_category, work_type, due_date,
+        unit (the full unit object from the manager UI typeahead), maintenance
+        (list of ManagementAgent objects — pass through whatever the caller
+        provides).
+
+    Optional fields default to the captured-payload defaults.
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload = {
+        "notify_owners_string": "true" if notify_owner else "false",
+        "notify_tenants_string": "true" if notify_tenants else "false",
+        "project": str(project_id),
+        "tenant_presence_required": tenant_presence_required,
+        "permission_to_enter": permission_to_enter,
+        "due_date": due_date,
+        "work_category": work_category,
+        "work_type": work_type,
+        "description": description,
+        "brief_description": brief_description,
+        "work_location": work_location,
+        "maintenance": maintenance if isinstance(maintenance, list) else [maintenance],
+        "tags": tags or [],
+        "has_pets": has_pets,
+        "notify_tenants": notify_tenants,
+        "priority": priority,
+        "tenants": tenants or [],
+        "pets": pets,
+        "unit": unit,
+        "notify_owner": notify_owner,
+    }
+    result = _http_post(f"projects/{project_id}/list-create-meld/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "project_id": project_id, "meld_id": result.get("id"), "result": result}
+
+
+@with_recapture_retry
+def patch_meld_project_link(meld_id: str, project_id) -> dict:
+    """Attach or detach a meld's project link.
+
+    PATCH /api/melds/{meld_id}/ with {"id": meld_id, "project": <pid|None>}
+    — verified shape from pm-capture 2026-05-13.
+
+    Pass project_id=None to detach. Pass an integer or string project id to
+    attach. PM stores the linked project id back on the meld.
+    """
+    meld_id = _validate_meld_id(meld_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload: dict = {"id": meld_id, "project": project_id}
+    result = _http_patch(f"melds/{meld_id}/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "meld_id": meld_id, "project_id": project_id, "result": result}
 
 
 # ── Estimates ─────────────────────────────────────────────────────────────────
