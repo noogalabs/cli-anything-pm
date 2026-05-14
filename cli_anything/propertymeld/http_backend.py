@@ -1045,36 +1045,49 @@ def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, dura
     if appt_id is None:
         return {"ok": False, "error": f"Vendor {vendor_id} not assigned to this meld"}
 
-    duration_seconds = int(duration_hours * 3600)
-    # PM requires assignment_request in the availability_segment payload — verified
-    # against pm-dev 2026-05-13 (without it, returns 400 "assignment_request: This
-    # field is required."). The request_id links the appointment back to the
-    # vendor_assignment_request that established the vendor on this meld.
-    availability_segment: dict = {
-        "event": {
-            "dtstart": dtstart,
-            "duration": duration_seconds,
-        },
-        "meld": int(meld_id),
+    if request_id is None:
+        return {"ok": False, "error": f"Could not resolve assignment_request id for vendor {vendor_id}"}
+
+    # Compute dtend from dtstart + duration. The captured payload uses dtstart +
+    # dtend (no "duration" key) — we mirror that. Try to parse dtstart as ISO 8601;
+    # fall back to a naive string-concat if parsing fails (caller can also pass
+    # dtend directly via a future kwarg if needed).
+    from datetime import datetime, timedelta
+    try:
+        # Python's fromisoformat handles "+04:00" since 3.11; pad "Z" to "+00:00".
+        start_dt = datetime.fromisoformat(dtstart.replace("Z", "+00:00"))
+        end_dt = start_dt + timedelta(hours=duration_hours)
+        dtend = end_dt.isoformat()
+    except Exception:
+        dtend = dtstart  # let PM reject if the shape is wrong
+
+    # PATCH /api/assignments/{assignment_request_id}/segments/ — verified shape
+    # from 2nd pm-capture 2026-05-13. The id targeted is the
+    # vendor_assignment_request.id (NOT the vendorappointment.id). Payload uses
+    # multiple_segments_to_book[{event:{dtstart,dtend}}], NOT availability_segment.
+    payload = {
+        "mark_scheduled": True,
+        "segments_to_keep": [],
+        "new_segments": [],
+        "multiple_segments_to_book": [
+            {"event": {"dtstart": dtstart, "dtend": dtend}}
+        ],
     }
-    if request_id is not None:
-        availability_segment["assignment_request"] = request_id
-    payload = {"availability_segment": availability_segment}
-    result = _http_put(f"vendor-appointments/{appt_id}/schedule/", payload, cookie_hdr, csrf_token)
+    result = _http_patch(f"assignments/{request_id}/segments/", payload, cookie_hdr, csrf_token)
     # added 2026-04-29 by collie via dane dispatch — Wave 1.5 meld_state_change instrumentation per UU TODO
     _emit_meld_state_change(
         meld_id, prior_state, "scheduled", "scheduled_vendor_appointment",
-        vendor_id=int(vendor_id), assignment_id=appt_id,
+        vendor_id=int(vendor_id), assignment_id=request_id,
         dtstart=dtstart, triggered_by="manager",
     )
-    appt_seg = result.get("availability_segment") or {}
-    event = (appt_seg.get("event") or {}) if isinstance(appt_seg, dict) else {}
     return {
         "ok": True,
         "meld_id": meld_id,
         "vendor_id": vendor_id,
+        "assignment_request_id": request_id,
         "appointment_id": appt_id,
-        "dtstart": event.get("dtstart", dtstart),
+        "dtstart": dtstart,
+        "dtend": dtend,
         "duration_hours": duration_hours,
         "result": result,
     }
