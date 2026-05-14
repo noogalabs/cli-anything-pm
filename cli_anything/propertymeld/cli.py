@@ -457,6 +457,102 @@ def create_meld_in_project_cmd(
     output_json(result)
 
 
+@projects.command("create")
+@click.option("--name", required=True, help="Project name")
+@click.option("--project-type", required=True, help="e.g. TURN, MAINTENANCE")
+@click.option("--due-date", required=True, help="ISO 8601, e.g. 2026-05-30T04:00:00.000Z")
+@click.option("--start-date", required=True, help="ISO 8601, e.g. 2026-05-14T03:00:00Z")
+@click.option("--coordinator", "coordinators", multiple=True, required=True,
+              type=int, help="Coordinator management-agent id (repeat for multiple)")
+@click.option("--unit-id", required=True, type=int, help="Unit PK")
+@click.option("--unit-label", required=True, help="Unit address label, e.g. '123 Main St, Chattanooga, TN, 37421'")
+@click.option("--description", default="", help="Project description")
+@click.option("--meld-location", default="Unit", show_default=True,
+              help='Discriminator — usually "Unit"; PM also accepts property-bound shapes')
+@click.option("--prop-id", "prop_id", default=None, type=int,
+              help="Property PK; set when meld-location is property-bound (default null)")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def create_project_cmd(name, project_type, due_date, start_date, coordinators,
+                       unit_id, unit_label, description, meld_location, prop_id, as_json):
+    """Create a new top-level project.
+
+    Captured shape from pm-capture 2026-05-13 + live-smoked 2026-05-14:
+    coordinators are plain int ids, unit is {id, label}, meld_location='Unit'
+    for unit-bound projects.
+    """
+    result = http_backend.create_project(
+        name=name,
+        project_type=project_type,
+        due_date=due_date,
+        start_date=start_date,
+        coordinators=list(coordinators),
+        unit={"id": unit_id, "label": unit_label},
+        description=description,
+        meld_location=meld_location,
+        prop={"id": prop_id} if prop_id is not None else None,
+    )
+    output_json(result)
+
+
+@projects.command("edit")
+@click.argument("project_id")
+@click.option("--name", default=None)
+@click.option("--project-type", default=None)
+@click.option("--description", default=None)
+@click.option("--due-date", default=None)
+@click.option("--start-date", default=None)
+@click.option("--coordinator", "coordinators", multiple=True, type=int,
+              help="Replace coordinator list (repeat for multiple)")
+@click.option("--unit-id", default=None, type=int)
+@click.option("--unit-label", default=None)
+@click.option("--meld-location", default=None)
+@click.option("--json", "as_json", is_flag=True, default=True)
+def edit_project_cmd(project_id, name, project_type, description, due_date, start_date,
+                     coordinators, unit_id, unit_label, meld_location, as_json):
+    """Edit a top-level project.
+
+    PM requires a full-payload echo on PATCH; the backend handles that by
+    fetching current state and overlaying only the fields you pass here.
+    """
+    unit = None
+    if unit_id is not None or unit_label is not None:
+        unit = {"id": unit_id, "label": unit_label or ""}
+    result = http_backend.update_project(
+        project_id=project_id,
+        name=name,
+        project_type=project_type,
+        description=description,
+        due_date=due_date,
+        start_date=start_date,
+        coordinators=list(coordinators) if coordinators else None,
+        unit=unit,
+        meld_location=meld_location,
+    )
+    output_json(result)
+
+
+@projects.command("detach-meld")
+@click.argument("meld_id")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def detach_meld_cmd(meld_id, as_json):
+    """Detach a meld from any project (sets meld.project = null)."""
+    meld_id = _normalize_meld_id(meld_id)
+    result = http_backend.patch_meld_project_link(meld_id, None)
+    output_json(result)
+
+
+@work_orders.command("update-notes")
+@click.argument("meld_id")
+@click.option("--maintenance", "maintenance_notes", required=True,
+              help="New maintenance_notes text (overwrites existing)")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def update_meld_notes_cmd(meld_id, maintenance_notes, as_json):
+    """Update the maintenance_notes on a meld (PATCH /api/v2/melds/{id}/notes/)."""
+    meld_id = _normalize_meld_id(meld_id)
+    result = http_backend.update_meld_notes(meld_id, maintenance_notes)
+    output_json(result)
+
+
 # ── estimates group ────────────────────────────────────────────────────────────
 
 @cli.group()
