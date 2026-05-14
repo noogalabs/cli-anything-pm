@@ -358,3 +358,99 @@ class TestWorkOrdersScheduleVendorCLI:
         mock_fn.assert_called_once_with("12701108", "10",
                                         "2026-05-06T14:00:00-04:00",
                                         duration_hours=3.0)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Projects create / edit / detach-meld + work-orders update-notes (PR cli-wire)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestProjectsCreateEditCLI:
+    def test_create_passes_args_shape(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.create_project",
+                   return_value={"ok": True, "project_id": 222969, "result": {"id": 222969}}) as mock_fn:
+            result = runner.invoke(cli, [
+                "projects", "create",
+                "--name", "Test",
+                "--project-type", "TURN",
+                "--due-date", "2026-05-30T04:00:00.000Z",
+                "--start-date", "2026-05-14T10:30:00Z",
+                "--coordinator", "57163",
+                "--unit-id", "1870266",
+                "--unit-label", "123 Main St",
+            ])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["project_id"] == 222969
+        kw = mock_fn.call_args.kwargs
+        assert kw["name"] == "Test"
+        assert kw["project_type"] == "TURN"
+        assert kw["coordinators"] == [57163]
+        assert kw["unit"] == {"id": 1870266, "label": "123 Main St"}
+        assert kw["meld_location"] == "Unit"
+        assert kw["prop"] is None
+
+    def test_create_with_prop_id_builds_prop_dict(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.create_project",
+                   return_value={"ok": True, "project_id": 1, "result": {}}) as mock_fn:
+            runner.invoke(cli, [
+                "projects", "create",
+                "--name", "P", "--project-type", "TURN",
+                "--due-date", "2026-05-30T04:00:00.000Z",
+                "--start-date", "2026-05-14T10:30:00Z",
+                "--coordinator", "57163",
+                "--unit-id", "1870266", "--unit-label", "L",
+                "--prop-id", "9999",
+            ])
+        kw = mock_fn.call_args.kwargs
+        assert kw["prop"] == {"id": 9999}
+
+    def test_edit_passes_only_set_fields_plus_unit_dict(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.update_project",
+                   return_value={"ok": True, "project_id": "222969", "result": {}}) as mock_fn:
+            result = runner.invoke(cli, [
+                "projects", "edit", "222969",
+                "--name", "Renamed",
+                "--description", "new desc",
+                "--unit-id", "1870266", "--unit-label", "123 Main",
+            ])
+        assert result.exit_code == 0
+        kw = mock_fn.call_args.kwargs
+        assert kw["project_id"] == "222969"
+        assert kw["name"] == "Renamed"
+        assert kw["description"] == "new desc"
+        assert kw["unit"] == {"id": 1870266, "label": "123 Main"}
+        # Unset fields should be None so the backend's fetch+merge can echo them.
+        assert kw["project_type"] is None
+        assert kw["due_date"] is None
+        assert kw["start_date"] is None
+        assert kw["coordinators"] is None
+
+
+class TestProjectsDetachMeldCLI:
+    def test_detach_meld_calls_patch_link_with_none(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.patch_meld_project_link",
+                   return_value={"ok": True, "meld_id": 12772911, "project_id": None, "result": {}}) as mock_fn:
+            result = runner.invoke(cli, ["projects", "detach-meld", "12772911"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["project_id"] is None
+        call = mock_fn.call_args
+        assert call.args[0] == "12772911"
+        assert call.args[1] is None
+
+
+class TestWorkOrdersUpdateNotesCLI:
+    def test_update_notes_passes_text(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.update_meld_notes",
+                   return_value={"ok": True, "meld_id": 12772911, "result": {"maintenance_notes": "hi"}}) as mock_fn:
+            result = runner.invoke(cli, [
+                "work-orders", "update-notes", "12772911",
+                "--maintenance", "hi",
+            ])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["result"]["maintenance_notes"] == "hi"
+        call = mock_fn.call_args
+        assert call.args[0] == "12772911"
+        assert call.args[1] == "hi"
