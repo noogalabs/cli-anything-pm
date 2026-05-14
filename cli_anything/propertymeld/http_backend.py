@@ -1113,14 +1113,112 @@ def get_project(project_id: str) -> dict:
     return _http_get(f"projects/{project_id}/", cookie_hdr)
 
 
-# Top-level POST /api/projects/ (create) + PATCH /api/projects/{id}/ (edit)
-# are STILL not implemented — the 5/05 Item-3 spike found the create payload
-# shape incomplete, and the 2026-05-13 pm-capture run only covered actions
-# on an EXISTING project (no create or edit call was driven by the operator).
-# Re-capture pending; see queue #3 retro for the morning brief.
-#
-# What WAS captured (and is implemented below): the project↔meld association
-# operations and the inside-project meld creation flow.
+@with_recapture_retry
+def create_project(
+    name: str,
+    project_type: str,
+    due_date: str,
+    start_date: str,
+    coordinators: list,
+    unit: dict,
+    description: str = "",
+    meld_location: str = "Unit",
+    prop: Optional[dict] = None,
+) -> dict:
+    """Create a new project at the top level.
+
+    POST /api/projects/ — verified shape from pm-capture 2026-05-13 (2nd
+    session). The 5/05 spike's `unit` mystery is now solved: the field
+    is a {"id": int, "label": str} dict, NOT the full unit object.
+
+    Required (per capture):
+        name, project_type (e.g. "TURN"), due_date, start_date,
+        coordinators (list of management-agent int ids, e.g. [57163]),
+        unit ({"id": int, "label": str}).
+
+    `meld_location` is a new field introduced in the live shape (captured
+    value: "Unit"). `prop` is null when meld_location="Unit"; set when
+    binding a project to a property instead of a unit.
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload = {
+        "name": name,
+        "project_type": project_type,
+        "description": description,
+        "due_date": due_date,
+        "start_date": start_date,
+        "coordinators": [int(c) for c in coordinators],
+        "meld_location": meld_location,
+        "prop": prop,
+        "unit": unit,
+    }
+    result = _http_post("projects/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "project_id": result.get("id"), "result": result}
+
+
+@with_recapture_retry
+def update_project(
+    project_id: str,
+    name: Optional[str] = None,
+    project_type: Optional[str] = None,
+    description: Optional[str] = None,
+    due_date: Optional[str] = None,
+    start_date: Optional[str] = None,
+    coordinators: Optional[list] = None,
+    meld_location: Optional[str] = None,
+    prop: Optional[dict] = None,
+    unit: Optional[dict] = None,
+) -> dict:
+    """Edit a top-level project.
+
+    PATCH /api/projects/{project_id}/ — verified shape from pm-capture
+    2026-05-13 (2nd session). The manager-UI sends the FULL payload echo,
+    not just the changed fields; we mirror that by only including fields
+    the caller explicitly set, which DRF accepts on PATCH.
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload: dict = {}
+    if name is not None: payload["name"] = name
+    if project_type is not None: payload["project_type"] = project_type
+    if description is not None: payload["description"] = description
+    if due_date is not None: payload["due_date"] = due_date
+    if start_date is not None: payload["start_date"] = start_date
+    if coordinators is not None: payload["coordinators"] = [int(c) for c in coordinators]
+    if meld_location is not None: payload["meld_location"] = meld_location
+    if prop is not None: payload["prop"] = prop
+    if unit is not None: payload["unit"] = unit
+    if not payload:
+        return {"ok": False, "error": "no fields to update"}
+    result = _http_patch(f"projects/{project_id}/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "project_id": project_id, "result": result}
+
+
+@with_recapture_retry
+def update_meld_notes(meld_id: str, maintenance_notes: str) -> dict:
+    """Update the maintenance notes on a meld.
+
+    PATCH /api/v2/melds/{meld_id}/notes/ — verified shape from pm-capture
+    2026-05-13. Note the /api/v2/ prefix (NOT /api/). Body is simply
+    {"maintenance_notes": "<text>"}.
+
+    This is the maintenance-side notes field — distinct from
+    completion_notes (per fleet memory feedback_pm_two_note_fields).
+    """
+    meld_id = _validate_meld_id(meld_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    # The /api/v2/ prefix is on a separate base path. The existing helper
+    # uses BASE/api/ — we need to override the path explicitly here. The
+    # simplest approach: pass the v2 path as a prefixed string and let
+    # _http_patch use the BASE/api/ joiner. But _http_patch joins onto
+    # /api/, so we just include "v2/..." as the path argument.
+    result = _http_patch(f"v2/melds/{meld_id}/notes/", {"maintenance_notes": maintenance_notes}, cookie_hdr, csrf_token)
+    return {"ok": True, "meld_id": meld_id, "result": result}
 
 
 @with_recapture_retry
