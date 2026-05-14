@@ -390,15 +390,71 @@ def get_project(project_id, as_json):
     output_json(result)
 
 
-# projects create/update/delete CLI commands — DROPPED per Item 3 spike
-# (5/05). POST /api/projects/ is reachable but payload schema is incomplete
-# in the Haiku-coauthored snapcli stub: known-required fields are name +
-# description + start_date + due_date + coordinators[] + project_type +
-# unit, but the "unit" field shape is unknown (passing unit.id int returns
-# HTTP 500). Update + delete remained untested because they depend on a
-# safe create+delete cycle. list + get commands remain available and
-# verified. Endpoint-discovery follow-up tracked separately — re-add the
-# CLI subcommands once the create payload is captured via Safari.
+@projects.command("add-melds")
+@click.argument("project_id")
+@click.argument("meld_ids", nargs=-1, required=True)
+@click.option("--json", "as_json", is_flag=True, default=True)
+def add_melds_to_project_cmd(project_id, meld_ids, as_json):
+    """Attach one or more existing melds to a project.
+
+    Example: pm projects add-melds 222959 12772756 12772757
+    """
+    result = http_backend.add_melds_to_project(project_id, list(meld_ids))
+    output_json(result)
+
+
+@projects.command("create-meld-in")
+@click.argument("project_id")
+@click.option("--brief-description", required=True)
+@click.option("--description", required=True)
+@click.option("--work-category", required=True, help="e.g. APPLIANCES, PLUMBING, HVAC")
+@click.option("--work-type", required=True, help="e.g. TURN, REPAIR")
+@click.option("--due-date", required=True, help="ISO 8601, e.g. 2026-05-16T02:52:41.393Z")
+@click.option("--unit-json", required=True, help="JSON of the unit object (from manager UI typeahead)")
+@click.option("--maintenance-json", required=True, help="JSON list of ManagementAgent objects")
+@click.option("--tenants-json", default="[]", help="JSON list of tenant objects (default: [])")
+@click.option("--work-location", default="")
+@click.option("--priority", default="LOW")
+@click.option("--permission-to-enter/--no-permission-to-enter", default=True)
+@click.option("--tenant-presence-required/--no-tenant-presence-required", default=False)
+@click.option("--notify-tenants/--no-notify-tenants", default=True)
+@click.option("--notify-owner/--no-notify-owner", default=False)
+@click.option("--has-pets/--no-has-pets", default=False)
+@click.option("--pets", default="")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def create_meld_in_project_cmd(
+    project_id, brief_description, description, work_category, work_type,
+    due_date, unit_json, maintenance_json, tenants_json, work_location,
+    priority, permission_to_enter, tenant_presence_required, notify_tenants,
+    notify_owner, has_pets, pets, as_json,
+):
+    """Create a new meld INSIDE an existing project.
+
+    The unit and maintenance fields are full nested objects in the captured
+    PM payload — pass them as JSON strings until we have lighter-weight
+    helpers for them.
+    """
+    import json as _json
+    result = http_backend.create_meld_in_project(
+        project_id=project_id,
+        brief_description=brief_description,
+        description=description,
+        work_category=work_category,
+        work_type=work_type,
+        due_date=due_date,
+        unit=_json.loads(unit_json),
+        maintenance=_json.loads(maintenance_json),
+        tenants=_json.loads(tenants_json),
+        work_location=work_location,
+        priority=priority,
+        permission_to_enter=permission_to_enter,
+        tenant_presence_required=tenant_presence_required,
+        notify_tenants=notify_tenants,
+        notify_owner=notify_owner,
+        has_pets=has_pets,
+        pets=pets,
+    )
+    output_json(result)
 
 
 # ── estimates group ────────────────────────────────────────────────────────────

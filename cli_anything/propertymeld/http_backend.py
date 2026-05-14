@@ -1113,19 +1113,128 @@ def get_project(project_id: str) -> dict:
     return _http_get(f"projects/{project_id}/", cookie_hdr)
 
 
-# create/update/delete project — DROPPED per Item 3 spike (5/05).
-# Endpoint POST /api/projects/ is reachable but the create payload schema is
-# incomplete in the Haiku-coauthored snapcli stub. Verified required fields:
-# name + description + start_date + due_date + coordinators[] + project_type
-# + unit (active unit reference). The "unit" field shape is unknown — passing
-# the unit.id int (e.g. 1754499) returns HTTP 500. Needs Safari Web Inspector
-# capture of the actual /api/projects/ POST payload from the manager UI to
-# discover the correct shape (likely needs unit_pk, address-tied lookup, or
-# a search-string indirection). update + delete commands remained untested
-# because of the create-cycle dependency for safe verification.
+# Top-level POST /api/projects/ (create) + PATCH /api/projects/{id}/ (edit)
+# are STILL not implemented — the 5/05 Item-3 spike found the create payload
+# shape incomplete, and the 2026-05-13 pm-capture run only covered actions
+# on an EXISTING project (no create or edit call was driven by the operator).
+# Re-capture pending; see queue #3 retro for the morning brief.
 #
-# list_projects + get_project are verified working and remain available.
-# See tracking task task_<TBD> for endpoint-discovery follow-up.
+# What WAS captured (and is implemented below): the project↔meld association
+# operations and the inside-project meld creation flow.
+
+
+@with_recapture_retry
+def add_melds_to_project(project_id: str, meld_ids: list) -> dict:
+    """Attach one or more existing melds to a project.
+
+    PUT /api/projects/{project_id}/add-melds/ — verified shape from
+    pm-capture 2026-05-13 (manager UI multi-select on the project page).
+
+    Request body:
+        {"melds": [{"project": "<project_id>", "id": <meld_int>}, ...]}
+
+    The "project" key inside each meld element is a STRING (PM serializes
+    it that way in the manager-UI payload). The id is an int meld PK.
+    """
+    if not meld_ids:
+        return {"ok": False, "error": "no meld_ids provided"}
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload = {
+        "melds": [
+            {"project": str(project_id), "id": _validate_meld_id(mid)}
+            for mid in meld_ids
+        ]
+    }
+    result = _http_put(f"projects/{project_id}/add-melds/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "project_id": project_id, "result": result}
+
+
+@with_recapture_retry
+def create_meld_in_project(
+    project_id: str,
+    brief_description: str,
+    description: str,
+    work_category: str,
+    work_type: str,
+    due_date: str,
+    unit,
+    maintenance,
+    work_location: str = "",
+    tenants: Optional[list] = None,
+    priority: str = "LOW",
+    permission_to_enter: bool = True,
+    tenant_presence_required: bool = False,
+    notify_tenants: bool = True,
+    notify_owner: bool = False,
+    has_pets: bool = False,
+    pets: str = "",
+    tags: Optional[list] = None,
+) -> dict:
+    """Create a new meld INSIDE an existing project.
+
+    POST /api/projects/{project_id}/list-create-meld/ — verified shape from
+    pm-capture 2026-05-13.
+
+    The manager-UI payload uses string-typed "notify_owners_string" /
+    "notify_tenants_string" alongside the boolean fields; the captured run
+    sent both. We mirror that shape verbatim.
+
+    Required (per capture):
+        brief_description, description, work_category, work_type, due_date,
+        unit (the full unit object from the manager UI typeahead), maintenance
+        (list of ManagementAgent objects — pass through whatever the caller
+        provides).
+
+    Optional fields default to the captured-payload defaults.
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload = {
+        "notify_owners_string": "true" if notify_owner else "false",
+        "notify_tenants_string": "true" if notify_tenants else "false",
+        "project": str(project_id),
+        "tenant_presence_required": tenant_presence_required,
+        "permission_to_enter": permission_to_enter,
+        "due_date": due_date,
+        "work_category": work_category,
+        "work_type": work_type,
+        "description": description,
+        "brief_description": brief_description,
+        "work_location": work_location,
+        "maintenance": maintenance if isinstance(maintenance, list) else [maintenance],
+        "tags": tags or [],
+        "has_pets": has_pets,
+        "notify_tenants": notify_tenants,
+        "priority": priority,
+        "tenants": tenants or [],
+        "pets": pets,
+        "unit": unit,
+        "notify_owner": notify_owner,
+    }
+    result = _http_post(f"projects/{project_id}/list-create-meld/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "project_id": project_id, "meld_id": result.get("id"), "result": result}
+
+
+@with_recapture_retry
+def patch_meld_project_link(meld_id: str, project_id) -> dict:
+    """Attach or detach a meld's project link.
+
+    PATCH /api/melds/{meld_id}/ with {"id": meld_id, "project": <pid|None>}
+    — verified shape from pm-capture 2026-05-13.
+
+    Pass project_id=None to detach. Pass an integer or string project id to
+    attach. PM stores the linked project id back on the meld.
+    """
+    meld_id = _validate_meld_id(meld_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload: dict = {"id": meld_id, "project": project_id}
+    result = _http_patch(f"melds/{meld_id}/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "meld_id": meld_id, "project_id": project_id, "result": result}
 
 
 # ── Estimates ─────────────────────────────────────────────────────────────────
