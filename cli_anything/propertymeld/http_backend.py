@@ -970,58 +970,101 @@ def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, dura
 
     Args:
         meld_id: Meld ID.
-        vendor_id: Vendor ID.
+        vendor_id: Vendor ID (the integer PK from PM, e.g. 91195 for Dyer HVAC).
         dtstart: ISO 8601 datetime string, e.g. '2026-04-27T14:00:00-04:00'.
         duration_hours: Appointment duration in hours (default 2).
 
-    The meld must have the vendor assigned — PM creates the vendorassignment
-    object at assignment time. This sets the availability_segment (the actual time window).
+    Live-PM shape (verified against pm-dev 2026-05-13):
+      - meld.vendor_assignment_requests[] holds vendor identity:
+          {id, vendor: {id, name, ...}, accepted, rejected, canceled, ...}
+      - meld.vendorappointment[] holds the appointment objects to PUT to:
+          {id, meld, assignment_request, availability_segment, ...}
+      - assignment_request on an appointment links to vendor_assignment_requests.id.
+
+    To resolve vendor_id → appointment_id:
+      1. Find the request in vendor_assignment_requests whose vendor.id matches
+         and which is accepted (rejected/canceled both null).
+      2. Find the appointment in vendorappointment whose assignment_request
+         matches that request.id.
+
+    Falls back to the first appointment on the meld when no exact vendor match
+    is found, mirroring the prior multi-vendor fallback behavior.
     """
     meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
 
-    # Get the vendor assignment ID from the meld
+    # Get the vendor appointment from the meld (live API uses `vendorappointment`,
+    # NOT the legacy `vendorassignment` field that earlier mocks referenced).
     meld = _http_get(f"melds/{meld_id}/", cookie_hdr)
     # added 2026-04-29 by collie via dane dispatch — Wave 1.5 meld_state_change instrumentation per UU TODO
     # Reuse the existing meld fetch above to capture prior_state — no extra GET needed.
     prior_state = "unknown"
     if isinstance(meld, dict):
         prior_state = str(meld.get("status") or meld.get("state") or "unknown")
-    vendor_assignments = meld.get("vendorassignment", [])
-    if not vendor_assignments:
-        return {"ok": False, "error": "No vendor assignment found on this meld"}
 
-    # Find the assignment for the specific vendor
-    vendor_assign_id = None
-    for va in vendor_assignments:
-        if str(va.get("vendor_id")) == str(vendor_id) or str(va.get("id")) == str(vendor_id):
-            vendor_assign_id = va.get("id")
+    appointments = meld.get("vendorappointment", []) or []
+    requests_list = meld.get("vendor_assignment_requests", []) or []
+    if not appointments:
+        return {"ok": False, "error": "No vendor appointment found on this meld"}
+
+    # Build a map of request_id -> vendor.id from accepted (non-rejected, non-canceled) requests.
+    req_to_vendor: dict = {}
+    for req in requests_list:
+        if not isinstance(req, dict):
+            continue
+        if req.get("rejected") is not None or req.get("canceled") is not None:
+            continue
+        rid = req.get("id")
+        vendor = req.get("vendor")
+        vid = vendor.get("id") if isinstance(vendor, dict) else None
+        if rid is not None and vid is not None:
+            req_to_vendor[rid] = vid
+
+    # Find the appointment whose linked assignment_request belongs to vendor_id.
+    appt_id = None
+    request_id = None
+    for appt in appointments:
+        if not isinstance(appt, dict):
+            continue
+        linked_req = appt.get("assignment_request")
+        if linked_req is not None and str(req_to_vendor.get(linked_req)) == str(vendor_id):
+            appt_id = appt.get("id")
+            request_id = linked_req
             break
 
-    if not vendor_assign_id and vendor_assignments:
-        # If no match found, use the first one
-        vendor_assign_id = vendor_assignments[0]["id"]
+    if appt_id is None:
+        # Fallback: use the first appointment on the meld (preserves multi-vendor
+        # behavior from the legacy mock-driven implementation).
+        first = next((a for a in appointments if isinstance(a, dict) and a.get("id") is not None), None)
+        if first:
+            appt_id = first.get("id")
+            request_id = first.get("assignment_request")
 
-    if not vendor_assign_id:
+    if appt_id is None:
         return {"ok": False, "error": f"Vendor {vendor_id} not assigned to this meld"}
 
     duration_seconds = int(duration_hours * 3600)
-    payload = {
-        "availability_segment": {
-            "event": {
-                "dtstart": dtstart,
-                "duration": duration_seconds,
-            },
-            "meld": int(meld_id),
-        }
+    # PM requires assignment_request in the availability_segment payload — verified
+    # against pm-dev 2026-05-13 (without it, returns 400 "assignment_request: This
+    # field is required."). The request_id links the appointment back to the
+    # vendor_assignment_request that established the vendor on this meld.
+    availability_segment: dict = {
+        "event": {
+            "dtstart": dtstart,
+            "duration": duration_seconds,
+        },
+        "meld": int(meld_id),
     }
-    result = _http_put(f"vendor-assignments/{vendor_assign_id}/schedule/", payload, cookie_hdr, csrf_token)
+    if request_id is not None:
+        availability_segment["assignment_request"] = request_id
+    payload = {"availability_segment": availability_segment}
+    result = _http_put(f"vendor-appointments/{appt_id}/schedule/", payload, cookie_hdr, csrf_token)
     # added 2026-04-29 by collie via dane dispatch — Wave 1.5 meld_state_change instrumentation per UU TODO
     _emit_meld_state_change(
         meld_id, prior_state, "scheduled", "scheduled_vendor_appointment",
-        vendor_id=int(vendor_id), assignment_id=vendor_assign_id,
+        vendor_id=int(vendor_id), assignment_id=appt_id,
         dtstart=dtstart, triggered_by="manager",
     )
     appt_seg = result.get("availability_segment") or {}
@@ -1030,7 +1073,7 @@ def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, dura
         "ok": True,
         "meld_id": meld_id,
         "vendor_id": vendor_id,
-        "assignment_id": vendor_assign_id,
+        "appointment_id": appt_id,
         "dtstart": event.get("dtstart", dtstart),
         "duration_hours": duration_hours,
         "result": result,
