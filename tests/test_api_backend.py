@@ -199,14 +199,40 @@ class TestRecaptureRetry:
 
 
 class TestScheduleVendorAppointment:
+    """Fixtures mirror the LIVE PM API shape captured against pm-dev on 2026-05-13.
+
+    Real PM melds expose two related lists:
+      - vendor_assignment_requests[]   {id, vendor: {id, name, ...}, accepted, rejected, canceled, ...}
+      - vendorappointment[]            {id, meld, assignment_request, availability_segment, ...}
+
+    schedule_vendor_appointment matches vendor_id -> assignment_request -> appointment
+    and PUTs to vendor-appointments/{appointment_id}/schedule/ with
+    `availability_segment.assignment_request` included (PM requires it).
+
+    The earlier mock fixtures used `vendorassignment` (no such field on the
+    live API), which let PR #1 ship a function that always returned
+    "No vendor assignment found" against real PM. See the PR body for the
+    full regression history.
+    """
+
     def test_schedules_vendor_appointment_happy_path(self):
-        """Happy path: vendor found by vendor_id, assignment created."""
+        """Vendor 42 has an accepted request linked to appointment 7000."""
         meld_response = {
             "id": 12701108,
-            "status": "open",
-            "vendorassignment": [
-                {"id": 201, "vendor_id": 42, "name": "Dyer HVAC"},
-            ]
+            "status": "PENDING_TENANT_AVAILABILITY",
+            "vendor_assignment_requests": [
+                {
+                    "id": 8000,
+                    "vendor": {"id": 42, "name": "Dyer HVAC"},
+                    "accepted": "2026-05-13T12:59:15.615119Z",
+                    "rejected": None,
+                    "canceled": None,
+                    "meld": 12701108,
+                },
+            ],
+            "vendorappointment": [
+                {"id": 7000, "meld": 12701108, "assignment_request": 8000, "availability_segment": None},
+            ],
         }
         schedule_response = {
             "availability_segment": {
@@ -237,18 +263,24 @@ class TestScheduleVendorAppointment:
             assert result["ok"] is True
             assert result["meld_id"] == 12701108
             assert result["vendor_id"] == "42"
-            assert result["assignment_id"] == 201
+            assert result["appointment_id"] == 7000
             assert result["dtstart"] == "2026-05-20T14:00:00-04:00"
             assert result["duration_hours"] == 2.0
             mock_put.assert_called_once()
+            # The PUT URL targets vendor-appointments, not vendor-assignments.
+            put_url, put_payload, *_ = mock_put.call_args[0]
+            assert "vendor-appointments/7000/schedule/" in put_url
+            # The payload must include the assignment_request link.
+            assert put_payload["availability_segment"]["assignment_request"] == 8000
             mock_emit.assert_called_once()
 
-    def test_returns_error_when_no_vendor_assignment(self):
-        """Missing vendor assignment: vendor_assignments is empty."""
+    def test_returns_error_when_no_vendor_appointment(self):
+        """Missing vendor: vendorappointment is empty on the meld."""
         meld_response = {
             "id": 12701108,
-            "status": "open",
-            "vendorassignment": []
+            "status": "PENDING_ASSIGNMENT",
+            "vendor_assignment_requests": [],
+            "vendorappointment": [],
         }
 
         with patch("cli_anything.propertymeld.http_backend._load_creds") as mock_creds, \
@@ -266,17 +298,33 @@ class TestScheduleVendorAppointment:
             )
 
             assert result["ok"] is False
-            assert "No vendor assignment" in result["error"]
+            assert "No vendor appointment" in result["error"]
 
-    def test_uses_first_vendor_assignment_fallback(self):
-        """Multi-vendor fallback: use first assignment when vendor_id doesn't match."""
+    def test_uses_first_appointment_fallback(self):
+        """Multi-vendor fallback: vendor_id 999 isn't on the meld, use the first appointment."""
         meld_response = {
             "id": 12701108,
-            "status": "open",
-            "vendorassignment": [
-                {"id": 201, "vendor_id": 10, "name": "First HVAC"},
-                {"id": 202, "vendor_id": 42, "name": "Dyer HVAC"},
-            ]
+            "status": "PENDING_TENANT_AVAILABILITY",
+            "vendor_assignment_requests": [
+                {
+                    "id": 8000,
+                    "vendor": {"id": 10, "name": "First HVAC"},
+                    "accepted": "2026-05-13T10:00:00Z",
+                    "rejected": None,
+                    "canceled": None,
+                },
+                {
+                    "id": 8001,
+                    "vendor": {"id": 42, "name": "Dyer HVAC"},
+                    "accepted": "2026-05-13T11:00:00Z",
+                    "rejected": None,
+                    "canceled": None,
+                },
+            ],
+            "vendorappointment": [
+                {"id": 7000, "meld": 12701108, "assignment_request": 8000},
+                {"id": 7001, "meld": 12701108, "assignment_request": 8001},
+            ],
         }
         schedule_response = {
             "availability_segment": {
@@ -300,15 +348,65 @@ class TestScheduleVendorAppointment:
             mock_get.return_value = meld_response
             mock_put.return_value = schedule_response
 
-            # Pass non-matching vendor_id to trigger fallback
+            # Pass non-matching vendor_id to trigger fallback.
             result = http_backend.schedule_vendor_appointment(
                 "12701108", "999", "2026-05-20T14:00:00-04:00"
             )
 
             assert result["ok"] is True
-            # Should use first assignment (id=201) as fallback
-            assert result["assignment_id"] == 201
+            # First appointment (id=7000) wins the fallback.
+            assert result["appointment_id"] == 7000
             mock_put.assert_called_once()
-            # Verify the PUT was called with the first assignment ID
-            call_args = mock_put.call_args
-            assert "vendor-assignments/201/" in call_args[0][0]
+            assert "vendor-appointments/7000/schedule/" in mock_put.call_args[0][0]
+
+    def test_skips_rejected_request(self):
+        """A rejected request must NOT match: appointment for vendor 42 is rejected,
+        so vendor 42 falls through to the multi-vendor fallback (first appointment)."""
+        meld_response = {
+            "id": 12701108,
+            "status": "PENDING_ASSIGNMENT",
+            "vendor_assignment_requests": [
+                {
+                    "id": 8000,
+                    "vendor": {"id": 10, "name": "First HVAC"},
+                    "accepted": "2026-05-13T10:00:00Z",
+                    "rejected": None,
+                    "canceled": None,
+                },
+                {
+                    "id": 8001,
+                    "vendor": {"id": 42, "name": "Dyer HVAC"},
+                    "accepted": None,
+                    "rejected": "2026-05-13T11:00:00Z",
+                    "canceled": None,
+                },
+            ],
+            "vendorappointment": [
+                {"id": 7000, "meld": 12701108, "assignment_request": 8000},
+                {"id": 7001, "meld": 12701108, "assignment_request": 8001},
+            ],
+        }
+        schedule_response = {"availability_segment": {"event": {"dtstart": "2026-05-20T14:00:00-04:00", "duration": 7200}}}
+
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mock_creds, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mock_cookie, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mock_csrf, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mock_get, \
+             patch("cli_anything.propertymeld.http_backend._http_put") as mock_put, \
+             patch.object(http_backend, "_emit_meld_state_change", create=True):
+
+            mock_creds.return_value = {"cookie": "test"}
+            mock_cookie.return_value = "Cookie: session=xyz"
+            mock_csrf.return_value = "csrf123"
+            mock_get.return_value = meld_response
+            mock_put.return_value = schedule_response
+
+            # Ask for vendor 42 — their request is rejected, so they should NOT match;
+            # function falls back to the first appointment (7000, vendor 10).
+            result = http_backend.schedule_vendor_appointment(
+                "12701108", "42", "2026-05-20T14:00:00-04:00"
+            )
+
+            assert result["ok"] is True
+            assert result["appointment_id"] == 7000
+            assert "vendor-appointments/7000/schedule/" in mock_put.call_args[0][0]
