@@ -580,44 +580,82 @@ class TestCreateProjectLiveShape:
 
 
 class TestUpdateProjectLiveShape:
-    """PATCH /api/projects/{id}/ — verified shape from 2nd pm-capture."""
+    """PATCH /api/projects/{id}/ — full-payload-echo verified live 2026-05-14.
 
-    def test_happy_path_sends_only_set_fields(self):
+    PM rejects partial PATCH on projects (HTTP 400 "field is required" for
+    every omitted required field). update_project fetches the current
+    project first, overlays caller-set fields, and sends the FULL merged
+    payload. The mocked _http_get returns the current state.
+    """
+
+    CURRENT_PROJECT = {
+        "id": 222959,
+        "name": "original",
+        "project_type": "TURN",
+        "description": "old description",
+        "due_date": "2026-05-30T04:00:00Z",
+        "start_date": "2026-05-14T03:00:00Z",
+        "coordinators": [{"id": 57163, "first_name": "David"}],
+        "meld_location": "Unit",
+        "prop": None,
+        "unit": {"id": 1870266, "label": "123 Main St"},
+    }
+
+    def test_happy_path_merges_caller_fields_with_full_echo(self):
         with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
              patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
              patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mg, \
              patch("cli_anything.propertymeld.http_backend._http_patch") as mp:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
-            mp.return_value = {"id": 222959, "name": "test project edit"}
+            mg.return_value = dict(self.CURRENT_PROJECT)
+            mp.return_value = {"id": 222959, "name": "renamed"}
 
             result = http_backend.update_project(
                 project_id="222959",
-                name="test project edit",
-                description="test project",
+                name="renamed",
+                description="new description",
             )
 
             assert result["ok"] is True
             assert result["project_id"] == "222959"
+            mg.assert_called_once()
+            mp.assert_called_once()
             path, payload, _, _ = mp.call_args[0]
             assert path == "projects/222959/"
-            assert payload == {"name": "test project edit", "description": "test project"}
+            # Full payload echo — required fields all present, caller fields override.
+            assert payload["name"] == "renamed"
+            assert payload["description"] == "new description"
+            assert payload["project_type"] == "TURN"
+            assert payload["coordinators"] == [57163]  # coordinator dict flattened to id
+            assert payload["unit"] == {"id": 1870266, "label": "123 Main St"}
+            assert payload["meld_location"] == "Unit"
+            assert payload["due_date"] == "2026-05-30T04:00:00Z"
+            assert payload["start_date"] == "2026-05-14T03:00:00Z"
 
-    def test_no_fields_short_circuits(self):
+    def test_passing_no_overrides_still_sends_full_echo(self):
+        """Calling update_project with no overrides is a "ping with echo" — PM accepts."""
         with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
              patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
              patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mg, \
              patch("cli_anything.propertymeld.http_backend._http_patch") as mp:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
+            mg.return_value = dict(self.CURRENT_PROJECT)
+            mp.return_value = {"id": 222959}
 
             result = http_backend.update_project(project_id="222959")
 
-            assert result["ok"] is False
-            assert "no fields" in result["error"]
-            mp.assert_not_called()
+            assert result["ok"] is True
+            mp.assert_called_once()
+            _, payload, _, _ = mp.call_args[0]
+            # No overrides — echo back the current state verbatim.
+            assert payload["name"] == "original"
+            assert payload["project_type"] == "TURN"
 
 
 class TestUpdateMeldNotes:

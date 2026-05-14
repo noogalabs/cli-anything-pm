@@ -1174,25 +1174,56 @@ def update_project(
     """Edit a top-level project.
 
     PATCH /api/projects/{project_id}/ — verified shape from pm-capture
-    2026-05-13 (2nd session). The manager-UI sends the FULL payload echo,
-    not just the changed fields; we mirror that by only including fields
-    the caller explicitly set, which DRF accepts on PATCH.
+    2026-05-13 (2nd session) AND live re-smoke 2026-05-14.
+
+    PM PATCH on projects requires the FULL payload echo (project_type +
+    coordinators + unit + name + start_date + due_date), not a delta.
+    Sending only changed fields returns HTTP 400 with field-required
+    errors for the missing keys (verified live 2026-05-14 03:33Z).
+
+    To make caller ergonomics partial-style: fetch the project first, then
+    overlay only the fields the caller explicitly set, then PATCH the
+    full merged payload. Pre-existing fields come from the live record
+    so we don't lose state across edits.
     """
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
-    payload: dict = {}
-    if name is not None: payload["name"] = name
-    if project_type is not None: payload["project_type"] = project_type
-    if description is not None: payload["description"] = description
-    if due_date is not None: payload["due_date"] = due_date
-    if start_date is not None: payload["start_date"] = start_date
-    if coordinators is not None: payload["coordinators"] = [int(c) for c in coordinators]
-    if meld_location is not None: payload["meld_location"] = meld_location
-    if prop is not None: payload["prop"] = prop
-    if unit is not None: payload["unit"] = unit
-    if not payload:
-        return {"ok": False, "error": "no fields to update"}
+
+    current = _http_get(f"projects/{project_id}/", cookie_hdr)
+    if not isinstance(current, dict):
+        return {"ok": False, "error": "could not fetch current project state for full-payload echo"}
+
+    def _coordinator_id(c):
+        if isinstance(c, dict):
+            return c.get("id")
+        return int(c)
+
+    def _unit_echo(u):
+        if not isinstance(u, dict):
+            return u
+        label = u.get("label")
+        if not label:
+            disp = u.get("display_address")
+            if isinstance(disp, dict):
+                label = disp.get("line_1")
+        return {"id": u.get("id"), "label": label or ""}
+
+    payload: dict = {
+        "name": name if name is not None else current.get("name"),
+        "project_type": project_type if project_type is not None else current.get("project_type"),
+        "description": description if description is not None else (current.get("description") or ""),
+        "due_date": due_date if due_date is not None else current.get("due_date"),
+        "start_date": start_date if start_date is not None else current.get("start_date"),
+        "coordinators": (
+            [int(c) for c in coordinators] if coordinators is not None
+            else [c_id for c_id in (_coordinator_id(c) for c in (current.get("coordinators") or [])) if c_id is not None]
+        ),
+        "meld_location": meld_location if meld_location is not None else (current.get("meld_location") or "Unit"),
+        "prop": prop if prop is not None else current.get("prop"),
+        "unit": unit if unit is not None else _unit_echo(current.get("unit")),
+    }
+
     result = _http_patch(f"projects/{project_id}/", payload, cookie_hdr, csrf_token)
     return {"ok": True, "project_id": project_id, "result": result}
 
