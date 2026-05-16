@@ -704,6 +704,199 @@ def complete_meld(
 
 
 @with_recapture_retry
+def create_work_entry(
+    meld_id: str,
+    *,
+    agent: int,
+    description: str,
+    long_description: str = "",
+    checkin: Optional[str] = None,
+    checkout: Optional[str] = None,
+    hours: Optional[float] = None,
+) -> dict:
+    """Create a new work entry on a meld (nested path).
+
+    POST /api/melds/{meld_id}/work-entries/ — verified capture 2026-05-16
+    025132Z (201 Created). Nested under meld, NOT top-level.
+
+    Args:
+        meld_id: Meld ID (int PK).
+        agent: Agent persona_id (the maintenance person doing the work).
+        description: Short summary of work performed (required).
+        long_description: Longer notes (default empty).
+        checkin: ISO 8601 datetime work started, e.g. '2026-05-16T02:52:00.000Z'.
+        checkout: ISO 8601 datetime work ended.
+        hours: Hours worked (float). If omitted PM may compute from checkin/checkout.
+    """
+    meld_id = _validate_meld_id(meld_id)
+    payload: dict = {
+        "agent": int(agent),
+        "description": description,
+        "long_description": long_description,
+        "meld": meld_id,
+    }
+    if checkin is not None:
+        payload["checkin"] = checkin
+    if checkout is not None:
+        payload["checkout"] = checkout
+    if hours is not None:
+        payload["hours"] = hours
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_post(f"melds/{meld_id}/work-entries/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "meld_id": meld_id, "entry_id": result.get("id") if isinstance(result, dict) else None, "result": result}
+
+
+@with_recapture_retry
+def vendor_accept_assignment(vendor_id: str, assignment_id: int) -> dict:
+    """Vendor accepts an assignment request (vendor-side).
+
+    PATCH /3287/v/{vendor_id}/api/assignments/{assignment_id}/accept/ —
+    verified capture 2026-05-16 024240Z. Empty body.
+    """
+    vendor_id = str(vendor_id)
+    assignment_id = int(assignment_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_patch(
+        f"assignments/{assignment_id}/accept/", {}, cookie_hdr, csrf_token,
+        side="vendor", vendor_id=vendor_id,
+    )
+    return {"ok": True, "vendor_id": vendor_id, "assignment_id": assignment_id, "result": result}
+
+
+@with_recapture_retry
+def vendor_set_schedule(
+    vendor_id: str,
+    assignment_id: int,
+    new_segments: list,
+    *,
+    segments_to_keep: Optional[list] = None,
+    mark_scheduled: bool = False,
+    appointments_required: int = 1,
+) -> dict:
+    """Vendor sets schedule segments on an assignment (vendor-side).
+
+    PATCH /3287/v/{vendor_id}/api/assignments/{assignment_id}/segments/ —
+    verified capture 2026-05-16 024240Z.
+
+    Args:
+        vendor_id: Vendor PK.
+        assignment_id: Assignment request PK.
+        new_segments: List of segments to add. Each segment is a dict with
+            event.dtstart, event.dtend, event.type, event._cid. Helper
+            accepts either fully-formed segments or simplified
+            (dtstart, dtend) tuples/dicts and normalizes.
+        segments_to_keep: Existing segment IDs to retain (default empty).
+        mark_scheduled: PM flag — leave False unless echoing the web UI.
+        appointments_required: Number of appointment windows needed (default 1).
+    """
+    vendor_id = str(vendor_id)
+    assignment_id = int(assignment_id)
+
+    def _normalize_segment(seg, idx: int) -> dict:
+        if isinstance(seg, dict) and "event" in seg:
+            return seg
+        if isinstance(seg, dict):
+            event = {
+                "dtstart": seg["dtstart"],
+                "dtend": seg["dtend"],
+                "type": seg.get("type", "default"),
+                "_cid": seg.get("_cid", f"event_{idx}"),
+            }
+            return {"event": event}
+        if isinstance(seg, (tuple, list)) and len(seg) == 2:
+            return {"event": {"dtstart": seg[0], "dtend": seg[1], "type": "default", "_cid": f"event_{idx}"}}
+        raise ValueError(f"Unsupported segment shape at index {idx}: {seg!r}")
+
+    payload = {
+        "segments_to_keep": segments_to_keep or [],
+        "new_segments": [_normalize_segment(s, i) for i, s in enumerate(new_segments)],
+        "mark_scheduled": mark_scheduled,
+        "appointments_required": appointments_required,
+    }
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_patch(
+        f"assignments/{assignment_id}/segments/", payload, cookie_hdr, csrf_token,
+        side="vendor", vendor_id=vendor_id,
+    )
+    return {"ok": True, "vendor_id": vendor_id, "assignment_id": assignment_id, "result": result}
+
+
+@with_recapture_retry
+def vendor_create_invoice(
+    vendor_id: str,
+    meld_id: str,
+    line_items: list,
+) -> dict:
+    """Vendor creates a draft invoice on a meld (vendor-side).
+
+    POST /3287/v/{vendor_id}/api/meld-invoices/ — verified capture
+    2026-05-16 024240Z (201 Created). Returned in DRAFT status until
+    vendor_submit_invoice is called.
+
+    Args:
+        vendor_id: Vendor PK.
+        meld_id: Meld PK.
+        line_items: List of dicts with quantity, unit_price (string), description.
+            Optional _cid is auto-generated if omitted.
+    """
+    vendor_id = str(vendor_id)
+    meld_id = _validate_meld_id(meld_id)
+    if not line_items:
+        raise ValueError("line_items must contain at least one entry")
+
+    normalized: list = []
+    for i, item in enumerate(line_items):
+        if not isinstance(item, dict):
+            raise ValueError(f"line_item at index {i} must be a dict")
+        normalized.append({
+            "quantity": item.get("quantity", 1),
+            "unit_price": str(item["unit_price"]),
+            "description": item.get("description", ""),
+            "_cid": item.get("_cid", f"line_item_{i}"),
+        })
+
+    payload = {"meld": meld_id, "invoice_line_items": normalized}
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_post(
+        "meld-invoices/", payload, cookie_hdr, csrf_token,
+        side="vendor", vendor_id=vendor_id,
+    )
+    return {
+        "ok": True, "vendor_id": vendor_id, "meld_id": meld_id,
+        "invoice_id": result.get("id") if isinstance(result, dict) else None,
+        "result": result,
+    }
+
+
+@with_recapture_retry
+def vendor_submit_invoice(vendor_id: str, invoice_id: int) -> dict:
+    """Vendor submits a draft invoice to the manager (vendor-side).
+
+    PATCH /3287/v/{vendor_id}/api/meld-invoices/{invoice_id}/ — verified
+    capture 2026-05-16 024240Z. Sends {submit_to_manager: true}.
+    """
+    vendor_id = str(vendor_id)
+    invoice_id = int(invoice_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_patch(
+        f"meld-invoices/{invoice_id}/", {"submit_to_manager": True},
+        cookie_hdr, csrf_token,
+        side="vendor", vendor_id=vendor_id,
+    )
+    return {"ok": True, "vendor_id": vendor_id, "invoice_id": invoice_id, "result": result}
+
+
+@with_recapture_retry
 def update_work_entry(
     entry_id: int,
     *,
