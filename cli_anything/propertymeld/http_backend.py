@@ -704,6 +704,141 @@ def complete_meld(
 
 
 @with_recapture_retry
+def update_work_entry(
+    entry_id: int,
+    *,
+    description: Optional[str] = None,
+    long_description: Optional[str] = None,
+    checkin: Optional[str] = None,
+    checkout: Optional[str] = None,
+    hours: Optional[float] = None,
+    agent: Optional[int] = None,
+) -> dict:
+    """Edit an existing work entry (top-level path, not nested).
+
+    PATCH /api/melds/work-entries/{entry_id}/ — verified capture
+    2026-05-16 25132Z. PM exposes the EDIT/DELETE paths at the top-level
+    `/melds/work-entries/{id}/`, NOT under the meld (asymmetry rule —
+    nested CREATE, top-level EDIT/DELETE).
+
+    Sends partial payload of only the fields the caller passed. Capture
+    shows PM also accepts the full echo shape, but partial works for the
+    fields tested live. Switch to GET-then-overlay if a future smoke
+    surfaces 400 on a partial PATCH.
+    """
+    entry_id = int(entry_id)
+    payload: dict = {"id": entry_id}
+    if description is not None:
+        payload["description"] = description
+    if long_description is not None:
+        payload["long_description"] = long_description
+    if checkin is not None:
+        payload["checkin"] = checkin
+    if checkout is not None:
+        payload["checkout"] = checkout
+    if hours is not None:
+        payload["hours"] = hours
+    if agent is not None:
+        payload["agent"] = agent
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_patch(f"melds/work-entries/{entry_id}/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "entry_id": entry_id, "result": result}
+
+
+@with_recapture_retry
+def delete_work_entry(entry_id: int) -> dict:
+    """Delete a work entry (top-level path).
+
+    DELETE /api/melds/work-entries/{entry_id}/ — verified capture
+    2026-05-16 030217Z (204 No Content). Asymmetry rule applies: this
+    path is top-level, NOT /melds/{meld_id}/work-entries/{entry_id}/.
+    """
+    entry_id = int(entry_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    _http_delete(f"melds/work-entries/{entry_id}/", cookie_hdr, csrf_token)
+    return {"ok": True, "entry_id": entry_id, "deleted": True}
+
+
+@with_recapture_retry
+def delete_meld_file(file_id: int) -> dict:
+    """Delete a manager-uploaded meld file (top-level path).
+
+    DELETE /api/melds/files/{file_id}/ — verified capture 2026-05-16
+    030217Z (204 No Content). Top-level path, NOT
+    /melds/{meld_id}/files/{file_id}/ (asymmetry rule — CREATE is nested
+    at /melds/{meld_id}/files/, DELETE is top-level).
+    """
+    file_id = int(file_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    _http_delete(f"melds/files/{file_id}/", cookie_hdr, csrf_token)
+    return {"ok": True, "file_id": file_id, "deleted": True}
+
+
+@with_recapture_retry
+def delete_project(project_id: int) -> dict:
+    """Delete a project.
+
+    DELETE /api/projects/{project_id}/ — verified capture 2026-05-16
+    030217Z (204 No Content). Cascade behavior on linked melds is PM's
+    responsibility; melds typically survive project deletion.
+    """
+    project_id = int(project_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    _http_delete(f"projects/{project_id}/", cookie_hdr, csrf_token)
+    return {"ok": True, "project_id": project_id, "deleted": True}
+
+
+@with_recapture_retry
+def hold_meld_invoice(invoice_id: int, reason: str) -> dict:
+    """Place a meld invoice on hold pending vendor change.
+
+    PATCH /api/meld-invoices/{invoice_id}/hold/ — verified capture
+    2026-05-16 030217Z. Payload: {reason: str}. Used when the manager
+    wants the vendor to revise the invoice before approval.
+    """
+    if not reason:
+        raise ValueError("reason is required for hold_meld_invoice")
+    invoice_id = int(invoice_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_patch(
+        f"meld-invoices/{invoice_id}/hold/", {"reason": reason},
+        cookie_hdr, csrf_token,
+    )
+    return {"ok": True, "invoice_id": invoice_id, "reason": reason, "result": result}
+
+
+@with_recapture_retry
+def decline_meld_invoice(invoice_id: int, reason: str) -> dict:
+    """Decline a meld invoice outright (vendor must resubmit).
+
+    PATCH /api/meld-invoices/{invoice_id}/decline/ — verified capture
+    2026-05-16 030217Z. Payload: {reason: str}. Stronger action than
+    hold; signals the work itself is rejected.
+    """
+    if not reason:
+        raise ValueError("reason is required for decline_meld_invoice")
+    invoice_id = int(invoice_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_patch(
+        f"meld-invoices/{invoice_id}/decline/", {"reason": reason},
+        cookie_hdr, csrf_token,
+    )
+    return {"ok": True, "invoice_id": invoice_id, "reason": reason, "result": result}
+
+
+@with_recapture_retry
 def cancel_meld(meld_id: str, reason: Optional[str] = None) -> dict:
     """Cancel a meld from the manager side.
 
