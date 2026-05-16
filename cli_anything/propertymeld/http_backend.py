@@ -37,6 +37,26 @@ _csrf_cache: dict = {}
 _ssl_ctx = ssl.create_default_context()
 
 
+def _build_url(path: str, side: str = "manager", vendor_id: Optional[str] = None) -> str:
+    """Build a PM cookie-API URL for either management or vendor surface.
+
+    side='manager' -> https://app.propertymeld.com/{MULTITENANT}/m/{MULTITENANT}/api/{path}
+    side='vendor'  -> https://app.propertymeld.com/{MULTITENANT}/v/{vendor_id}/api/{path}
+
+    Same Django backend, different URL prefix. Vendor-side endpoints are
+    operator-on-behalf-of-vendor flows (accept assignment, upload vendor file,
+    set schedule segments, vendor-complete, vendor invoice CRUD).
+    """
+    host = "https://app.propertymeld.com"
+    if side == "vendor":
+        if not vendor_id:
+            raise ValueError("vendor_id required for side='vendor'")
+        return f"{host}/{MULTITENANT}/v/{vendor_id}/api/{path}"
+    if side == "manager":
+        return f"{host}/{MULTITENANT}/m/{MULTITENANT}/api/{path}"
+    raise ValueError(f"unknown side: {side!r}")
+
+
 class SessionExpired(Exception):
     """Raised by HTTP helpers on 401 so public API calls can retry once."""
 
@@ -161,10 +181,10 @@ def _get_csrf_token(cookie_hdr: str) -> str:
     return _csrf_cache["token"]
 
 
-def _http_get(path: str, cookie_hdr: str) -> Any:
+def _http_get(path: str, cookie_hdr: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
     """GET a browser-session API path, return parsed JSON."""
     req = urllib.request.Request(
-        f"{BASE}/api/{path}",
+        _build_url(path, side=side, vendor_id=vendor_id),
         headers={
             "Cookie": cookie_hdr,
             "Accept": "application/json",
@@ -226,11 +246,11 @@ def _paginate_all(path: str, cookie_hdr: str, max_pages: int = 50) -> list:
     return results
 
 
-def _http_post(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> Any:
+def _http_post(path: str, payload: dict, cookie_hdr: str, csrf_token: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
     """POST to a browser-session API path, return parsed JSON."""
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
-        f"{BASE}/api/{path}",
+        _build_url(path, side=side, vendor_id=vendor_id),
         data=data,
         method="POST",
         headers={
@@ -331,11 +351,11 @@ def _http_post_nexus(path: str, payload: dict, cookie_hdr: str, csrf_token: str)
         sys.exit(1)
 
 
-def _http_put(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> Any:
+def _http_put(path: str, payload: dict, cookie_hdr: str, csrf_token: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
     """PUT to a browser-session API path, return parsed JSON."""
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
-        f"{BASE}/api/{path}",
+        _build_url(path, side=side, vendor_id=vendor_id),
         data=data,
         method="PUT",
         headers={
@@ -359,11 +379,11 @@ def _http_put(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> Any
         sys.exit(1)
 
 
-def _http_patch(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> Any:
+def _http_patch(path: str, payload: dict, cookie_hdr: str, csrf_token: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
     """PATCH a browser-session API path, return parsed JSON."""
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
-        f"{BASE}/api/{path}",
+        _build_url(path, side=side, vendor_id=vendor_id),
         data=data,
         method="PATCH",
         headers={
@@ -379,6 +399,34 @@ def _http_patch(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> A
     try:
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
             return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
+        body = e.read().decode("utf-8", errors="ignore")
+        print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
+        sys.exit(1)
+
+
+def _http_delete(path: str, cookie_hdr: str, csrf_token: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
+    """DELETE a browser-session API path. Returns parsed JSON, or {} on 204."""
+    req = urllib.request.Request(
+        _build_url(path, side=side, vendor_id=vendor_id),
+        method="DELETE",
+        headers={
+            "Cookie": cookie_hdr,
+            "Accept": "application/json",
+            "X-CSRFToken": csrf_token,
+            "X-Requested-With": "XMLHttpRequest",
+            "User-Agent": UA,
+            "Referer": f"{BASE}/melds/",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
+            body = resp.read()
+            if not body:
+                return {}
+            return json.loads(body)
     except urllib.error.HTTPError as e:
         if e.code == 401:
             raise SessionExpired(e)
@@ -621,24 +669,398 @@ def merge_meld(meld_id: str, into_meld_id: str) -> dict:
 
 
 @with_recapture_retry
-def complete_meld(meld_id: str, completion_notes: Optional[str] = None) -> dict:
-    """Mark a meld complete from the manager side.
+def complete_meld(
+    meld_id: str,
+    completion_notes: Optional[str] = None,
+    *,
+    side: str = "manager",
+    vendor_id: Optional[str] = None,
+    completion_date: Optional[str] = None,
+) -> dict:
+    """Mark a meld complete. Side-aware: manager vs vendor PM uses different payload shapes.
 
-    Meld must be in PENDING_COMPLETION status. Raises HTTP 403 otherwise.
+    Manager surface (default): meld must be in PENDING_COMPLETION. Raises HTTP 403 otherwise.
+        Payload: {completion_notes?: str}.
+
+    Vendor surface: operator-on-behalf-of-vendor; pass vendor_id of the assigned vendor.
+        Payload (verified capture 2026-05-16 024240Z):
+            {is_complete: true, date: <ISO datetime>, reason: <str>}.
+        Vendor-side requires `completion_date` (ISO 8601 datetime when the work
+        was actually completed). `completion_notes` maps to `reason` in the
+        PM request; it becomes the meld's `completion_notes` field in the
+        response.
 
     Args:
         meld_id: Meld ID to mark complete.
-        completion_notes: Optional completion notes.
+        completion_notes: Optional completion notes. On vendor side this is
+            sent as `reason` and is recommended for audit trail.
+        side: "manager" (default) or "vendor".
+        vendor_id: Required when side="vendor".
+        completion_date: Required when side="vendor". ISO 8601 datetime, e.g.
+            '2026-05-17T14:00:00.000Z'.
     """
+    if side == "vendor":
+        if not vendor_id:
+            raise ValueError("vendor_id required when side='vendor'")
+        if not completion_date:
+            raise ValueError("completion_date required when side='vendor'")
     meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
-    payload: dict = {}
-    if completion_notes:
-        payload["completion_notes"] = completion_notes
-    result = _http_patch(f"melds/{meld_id}/complete/", payload, cookie_hdr, csrf_token)
-    return {"ok": True, "meld_id": meld_id, "completion_notes": completion_notes, "result": result}
+
+    if side == "vendor":
+        payload: dict = {
+            "is_complete": True,
+            "date": completion_date,
+            "reason": completion_notes or "",
+        }
+    else:
+        payload = {}
+        if completion_notes:
+            payload["completion_notes"] = completion_notes
+
+    result = _http_patch(
+        f"melds/{meld_id}/complete/", payload, cookie_hdr, csrf_token,
+        side=side, vendor_id=vendor_id,
+    )
+    return {"ok": True, "meld_id": meld_id, "completion_notes": completion_notes, "side": side, "result": result}
+
+
+@with_recapture_retry
+def create_work_entry(
+    meld_id: str,
+    *,
+    agent: int,
+    description: str,
+    long_description: str = "",
+    checkin: Optional[str] = None,
+    checkout: Optional[str] = None,
+    hours: Optional[float] = None,
+) -> dict:
+    """Create a new work entry on a meld (nested path).
+
+    POST /api/melds/{meld_id}/work-entries/ — verified capture 2026-05-16
+    025132Z (201 Created). Nested under meld, NOT top-level.
+
+    Args:
+        meld_id: Meld ID (int PK).
+        agent: Agent persona_id (the maintenance person doing the work).
+        description: Short summary of work performed (required).
+        long_description: Longer notes (default empty).
+        checkin: ISO 8601 datetime work started, e.g. '2026-05-16T02:52:00.000Z'.
+        checkout: ISO 8601 datetime work ended.
+        hours: Hours worked (float). If omitted PM may compute from checkin/checkout.
+    """
+    meld_id = _validate_meld_id(meld_id)
+    payload: dict = {
+        "agent": int(agent),
+        "description": description,
+        "long_description": long_description,
+        "meld": meld_id,
+    }
+    if checkin is not None:
+        payload["checkin"] = checkin
+    if checkout is not None:
+        payload["checkout"] = checkout
+    if hours is not None:
+        payload["hours"] = hours
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_post(f"melds/{meld_id}/work-entries/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "meld_id": meld_id, "entry_id": result.get("id") if isinstance(result, dict) else None, "result": result}
+
+
+@with_recapture_retry
+def vendor_accept_assignment(vendor_id: str, assignment_id: int) -> dict:
+    """Vendor accepts an assignment request (vendor-side).
+
+    PATCH /3287/v/{vendor_id}/api/assignments/{assignment_id}/accept/ —
+    verified capture 2026-05-16 024240Z. Empty body.
+    """
+    if not vendor_id:
+        raise ValueError("vendor_id is required")
+    vendor_id = str(vendor_id)
+    assignment_id = int(assignment_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_patch(
+        f"assignments/{assignment_id}/accept/", {}, cookie_hdr, csrf_token,
+        side="vendor", vendor_id=vendor_id,
+    )
+    return {"ok": True, "vendor_id": vendor_id, "assignment_id": assignment_id, "result": result}
+
+
+@with_recapture_retry
+def vendor_set_schedule(
+    vendor_id: str,
+    assignment_id: int,
+    new_segments: list,
+    *,
+    segments_to_keep: Optional[list] = None,
+    mark_scheduled: bool = False,
+    appointments_required: int = 1,
+) -> dict:
+    """Vendor sets schedule segments on an assignment (vendor-side).
+
+    PATCH /3287/v/{vendor_id}/api/assignments/{assignment_id}/segments/ —
+    verified capture 2026-05-16 024240Z.
+
+    Args:
+        vendor_id: Vendor PK.
+        assignment_id: Assignment request PK.
+        new_segments: List of segments to add. Each segment is a dict with
+            event.dtstart, event.dtend, event.type, event._cid. Helper
+            accepts either fully-formed segments or simplified
+            (dtstart, dtend) tuples/dicts and normalizes.
+        segments_to_keep: Existing segment IDs to retain (default empty).
+        mark_scheduled: PM flag — leave False unless echoing the web UI.
+        appointments_required: Number of appointment windows needed (default 1).
+    """
+    if not vendor_id:
+        raise ValueError("vendor_id is required")
+    vendor_id = str(vendor_id)
+    assignment_id = int(assignment_id)
+
+    def _normalize_segment(seg, idx: int) -> dict:
+        if isinstance(seg, dict) and "event" in seg:
+            return seg
+        if isinstance(seg, dict):
+            event = {
+                "dtstart": seg["dtstart"],
+                "dtend": seg["dtend"],
+                "type": seg.get("type", "default"),
+                "_cid": seg.get("_cid", f"event_{idx}"),
+            }
+            return {"event": event}
+        if isinstance(seg, (tuple, list)) and len(seg) == 2:
+            return {"event": {"dtstart": seg[0], "dtend": seg[1], "type": "default", "_cid": f"event_{idx}"}}
+        raise ValueError(f"Unsupported segment shape at index {idx}: {seg!r}")
+
+    payload = {
+        "segments_to_keep": segments_to_keep or [],
+        "new_segments": [_normalize_segment(s, i) for i, s in enumerate(new_segments)],
+        "mark_scheduled": mark_scheduled,
+        "appointments_required": appointments_required,
+    }
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_patch(
+        f"assignments/{assignment_id}/segments/", payload, cookie_hdr, csrf_token,
+        side="vendor", vendor_id=vendor_id,
+    )
+    return {"ok": True, "vendor_id": vendor_id, "assignment_id": assignment_id, "result": result}
+
+
+@with_recapture_retry
+def vendor_create_invoice(
+    vendor_id: str,
+    meld_id: str,
+    line_items: list,
+) -> dict:
+    """Vendor creates a draft invoice on a meld (vendor-side).
+
+    POST /3287/v/{vendor_id}/api/meld-invoices/ — verified capture
+    2026-05-16 024240Z (201 Created). Returned in DRAFT status until
+    vendor_submit_invoice is called.
+
+    Args:
+        vendor_id: Vendor PK.
+        meld_id: Meld PK.
+        line_items: List of dicts with quantity, unit_price (string), description.
+            Optional _cid is auto-generated if omitted.
+    """
+    if not vendor_id:
+        raise ValueError("vendor_id is required")
+    vendor_id = str(vendor_id)
+    meld_id = _validate_meld_id(meld_id)
+    if not line_items:
+        raise ValueError("line_items must contain at least one entry")
+
+    normalized: list = []
+    for i, item in enumerate(line_items):
+        if not isinstance(item, dict):
+            raise ValueError(f"line_item at index {i} must be a dict")
+        normalized.append({
+            "quantity": item.get("quantity", 1),
+            "unit_price": str(item["unit_price"]),
+            "description": item.get("description", ""),
+            "_cid": item.get("_cid", f"line_item_{i}"),
+        })
+
+    payload = {"meld": meld_id, "invoice_line_items": normalized}
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_post(
+        "meld-invoices/", payload, cookie_hdr, csrf_token,
+        side="vendor", vendor_id=vendor_id,
+    )
+    return {
+        "ok": True, "vendor_id": vendor_id, "meld_id": meld_id,
+        "invoice_id": result.get("id") if isinstance(result, dict) else None,
+        "result": result,
+    }
+
+
+@with_recapture_retry
+def vendor_submit_invoice(vendor_id: str, invoice_id: int) -> dict:
+    """Vendor submits a draft invoice to the manager (vendor-side).
+
+    PATCH /3287/v/{vendor_id}/api/meld-invoices/{invoice_id}/ — verified
+    capture 2026-05-16 024240Z. Sends {submit_to_manager: true}.
+    """
+    if not vendor_id:
+        raise ValueError("vendor_id is required")
+    vendor_id = str(vendor_id)
+    invoice_id = int(invoice_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_patch(
+        f"meld-invoices/{invoice_id}/", {"submit_to_manager": True},
+        cookie_hdr, csrf_token,
+        side="vendor", vendor_id=vendor_id,
+    )
+    return {"ok": True, "vendor_id": vendor_id, "invoice_id": invoice_id, "result": result}
+
+
+@with_recapture_retry
+def update_work_entry(
+    entry_id: int,
+    *,
+    description: Optional[str] = None,
+    long_description: Optional[str] = None,
+    checkin: Optional[str] = None,
+    checkout: Optional[str] = None,
+    hours: Optional[float] = None,
+    agent: Optional[int] = None,
+) -> dict:
+    """Edit an existing work entry (top-level path, not nested).
+
+    PATCH /api/melds/work-entries/{entry_id}/ — verified capture
+    2026-05-16 25132Z. PM exposes the EDIT/DELETE paths at the top-level
+    `/melds/work-entries/{id}/`, NOT under the meld (asymmetry rule —
+    nested CREATE, top-level EDIT/DELETE).
+
+    Sends partial payload of only the fields the caller passed. Capture
+    shows PM also accepts the full echo shape, but partial works for the
+    fields tested live. Switch to GET-then-overlay if a future smoke
+    surfaces 400 on a partial PATCH.
+    """
+    entry_id = int(entry_id)
+    payload: dict = {"id": entry_id}
+    if description is not None:
+        payload["description"] = description
+    if long_description is not None:
+        payload["long_description"] = long_description
+    if checkin is not None:
+        payload["checkin"] = checkin
+    if checkout is not None:
+        payload["checkout"] = checkout
+    if hours is not None:
+        payload["hours"] = hours
+    if agent is not None:
+        payload["agent"] = agent
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_patch(f"melds/work-entries/{entry_id}/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "entry_id": entry_id, "result": result}
+
+
+@with_recapture_retry
+def delete_work_entry(entry_id: int) -> dict:
+    """Delete a work entry (top-level path).
+
+    DELETE /api/melds/work-entries/{entry_id}/ — verified capture
+    2026-05-16 030217Z (204 No Content). Asymmetry rule applies: this
+    path is top-level, NOT /melds/{meld_id}/work-entries/{entry_id}/.
+    """
+    entry_id = int(entry_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    _http_delete(f"melds/work-entries/{entry_id}/", cookie_hdr, csrf_token)
+    return {"ok": True, "entry_id": entry_id, "deleted": True}
+
+
+@with_recapture_retry
+def delete_meld_file(file_id: int) -> dict:
+    """Delete a manager-uploaded meld file (top-level path).
+
+    DELETE /api/melds/files/{file_id}/ — verified capture 2026-05-16
+    030217Z (204 No Content). Top-level path, NOT
+    /melds/{meld_id}/files/{file_id}/ (asymmetry rule — CREATE is nested
+    at /melds/{meld_id}/files/, DELETE is top-level).
+    """
+    file_id = int(file_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    _http_delete(f"melds/files/{file_id}/", cookie_hdr, csrf_token)
+    return {"ok": True, "file_id": file_id, "deleted": True}
+
+
+@with_recapture_retry
+def delete_project(project_id: int) -> dict:
+    """Delete a project.
+
+    DELETE /api/projects/{project_id}/ — verified capture 2026-05-16
+    030217Z (204 No Content). Cascade behavior on linked melds is PM's
+    responsibility; melds typically survive project deletion.
+    """
+    project_id = int(project_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    _http_delete(f"projects/{project_id}/", cookie_hdr, csrf_token)
+    return {"ok": True, "project_id": project_id, "deleted": True}
+
+
+@with_recapture_retry
+def hold_meld_invoice(invoice_id: int, reason: str) -> dict:
+    """Place a meld invoice on hold pending vendor change.
+
+    PATCH /api/meld-invoices/{invoice_id}/hold/ — verified capture
+    2026-05-16 030217Z. Payload: {reason: str}. Used when the manager
+    wants the vendor to revise the invoice before approval.
+    """
+    if not reason:
+        raise ValueError("reason is required for hold_meld_invoice")
+    invoice_id = int(invoice_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_patch(
+        f"meld-invoices/{invoice_id}/hold/", {"reason": reason},
+        cookie_hdr, csrf_token,
+    )
+    return {"ok": True, "invoice_id": invoice_id, "reason": reason, "result": result}
+
+
+@with_recapture_retry
+def decline_meld_invoice(invoice_id: int, reason: str) -> dict:
+    """Decline a meld invoice outright (vendor must resubmit).
+
+    PATCH /api/meld-invoices/{invoice_id}/decline/ — verified capture
+    2026-05-16 030217Z. Payload: {reason: str}. Stronger action than
+    hold; signals the work itself is rejected.
+    """
+    if not reason:
+        raise ValueError("reason is required for decline_meld_invoice")
+    invoice_id = int(invoice_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_patch(
+        f"meld-invoices/{invoice_id}/decline/", {"reason": reason},
+        cookie_hdr, csrf_token,
+    )
+    return {"ok": True, "invoice_id": invoice_id, "reason": reason, "result": result}
 
 
 @with_recapture_retry
