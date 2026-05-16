@@ -155,6 +155,31 @@ class TestVendorCreateInvoice:
             hb.vendor_create_invoice("91159", 12791157, line_items=[])
 
 
+class TestVendorIdRequired:
+    """Every vendor-side public function rejects empty/None vendor_id before
+    coercing to string (otherwise /v/None/ would route silently)."""
+
+    def test_accept_assignment_rejects_none(self):
+        with pytest.raises(ValueError, match="vendor_id is required"):
+            hb.vendor_accept_assignment(None, 8559205)
+
+    def test_accept_assignment_rejects_empty(self):
+        with pytest.raises(ValueError, match="vendor_id is required"):
+            hb.vendor_accept_assignment("", 8559205)
+
+    def test_set_schedule_rejects_none(self):
+        with pytest.raises(ValueError, match="vendor_id is required"):
+            hb.vendor_set_schedule(None, 8559205, new_segments=[])
+
+    def test_create_invoice_rejects_none(self):
+        with pytest.raises(ValueError, match="vendor_id is required"):
+            hb.vendor_create_invoice(None, 12791157, line_items=[{"unit_price": 1}])
+
+    def test_submit_invoice_rejects_none(self):
+        with pytest.raises(ValueError, match="vendor_id is required"):
+            hb.vendor_submit_invoice(None, 3863382)
+
+
 class TestVendorSubmitInvoice:
     def test_sends_submit_flag(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)

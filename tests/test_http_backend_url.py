@@ -119,3 +119,68 @@ class TestCompleteMeldSideRouting:
         ValueError propagates cleanly."""
         with pytest.raises(ValueError, match="vendor_id required"):
             hb.complete_meld("12345678", side="vendor")
+
+    def test_complete_meld_vendor_requires_completion_date(self):
+        """Vendor surface PATCH /melds/{id}/complete/ requires a date field
+        per capture 2026-05-16 024240Z. Validate before HTTP I/O."""
+        with pytest.raises(ValueError, match="completion_date required"):
+            hb.complete_meld("12345678", side="vendor", vendor_id="91159")
+
+    def test_complete_meld_manager_payload_shape(self, monkeypatch):
+        """Manager side: payload is {completion_notes?: str}."""
+        captured: dict = {}
+
+        class _Resp:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return b'{"ok": true}'
+
+        def fake_urlopen(req, **kw):
+            captured["url"] = req.full_url
+            captured["body"] = req.data
+            return _Resp()
+
+        monkeypatch.setattr(hb, "_load_creds", lambda: {"cookies": []})
+        monkeypatch.setattr(hb, "_cookie_header", lambda c: "sessionid=x")
+        monkeypatch.setattr(hb, "_get_csrf_token", lambda c: "csrf")
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        hb.complete_meld("12345678", completion_notes="done")
+        assert "/m/" in captured["url"]
+        import json as _json
+        assert _json.loads(captured["body"]) == {"completion_notes": "done"}
+
+    def test_complete_meld_vendor_payload_shape(self, monkeypatch):
+        """Vendor side payload (capture-verified):
+        {is_complete: true, date: <iso>, reason: <str>}."""
+        captured: dict = {}
+
+        class _Resp:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return b'{"ok": true}'
+
+        def fake_urlopen(req, **kw):
+            captured["url"] = req.full_url
+            captured["body"] = req.data
+            return _Resp()
+
+        monkeypatch.setattr(hb, "_load_creds", lambda: {"cookies": []})
+        monkeypatch.setattr(hb, "_cookie_header", lambda c: "sessionid=x")
+        monkeypatch.setattr(hb, "_get_csrf_token", lambda c: "csrf")
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        hb.complete_meld(
+            "12791157", completion_notes="completed",
+            side="vendor", vendor_id="91159",
+            completion_date="2026-05-17T14:00:00.000Z",
+        )
+        assert "/v/91159/" in captured["url"]
+        assert "/m/" not in captured["url"]
+        import json as _json
+        body = _json.loads(captured["body"])
+        assert body == {
+            "is_complete": True,
+            "date": "2026-05-17T14:00:00.000Z",
+            "reason": "completed",
+        }

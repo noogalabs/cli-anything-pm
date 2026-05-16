@@ -675,27 +675,51 @@ def complete_meld(
     *,
     side: str = "manager",
     vendor_id: Optional[str] = None,
+    completion_date: Optional[str] = None,
 ) -> dict:
-    """Mark a meld complete. Works from both manager and vendor surfaces.
+    """Mark a meld complete. Side-aware: manager vs vendor PM uses different payload shapes.
 
     Manager surface (default): meld must be in PENDING_COMPLETION. Raises HTTP 403 otherwise.
+        Payload: {completion_notes?: str}.
+
     Vendor surface: operator-on-behalf-of-vendor; pass vendor_id of the assigned vendor.
+        Payload (verified capture 2026-05-16 024240Z):
+            {is_complete: true, date: <ISO datetime>, reason: <str>}.
+        Vendor-side requires `completion_date` (ISO 8601 datetime when the work
+        was actually completed). `completion_notes` maps to `reason` in the
+        PM request; it becomes the meld's `completion_notes` field in the
+        response.
 
     Args:
         meld_id: Meld ID to mark complete.
-        completion_notes: Optional completion notes.
+        completion_notes: Optional completion notes. On vendor side this is
+            sent as `reason` and is recommended for audit trail.
         side: "manager" (default) or "vendor".
         vendor_id: Required when side="vendor".
+        completion_date: Required when side="vendor". ISO 8601 datetime, e.g.
+            '2026-05-17T14:00:00.000Z'.
     """
-    if side == "vendor" and not vendor_id:
-        raise ValueError("vendor_id required when side='vendor'")
+    if side == "vendor":
+        if not vendor_id:
+            raise ValueError("vendor_id required when side='vendor'")
+        if not completion_date:
+            raise ValueError("completion_date required when side='vendor'")
     meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
-    payload: dict = {}
-    if completion_notes:
-        payload["completion_notes"] = completion_notes
+
+    if side == "vendor":
+        payload: dict = {
+            "is_complete": True,
+            "date": completion_date,
+            "reason": completion_notes or "",
+        }
+    else:
+        payload = {}
+        if completion_notes:
+            payload["completion_notes"] = completion_notes
+
     result = _http_patch(
         f"melds/{meld_id}/complete/", payload, cookie_hdr, csrf_token,
         side=side, vendor_id=vendor_id,
@@ -755,6 +779,8 @@ def vendor_accept_assignment(vendor_id: str, assignment_id: int) -> dict:
     PATCH /3287/v/{vendor_id}/api/assignments/{assignment_id}/accept/ —
     verified capture 2026-05-16 024240Z. Empty body.
     """
+    if not vendor_id:
+        raise ValueError("vendor_id is required")
     vendor_id = str(vendor_id)
     assignment_id = int(assignment_id)
     creds = _load_creds()
@@ -793,6 +819,8 @@ def vendor_set_schedule(
         mark_scheduled: PM flag — leave False unless echoing the web UI.
         appointments_required: Number of appointment windows needed (default 1).
     """
+    if not vendor_id:
+        raise ValueError("vendor_id is required")
     vendor_id = str(vendor_id)
     assignment_id = int(assignment_id)
 
@@ -845,6 +873,8 @@ def vendor_create_invoice(
         line_items: List of dicts with quantity, unit_price (string), description.
             Optional _cid is auto-generated if omitted.
     """
+    if not vendor_id:
+        raise ValueError("vendor_id is required")
     vendor_id = str(vendor_id)
     meld_id = _validate_meld_id(meld_id)
     if not line_items:
@@ -883,6 +913,8 @@ def vendor_submit_invoice(vendor_id: str, invoice_id: int) -> dict:
     PATCH /3287/v/{vendor_id}/api/meld-invoices/{invoice_id}/ — verified
     capture 2026-05-16 024240Z. Sends {submit_to_manager: true}.
     """
+    if not vendor_id:
+        raise ValueError("vendor_id is required")
     vendor_id = str(vendor_id)
     invoice_id = int(invoice_id)
     creds = _load_creds()
