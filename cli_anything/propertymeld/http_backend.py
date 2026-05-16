@@ -37,6 +37,26 @@ _csrf_cache: dict = {}
 _ssl_ctx = ssl.create_default_context()
 
 
+def _build_url(path: str, side: str = "manager", vendor_id: Optional[str] = None) -> str:
+    """Build a PM cookie-API URL for either management or vendor surface.
+
+    side='manager' -> https://app.propertymeld.com/{MULTITENANT}/m/{MULTITENANT}/api/{path}
+    side='vendor'  -> https://app.propertymeld.com/{MULTITENANT}/v/{vendor_id}/api/{path}
+
+    Same Django backend, different URL prefix. Vendor-side endpoints are
+    operator-on-behalf-of-vendor flows (accept assignment, upload vendor file,
+    set schedule segments, vendor-complete, vendor invoice CRUD).
+    """
+    host = "https://app.propertymeld.com"
+    if side == "vendor":
+        if not vendor_id:
+            raise ValueError("vendor_id required for side='vendor'")
+        return f"{host}/{MULTITENANT}/v/{vendor_id}/api/{path}"
+    if side == "manager":
+        return f"{host}/{MULTITENANT}/m/{MULTITENANT}/api/{path}"
+    raise ValueError(f"unknown side: {side!r}")
+
+
 class SessionExpired(Exception):
     """Raised by HTTP helpers on 401 so public API calls can retry once."""
 
@@ -161,10 +181,10 @@ def _get_csrf_token(cookie_hdr: str) -> str:
     return _csrf_cache["token"]
 
 
-def _http_get(path: str, cookie_hdr: str) -> Any:
+def _http_get(path: str, cookie_hdr: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
     """GET a browser-session API path, return parsed JSON."""
     req = urllib.request.Request(
-        f"{BASE}/api/{path}",
+        _build_url(path, side=side, vendor_id=vendor_id),
         headers={
             "Cookie": cookie_hdr,
             "Accept": "application/json",
@@ -226,11 +246,11 @@ def _paginate_all(path: str, cookie_hdr: str, max_pages: int = 50) -> list:
     return results
 
 
-def _http_post(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> Any:
+def _http_post(path: str, payload: dict, cookie_hdr: str, csrf_token: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
     """POST to a browser-session API path, return parsed JSON."""
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
-        f"{BASE}/api/{path}",
+        _build_url(path, side=side, vendor_id=vendor_id),
         data=data,
         method="POST",
         headers={
@@ -331,11 +351,11 @@ def _http_post_nexus(path: str, payload: dict, cookie_hdr: str, csrf_token: str)
         sys.exit(1)
 
 
-def _http_put(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> Any:
+def _http_put(path: str, payload: dict, cookie_hdr: str, csrf_token: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
     """PUT to a browser-session API path, return parsed JSON."""
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
-        f"{BASE}/api/{path}",
+        _build_url(path, side=side, vendor_id=vendor_id),
         data=data,
         method="PUT",
         headers={
@@ -359,11 +379,11 @@ def _http_put(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> Any
         sys.exit(1)
 
 
-def _http_patch(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> Any:
+def _http_patch(path: str, payload: dict, cookie_hdr: str, csrf_token: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
     """PATCH a browser-session API path, return parsed JSON."""
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
-        f"{BASE}/api/{path}",
+        _build_url(path, side=side, vendor_id=vendor_id),
         data=data,
         method="PATCH",
         headers={
@@ -379,6 +399,34 @@ def _http_patch(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> A
     try:
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
             return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
+        body = e.read().decode("utf-8", errors="ignore")
+        print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
+        sys.exit(1)
+
+
+def _http_delete(path: str, cookie_hdr: str, csrf_token: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
+    """DELETE a browser-session API path. Returns parsed JSON, or {} on 204."""
+    req = urllib.request.Request(
+        _build_url(path, side=side, vendor_id=vendor_id),
+        method="DELETE",
+        headers={
+            "Cookie": cookie_hdr,
+            "Accept": "application/json",
+            "X-CSRFToken": csrf_token,
+            "X-Requested-With": "XMLHttpRequest",
+            "User-Agent": UA,
+            "Referer": f"{BASE}/melds/",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
+            body = resp.read()
+            if not body:
+                return {}
+            return json.loads(body)
     except urllib.error.HTTPError as e:
         if e.code == 401:
             raise SessionExpired(e)
@@ -621,15 +669,26 @@ def merge_meld(meld_id: str, into_meld_id: str) -> dict:
 
 
 @with_recapture_retry
-def complete_meld(meld_id: str, completion_notes: Optional[str] = None) -> dict:
-    """Mark a meld complete from the manager side.
+def complete_meld(
+    meld_id: str,
+    completion_notes: Optional[str] = None,
+    *,
+    side: str = "manager",
+    vendor_id: Optional[str] = None,
+) -> dict:
+    """Mark a meld complete. Works from both manager and vendor surfaces.
 
-    Meld must be in PENDING_COMPLETION status. Raises HTTP 403 otherwise.
+    Manager surface (default): meld must be in PENDING_COMPLETION. Raises HTTP 403 otherwise.
+    Vendor surface: operator-on-behalf-of-vendor; pass vendor_id of the assigned vendor.
 
     Args:
         meld_id: Meld ID to mark complete.
         completion_notes: Optional completion notes.
+        side: "manager" (default) or "vendor".
+        vendor_id: Required when side="vendor".
     """
+    if side == "vendor" and not vendor_id:
+        raise ValueError("vendor_id required when side='vendor'")
     meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
@@ -637,8 +696,11 @@ def complete_meld(meld_id: str, completion_notes: Optional[str] = None) -> dict:
     payload: dict = {}
     if completion_notes:
         payload["completion_notes"] = completion_notes
-    result = _http_patch(f"melds/{meld_id}/complete/", payload, cookie_hdr, csrf_token)
-    return {"ok": True, "meld_id": meld_id, "completion_notes": completion_notes, "result": result}
+    result = _http_patch(
+        f"melds/{meld_id}/complete/", payload, cookie_hdr, csrf_token,
+        side=side, vendor_id=vendor_id,
+    )
+    return {"ok": True, "meld_id": meld_id, "completion_notes": completion_notes, "side": side, "result": result}
 
 
 @with_recapture_retry
