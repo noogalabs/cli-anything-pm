@@ -82,14 +82,116 @@ def get_files(meld_id, as_json):
     output_json(results)
 
 
-@work_orders.command("work-entries")
+@work_orders.group("work-entries")
+def work_entries():
+    """Manage per-visit work-entries on a meld (list/create/update/delete)."""
+    pass
+
+
+@work_entries.command("list")
 @click.argument("meld_id")
 @click.option("--json", "as_json", is_flag=True, default=True)
-def get_work_entries(meld_id, as_json):
+def list_work_entries_cmd(meld_id, as_json):
     """List per-visit work-entries (checkin/checkout/hours/agent/notes) for a meld."""
     meld_id = _normalize_meld_id(meld_id)
     results = http_backend.list_work_entries(meld_id)
     output_json(results)
+
+
+@work_entries.command("create")
+@click.option("--meld-id", required=True, help="Meld ID")
+@click.option("--agent-id", "agent", required=True, type=int,
+              help="Persona ID of the agent who performed the work "
+                   "(e.g. 57163=David, 57541=Carlos)")
+@click.option("--description", required=True, help="Short summary, shown in the meld feed.")
+@click.option("--long-description", "long_description", default="",
+              help="Optional long-form notes.")
+@click.option("--checkin", default=None,
+              help="ISO 8601 start time, e.g. 2026-05-18T09:00:00-04:00")
+@click.option("--checkout", default=None,
+              help="ISO 8601 end time, e.g. 2026-05-18T10:30:00-04:00")
+@click.option("--hours", default=None, type=float,
+              help="Hours worked. PM auto-computes from checkin/checkout if omitted.")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def create_work_entry_cmd(meld_id, agent, description, long_description,
+                          checkin, checkout, hours, as_json):
+    """Create a new work-entry on a meld.
+
+    Manager-side, POST nested at /melds/{id}/work-entries/. Path-shape
+    asymmetry: CREATE is nested, UPDATE/DELETE are top-level.
+    """
+    meld_id = _normalize_meld_id(meld_id)
+    result = http_backend.create_work_entry(
+        meld_id,
+        agent=agent,
+        description=description,
+        long_description=long_description,
+        checkin=checkin,
+        checkout=checkout,
+        hours=hours,
+    )
+    output_json(result)
+
+
+@work_entries.command("update")
+@click.argument("entry_id", type=int)
+@click.option("--description", default=None)
+@click.option("--long-description", "long_description", default=None)
+@click.option("--checkin", default=None, help="ISO 8601 start time")
+@click.option("--checkout", default=None, help="ISO 8601 end time")
+@click.option("--hours", default=None, type=float)
+@click.option("--agent-id", "agent", default=None, type=int,
+              help="Replace agent (persona_id)")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def update_work_entry_cmd(entry_id, description, long_description,
+                          checkin, checkout, hours, agent, as_json):
+    """Update an existing work-entry (partial PATCH, top-level path).
+
+    PATCH /melds/work-entries/{entry_id}/ — pass only the fields you want
+    to change. Fails fast (exit 2) if no fields are supplied.
+    """
+    if all(v is None for v in (description, long_description, checkin,
+                               checkout, hours, agent)):
+        output_json({"ok": False, "error": "no fields to update"})
+        sys.exit(2)
+    result = http_backend.update_work_entry(
+        entry_id,
+        description=description,
+        long_description=long_description,
+        checkin=checkin,
+        checkout=checkout,
+        hours=hours,
+        agent=agent,
+    )
+    output_json(result)
+
+
+@work_entries.command("delete")
+@click.argument("entry_id", type=int)
+@click.option("--force", is_flag=True, default=False,
+              help="Skip the interactive confirm prompt (required in no-TTY contexts).")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def delete_work_entry_cmd(entry_id, force, as_json):
+    """Delete a work-entry (top-level path, irreversible).
+
+    DELETE /melds/work-entries/{entry_id}/. Without --force, prompts for
+    confirmation; if stdin is not a TTY and --force is not set, aborts
+    with a clear error rather than hanging.
+    """
+    if not force:
+        if not sys.stdin.isatty():
+            output_json({
+                "ok": False,
+                "error": "delete requires --force in non-interactive context",
+                "entry_id": entry_id,
+            })
+            sys.exit(2)
+        click.confirm(
+            f"Delete work-entry {entry_id}? This is irreversible.",
+            abort=True,
+        )
+    result = http_backend.delete_work_entry(entry_id)
+    output_json(result)
 
 
 @work_orders.command("upload-file")
