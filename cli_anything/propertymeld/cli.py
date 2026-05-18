@@ -619,6 +619,15 @@ def detach_meld_cmd(meld_id, as_json):
     output_json(result)
 
 
+@projects.command("delete")
+@click.argument("project_id", type=int)
+@click.option("--json", "as_json", is_flag=True, default=True)
+def delete_project_cmd(project_id, as_json):
+    """Delete a project by id."""
+    result = http_backend.delete_project(project_id)
+    output_json(result)
+
+
 @work_orders.command("update-notes")
 @click.argument("meld_id")
 @click.option("--maintenance", "maintenance_notes", required=True,
@@ -628,6 +637,35 @@ def update_meld_notes_cmd(meld_id, maintenance_notes, as_json):
     """Update the maintenance_notes on a meld (PATCH /api/v2/melds/{id}/notes/)."""
     meld_id = _normalize_meld_id(meld_id)
     result = http_backend.update_meld_notes(meld_id, maintenance_notes)
+    output_json(result)
+
+
+@work_orders.command("invoice-hold")
+@click.argument("invoice_id", type=int)
+@click.option("--reason", required=True, help="Reason the invoice is being put on hold")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def invoice_hold_cmd(invoice_id, reason, as_json):
+    """Place a meld invoice on hold."""
+    result = http_backend.hold_meld_invoice(invoice_id, reason=reason)
+    output_json(result)
+
+
+@work_orders.command("invoice-decline")
+@click.argument("invoice_id", type=int)
+@click.option("--reason", required=True, help="Reason the invoice is being declined")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def invoice_decline_cmd(invoice_id, reason, as_json):
+    """Decline a meld invoice."""
+    result = http_backend.decline_meld_invoice(invoice_id, reason=reason)
+    output_json(result)
+
+
+@work_orders.command("delete-file")
+@click.argument("file_id", type=int)
+@click.option("--json", "as_json", is_flag=True, default=True)
+def delete_file_cmd(file_id, as_json):
+    """Delete a manager-uploaded work-order file by id."""
+    result = http_backend.delete_meld_file(file_id)
     output_json(result)
 
 
