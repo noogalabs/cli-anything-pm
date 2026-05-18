@@ -792,3 +792,81 @@ class TestUpdateMeldNotes:
             path, payload, _, _ = mp.call_args[0]
             assert path == "v2/melds/12772720/notes/"
             assert payload == {"maintenance_notes": "test"}
+
+
+class TestCloneMeldOverrides:
+    def _patch_clone_io(self):
+        return (
+            patch("cli_anything.propertymeld.http_backend._load_creds"),
+            patch("cli_anything.propertymeld.http_backend._cookie_header"),
+            patch("cli_anything.propertymeld.http_backend._get_csrf_token"),
+            patch("cli_anything.propertymeld.http_backend._http_get"),
+            patch("cli_anything.propertymeld.http_backend._http_post"),
+        )
+
+    def _source(self):
+        return {
+            "brief_description": "Old title",
+            "description": "old long-form",
+            "work_category": "PLUMBING",
+            "work_location": "Bathroom",
+            "priority": "EMERGENCY",
+            "tenant_presence_required": True,
+            "unit": {"id": 999999},
+        }
+
+    def test_long_description_override(self):
+        mc_p, mch_p, mcs_p, mget_p, mp_p = self._patch_clone_io()
+        with mc_p as mc, mch_p as mch, mcs_p as mcs, mget_p as mget, mp_p as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mget.return_value = self._source()
+            mp.return_value = {"id": 555, "reference_id": "TABCDE"}
+
+            http_backend.clone_meld("12772911", description="new long-form")
+
+            _, payload, _, _ = mp.call_args[0]
+            assert payload["description"] == "new long-form"
+
+    def test_no_tenant_presence_required_override(self):
+        mc_p, mch_p, mcs_p, mget_p, mp_p = self._patch_clone_io()
+        with mc_p as mc, mch_p as mch, mcs_p as mcs, mget_p as mget, mp_p as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mget.return_value = self._source()
+            mp.return_value = {"id": 555, "reference_id": "TABCDE"}
+
+            http_backend.clone_meld("12772911", tenant_presence_required=False)
+
+            _, payload, _, _ = mp.call_args[0]
+            assert payload["tenant_presence_required"] is False
+
+    def test_unit_id_override(self):
+        mc_p, mch_p, mcs_p, mget_p, mp_p = self._patch_clone_io()
+        with mc_p as mc, mch_p as mch, mcs_p as mcs, mget_p as mget, mp_p as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mget.return_value = self._source()
+            mp.return_value = {"id": 555, "reference_id": "TABCDE"}
+
+            http_backend.clone_meld("12772911", unit_id=1870266)
+
+            _, payload, _, _ = mp.call_args[0]
+            assert payload["unit"] == {"id": 1870266}
+
+    def test_priority_override(self):
+        mc_p, mch_p, mcs_p, mget_p, mp_p = self._patch_clone_io()
+        with mc_p as mc, mch_p as mch, mcs_p as mcs, mget_p as mget, mp_p as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mget.return_value = self._source()
+            mp.return_value = {"id": 555, "reference_id": "TABCDE"}
+
+            http_backend.clone_meld("12772911", priority="LOW")
+
+            _, payload, _, _ = mp.call_args[0]
+            assert payload["priority"] == "LOW"
