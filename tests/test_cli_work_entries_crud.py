@@ -256,3 +256,19 @@ class TestWorkEntriesListRegressionCLI:
         assert isinstance(data, list)
         assert data[0]["id"] == ENTRY_ID
         mock_fn.assert_called_once_with(MELD_ID)
+
+    def test_legacy_flat_invocation_still_routes_to_list(self, runner):
+        """Back-compat for the pre-refactor shape `work-entries <meld_id>`
+        (no explicit `list` subcommand). Codex review of PR #7 flagged
+        that callers using the legacy form would break with "No such
+        command"; the _WorkEntriesGroup class routes them to `list`."""
+        with patch("cli_anything.propertymeld.http_backend.list_work_entries",
+                   return_value=[{"id": ENTRY_ID,
+                                  "description": "legacy shape"}]) as mock_fn:
+            result = runner.invoke(cli, [
+                "work-orders", "work-entries", MELD_ID,
+            ])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data[0]["id"] == ENTRY_ID
+        mock_fn.assert_called_once_with(MELD_ID)

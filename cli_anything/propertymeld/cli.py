@@ -82,7 +82,26 @@ def get_files(meld_id, as_json):
     output_json(results)
 
 
-@work_orders.group("work-entries")
+class _WorkEntriesGroup(click.Group):
+    """Routes the legacy positional invocation `work-entries <meld_id>` to `list <meld_id>`.
+
+    Before this sub-group refactor, `pm work-orders work-entries 12701108`
+    listed entries directly. Codex review of PR #7 flagged that the new
+    group rejects that shape with "No such command". Keep back-compat by
+    falling through to `list` when the first arg is not a known
+    subcommand name.
+    """
+
+    def resolve_command(self, ctx, args):
+        try:
+            return super().resolve_command(ctx, args)
+        except click.UsageError:
+            if args and not args[0].startswith("-"):
+                return super().resolve_command(ctx, ["list"] + args)
+            raise
+
+
+@work_orders.group("work-entries", cls=_WorkEntriesGroup)
 def work_entries():
     """Manage per-visit work-entries on a meld (list/create/update/delete)."""
     pass
