@@ -421,18 +421,55 @@ class TestAddMeldsToProject:
             mp.assert_not_called()
 
 
-class TestCreateMeldInProject:
-    """POST /api/projects/{id}/list-create-meld/ — verified shape from pm-capture."""
+_FULL_UNIT_FIXTURE = {
+    "id": 1870266,
+    "display_address": {"id": 1718387, "line_1": "123 Main St", "city": "Chattanooga"},
+    "building": None,
+    "floor": None,
+    "prop": {"id": 1718387, "line_1": "123 Main St"},
+    "current_tenants": [{"id": 3991162, "first_name": "Demo", "last_name": "Resident"}],
+}
 
-    def test_happy_path_mirrors_captured_shape(self):
-        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
-             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
-             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
-             patch("cli_anything.propertymeld.http_backend._http_post") as mp:
+_FULL_AGENT_FIXTURE = {
+    "id": 57163,
+    "type": "ManagementAgent",
+    "composite_id": "2-57163",
+    "first_name": "David",
+    "last_name": "Hunter",
+    "title": "COORDINATOR",
+    "department": "MAINTENANCE",
+    "selected_property_groups": [29374],
+    "denormalized_property_groups": [29374],
+    "property_groups": [29374],
+}
+
+
+class TestCreateMeldInProject:
+    """POST /api/projects/{id}/list-create-meld/ — PM requires fully hydrated objects.
+
+    Stripped {"id": N} inputs auto-hydrate via GET /units/{id}/ + GET /agents/{id}/
+    before the POST. Full objects pass through. Partial objects raise pre-wire.
+    """
+
+    def _patch_io(self):
+        return (
+            patch("cli_anything.propertymeld.http_backend._load_creds"),
+            patch("cli_anything.propertymeld.http_backend._cookie_header"),
+            patch("cli_anything.propertymeld.http_backend._get_csrf_token"),
+            patch("cli_anything.propertymeld.http_backend._http_post"),
+            patch("cli_anything.propertymeld.http_backend.get_unit"),
+            patch("cli_anything.propertymeld.http_backend.get_management_agent"),
+        )
+
+    def test_stripped_inputs_auto_hydrate_via_get(self):
+        mc_p, mch_p, mcs_p, mp_p, mgu_p, mga_p = self._patch_io()
+        with mc_p as mc, mch_p as mch, mcs_p as mcs, mp_p as mp, mgu_p as mgu, mga_p as mga:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
             mp.return_value = {"id": 12772803, "brief_description": "test"}
+            mgu.return_value = _FULL_UNIT_FIXTURE
+            mga.return_value = _FULL_AGENT_FIXTURE
 
             result = http_backend.create_meld_in_project(
                 project_id="222959",
@@ -451,28 +488,51 @@ class TestCreateMeldInProject:
             assert result["ok"] is True
             assert result["meld_id"] == 12772803
             assert result["project_id"] == "222959"
+            mgu.assert_called_once_with(1870266)
+            mga.assert_called_once_with(57163)
             path, payload, _, _ = mp.call_args[0]
             assert path == "projects/222959/list-create-meld/"
-            # Captured shape — string-typed notify booleans alongside actual bools.
             assert payload["project"] == "222959"
             assert payload["notify_owners_string"] == "false"
             assert payload["notify_tenants_string"] == "true"
-            assert payload["work_category"] == "APPLIANCES"
-            assert payload["work_type"] == "TURN"
-            assert payload["due_date"] == "2026-05-16T02:52:41.393Z"
-            assert payload["brief_description"] == "test"
-            assert payload["maintenance"] == [{"id": 57163, "type": "ManagementAgent"}]
-            assert payload["unit"] == {"id": 1870266}
+            assert payload["unit"] == _FULL_UNIT_FIXTURE
+            assert payload["maintenance"] == [_FULL_AGENT_FIXTURE]
 
-    def test_maintenance_as_single_dict_gets_wrapped(self):
-        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
-             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
-             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
-             patch("cli_anything.propertymeld.http_backend._http_post") as mp:
+    def test_full_objects_pass_through_unchanged(self):
+        """Power-user path: pre-hydrated objects skip the GET round-trip."""
+        mc_p, mch_p, mcs_p, mp_p, mgu_p, mga_p = self._patch_io()
+        with mc_p as mc, mch_p as mch, mcs_p as mcs, mp_p as mp, mgu_p as mgu, mga_p as mga:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
             mp.return_value = {"id": 99}
+
+            http_backend.create_meld_in_project(
+                project_id="222959",
+                brief_description="b",
+                description="d",
+                work_category="INTERIOR",
+                work_type="PREVENTIVE_MAINTENANCE",
+                due_date="2026-05-16T00:00:00.000Z",
+                unit=_FULL_UNIT_FIXTURE,
+                maintenance=[_FULL_AGENT_FIXTURE],
+            )
+
+            mgu.assert_not_called()
+            mga.assert_not_called()
+            _, payload, _, _ = mp.call_args[0]
+            assert payload["unit"] == _FULL_UNIT_FIXTURE
+            assert payload["maintenance"] == [_FULL_AGENT_FIXTURE]
+
+    def test_maintenance_as_single_dict_gets_wrapped_and_hydrated(self):
+        mc_p, mch_p, mcs_p, mp_p, mgu_p, mga_p = self._patch_io()
+        with mc_p as mc, mch_p as mch, mcs_p as mcs, mp_p as mp, mgu_p as mgu, mga_p as mga:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mp.return_value = {"id": 99}
+            mgu.return_value = _FULL_UNIT_FIXTURE
+            mga.return_value = _FULL_AGENT_FIXTURE
 
             http_backend.create_meld_in_project(
                 project_id="222959",
@@ -486,7 +546,61 @@ class TestCreateMeldInProject:
             )
 
             _, payload, _, _ = mp.call_args[0]
-            assert payload["maintenance"] == [{"id": 57163}]
+            assert payload["maintenance"] == [_FULL_AGENT_FIXTURE]
+
+    def test_partial_unit_raises_with_missing_keys(self):
+        with pytest.raises(ValueError, match="display_address"):
+            http_backend.create_meld_in_project(
+                project_id="222959",
+                brief_description="b",
+                description="d",
+                work_category="APPLIANCES",
+                work_type="TURN",
+                due_date="2026-05-16T00:00:00.000Z",
+                unit={"id": 1, "some_other_key": "x"},
+                maintenance=[_FULL_AGENT_FIXTURE],
+            )
+
+    def test_partial_maintenance_raises_with_missing_keys(self):
+        with pytest.raises(ValueError, match="selected_property_groups"):
+            http_backend.create_meld_in_project(
+                project_id="222959",
+                brief_description="b",
+                description="d",
+                work_category="APPLIANCES",
+                work_type="TURN",
+                due_date="2026-05-16T00:00:00.000Z",
+                unit=_FULL_UNIT_FIXTURE,
+                maintenance=[{"id": 57163, "first_name": "David"}],
+            )
+
+
+class TestUnitAndAgentHydration:
+    """GET /api/units/{id}/ and GET /api/agents/{id}/ — hydration helpers."""
+
+    def test_get_unit_hits_correct_path(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mg:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mg.return_value = _FULL_UNIT_FIXTURE
+            result = http_backend.get_unit(1870266)
+            assert result == _FULL_UNIT_FIXTURE
+            path, _ = mg.call_args[0]
+            assert path == "units/1870266/"
+
+    def test_get_management_agent_hits_correct_path(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mg:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mg.return_value = _FULL_AGENT_FIXTURE
+            result = http_backend.get_management_agent(57163)
+            assert result == _FULL_AGENT_FIXTURE
+            path, _ = mg.call_args[0]
+            assert path == "agents/57163/"
 
 
 class TestPatchMeldProjectLink:
