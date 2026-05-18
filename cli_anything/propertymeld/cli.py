@@ -604,6 +604,25 @@ def update_meld_notes_cmd(meld_id, maintenance_notes, as_json):
     output_json(result)
 
 
+@work_orders.command("link-tenant")
+@click.argument("meld_id")
+@click.argument("tenant_id", type=int)
+@click.option("--json", "as_json", is_flag=True, default=True)
+def link_tenant_cmd(meld_id, tenant_id, as_json):
+    """Link a tenant to a meld by appending to the meld's tenants array.
+
+    Closes the gmail-tenant-link skill Step 5 gap — no more Playwright fallback
+    for the GV-intake → tenant-link flow. Idempotent: if tenant is already on
+    the meld, returns already_linked=True without modifying.
+
+    Example:
+      pm work-orders link-tenant 12791190 4010708
+    """
+    meld_id = _normalize_meld_id(meld_id)
+    result = http_backend.link_tenant_to_meld(meld_id, tenant_id)
+    output_json(result)
+
+
 # ── estimates group ────────────────────────────────────────────────────────────
 
 @cli.group()
