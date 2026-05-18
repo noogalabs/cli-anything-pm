@@ -892,3 +892,121 @@ class TestCloneMeldOverrides:
 
             _, payload, _, _ = mp.call_args[0]
             assert payload["priority"] == "LOW"
+
+
+_TENANT_FIXTURE = {
+    "id": 4010708,
+    "user": {"id": 9001, "first_name": "Regina", "last_name": "Moses", "email": "regina@example.com"},
+    "contact": {"id": 4001, "home_phone": "+14235550199"},
+    "is_active": True,
+    "management": 3287,
+}
+
+
+class TestLinkTenantToMeld:
+    """PATCH /api/melds/{id}/ with merged tenants array — closes P1 #14."""
+
+    def _patches(self):
+        return (
+            patch("cli_anything.propertymeld.http_backend._load_creds"),
+            patch("cli_anything.propertymeld.http_backend._cookie_header"),
+            patch("cli_anything.propertymeld.http_backend._get_csrf_token"),
+            patch("cli_anything.propertymeld.http_backend._http_get"),
+            patch("cli_anything.propertymeld.http_backend._http_patch"),
+        )
+
+    def _stub_creds(self, mc, mch, mcs):
+        mc.return_value = {"cookie": "x"}
+        mch.return_value = "Cookie: session=xyz"
+        mcs.return_value = "csrf"
+
+    def test_appends_to_existing_tenants_array(self):
+        with self._patches()[0] as mc, self._patches()[1] as mch, \
+             self._patches()[2] as mcs, self._patches()[3] as mg, \
+             self._patches()[4] as mp:
+            self._stub_creds(mc, mch, mcs)
+            existing = {"id": 9999, "first_name": "Other", "last_name": "Tenant"}
+            mg.side_effect = [
+                {"id": "12791190", "tenants": [existing]},  # GET meld
+                _TENANT_FIXTURE,                              # GET tenant for hydration
+            ]
+            mp.return_value = {"id": "12791190", "tenants": [existing, _TENANT_FIXTURE]}
+
+            result = http_backend.link_tenant_to_meld("12791190", 4010708)
+
+            assert result["ok"] is True
+            assert result["linked"] is True
+            assert result["tenant_id"] == 4010708
+            assert result["tenant_count"] == 2
+            path, payload, _, _ = mp.call_args[0]
+            assert path == "melds/12791190/"
+            assert payload["id"] == 12791190
+            assert len(payload["tenants"]) == 2
+            assert _TENANT_FIXTURE in payload["tenants"]
+            assert existing in payload["tenants"]
+
+    def test_idempotent_already_linked_short_circuits_patch(self):
+        with self._patches()[0] as mc, self._patches()[1] as mch, \
+             self._patches()[2] as mcs, self._patches()[3] as mg, \
+             self._patches()[4] as mp:
+            self._stub_creds(mc, mch, mcs)
+            mg.return_value = {"id": "12791190", "tenants": [_TENANT_FIXTURE]}
+
+            result = http_backend.link_tenant_to_meld("12791190", 4010708)
+
+            assert result["ok"] is True
+            assert result.get("already_linked") is True
+            assert result.get("linked") is None or result.get("linked") is False
+            assert result["tenant_count"] == 1
+            mp.assert_not_called()
+
+    def test_hits_correct_paths_get_meld_then_get_tenant_then_patch(self):
+        with self._patches()[0] as mc, self._patches()[1] as mch, \
+             self._patches()[2] as mcs, self._patches()[3] as mg, \
+             self._patches()[4] as mp:
+            self._stub_creds(mc, mch, mcs)
+            mg.side_effect = [
+                {"id": "12791190", "tenants": []},
+                _TENANT_FIXTURE,
+            ]
+            mp.return_value = {"id": "12791190", "tenants": [_TENANT_FIXTURE]}
+
+            http_backend.link_tenant_to_meld("12791190", 4010708)
+
+            get_paths = [c.args[0] for c in mg.call_args_list]
+            assert get_paths == ["melds/12791190/", "tenants/4010708/"]
+            patch_path = mp.call_args[0][0]
+            assert patch_path == "melds/12791190/"
+
+    def test_handles_missing_tenants_field_on_meld(self):
+        with self._patches()[0] as mc, self._patches()[1] as mch, \
+             self._patches()[2] as mcs, self._patches()[3] as mg, \
+             self._patches()[4] as mp:
+            self._stub_creds(mc, mch, mcs)
+            mg.side_effect = [
+                {"id": "12791190"},  # no tenants key at all
+                _TENANT_FIXTURE,
+            ]
+            mp.return_value = {"id": "12791190", "tenants": [_TENANT_FIXTURE]}
+
+            result = http_backend.link_tenant_to_meld("12791190", 4010708)
+
+            assert result["linked"] is True
+            assert result["tenant_count"] == 1
+            _, payload, _, _ = mp.call_args[0]
+            assert payload["tenants"] == [_TENANT_FIXTURE]
+
+
+class TestGetTenant:
+    """GET /api/tenants/{id}/ — tenant hydration helper."""
+
+    def test_get_tenant_hits_correct_path(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mg:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mg.return_value = _TENANT_FIXTURE
+            result = http_backend.get_tenant(4010708)
+            assert result == _TENANT_FIXTURE
+            assert mg.call_args[0][0] == "tenants/4010708/"

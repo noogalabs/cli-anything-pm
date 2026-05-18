@@ -583,3 +583,39 @@ class TestProjectsCreateMeldInCLI:
         ])
         assert result.exit_code != 0
         assert "--maintenance-id" in result.output and "--maintenance-json" in result.output
+
+
+class TestWorkOrdersLinkTenantCLI:
+    """pm work-orders link-tenant <meld_id> <tenant_id> — closes P1 #14."""
+
+    def test_link_tenant_passes_meld_and_tenant_ids(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.link_tenant_to_meld",
+                   return_value={"ok": True, "meld_id": "12791190", "tenant_id": 4010708,
+                                 "linked": True, "tenant_count": 2, "result": {}}) as mock_fn:
+            result = runner.invoke(cli, [
+                "work-orders", "link-tenant", "12791190", "4010708",
+            ])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["linked"] is True
+        assert data["tenant_id"] == 4010708
+        mock_fn.assert_called_once_with("12791190", 4010708)
+
+    def test_link_tenant_surfaces_already_linked(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.link_tenant_to_meld",
+                   return_value={"ok": True, "meld_id": "12791190", "tenant_id": 4010708,
+                                 "already_linked": True, "tenant_count": 1}):
+            result = runner.invoke(cli, [
+                "work-orders", "link-tenant", "12791190", "4010708",
+            ])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["already_linked"] is True
+
+    def test_link_tenant_requires_tenant_id_int(self, runner):
+        # Click rejects non-int tenant_id at parse time
+        result = runner.invoke(cli, [
+            "work-orders", "link-tenant", "12791190", "not-a-number",
+        ])
+        assert result.exit_code != 0
+        assert "Invalid value" in result.output or "not-a-number" in result.output
