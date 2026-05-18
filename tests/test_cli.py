@@ -46,7 +46,43 @@ class TestWorkOrdersCLI:
         with patch("cli_anything.propertymeld.api_backend.list_work_orders",
                    return_value=MOCK_WO_LIST) as mock_fn:
             runner.invoke(cli, ["work-orders", "list", "--status", "open"])
-        mock_fn.assert_called_once_with(status="open", limit=25)
+        mock_fn.assert_called_once_with(
+            status="open",
+            assigned_to_tech=None,
+            assigned_to_vendor=None,
+            stuck_hours=None,
+            created_since=None,
+            status_not=None,
+            no_tenant_linked=False,
+            limit=25,
+        )
+
+    def test_list_with_new_filter_flags(self, runner):
+        with patch("cli_anything.propertymeld.api_backend.list_work_orders",
+                   return_value=MOCK_WO_LIST) as mock_fn:
+            result = runner.invoke(
+                cli,
+                [
+                    "work-orders", "list",
+                    "--assigned-to-tech", "90025",
+                    "--assigned-to-vendor", "99",
+                    "--stuck-hours", "48",
+                    "--created-since", "2026-05-18T00:00:00Z",
+                    "--status-not", "COMPLETED",
+                    "--no-tenant-linked",
+                ],
+            )
+        assert result.exit_code == 0
+        mock_fn.assert_called_once_with(
+            status=None,
+            assigned_to_tech=90025,
+            assigned_to_vendor=99,
+            stuck_hours=48.0,
+            created_since="2026-05-18T00:00:00Z",
+            status_not="COMPLETED",
+            no_tenant_linked=True,
+            limit=25,
+        )
 
     def test_get_outputs_single_json(self, runner):
         with patch("cli_anything.propertymeld.api_backend.get_work_order",

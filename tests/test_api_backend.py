@@ -82,6 +82,28 @@ class TestListWorkOrders:
             results = api_backend.list_work_orders()
         assert results == [{"id": 999}]
 
+    def test_new_filter_flags_are_forwarded_to_query(self):
+        with patch("urllib.request.urlopen") as mock_open:
+            mock_open.side_effect = [
+                make_response(TOKEN_RESPONSE),
+                make_response({"results": []}),
+            ]
+            api_backend.list_work_orders(
+                assigned_to_tech=90025,
+                assigned_to_vendor=99,
+                stuck_hours=48,
+                created_since="2026-05-18T00:00:00Z",
+                status_not="COMPLETED",
+                no_tenant_linked=True,
+            )
+        url = mock_open.call_args_list[1][0][0].full_url
+        assert "assigned_to_tech=90025" in url
+        assert "assigned_to_vendor=99" in url
+        assert "stuck_hours=48" in url
+        assert "created_since=2026-05-18T00%3A00%3A00Z" in url
+        assert "status_not=COMPLETED" in url
+        assert "no_tenant_linked=true" in url
+
 
 class TestGetWorkOrder:
     def test_returns_single_work_order(self):
