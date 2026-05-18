@@ -115,6 +115,34 @@ def upload_file(meld_id, file_path, uploader_role, description, as_json):
     output_json(result)
 
 
+@work_orders.command("delete-file")
+@click.argument("file_id", type=int)
+@click.option("--force", is_flag=True, default=False,
+              help="Skip the interactive confirm prompt (required in no-TTY contexts).")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def delete_meld_file_cmd(file_id, force, as_json):
+    """Delete a manager-uploaded meld file (top-level path, irreversible).
+
+    DELETE /api/melds/files/{file_id}/. Without --force, prompts for
+    confirmation; if stdin is not a TTY and --force is not set, aborts
+    with a clear error rather than hanging.
+    """
+    if not force:
+        if not sys.stdin.isatty():
+            output_json({
+                "ok": False,
+                "error": "delete-file requires --force in non-interactive context",
+                "file_id": file_id,
+            })
+            sys.exit(2)
+        click.confirm(
+            f"Delete file {file_id}? This is irreversible.",
+            abort=True,
+        )
+    result = http_backend.delete_meld_file(file_id)
+    output_json(result)
+
+
 @work_orders.command("send-message")
 @click.option("--meld-id", required=True, help="Meld ID")
 @click.option("--text", required=True, help="Message body")
@@ -136,12 +164,21 @@ def send_message(meld_id, text, hide_tenant, hide_vendor, hide_owner, as_json):
 
 @work_orders.command("clone")
 @click.option("--meld-id", required=True, help="Source meld ID to clone")
-@click.option("--description", default=None, help="Override description for the clone")
+@click.option("--description", default=None,
+              help="Override the short title (brief_description)")
+@click.option("--long-description", "long_description", default=None,
+              help="Override the long-form description. Without this, the "
+                   "long-form text inherits from the source — pass --long-description "
+                   "when cloning to create a different scope of work.")
 @click.option("--json", "as_json", is_flag=True, default=True)
-def clone_meld(meld_id, description, as_json):
+def clone_meld(meld_id, description, long_description, as_json):
     """Clone a meld — creates a new meld with the same details (plain HTTP)."""
     meld_id = _normalize_meld_id(meld_id)
-    result = http_backend.clone_meld(meld_id, brief_description=description)
+    result = http_backend.clone_meld(
+        meld_id,
+        brief_description=description,
+        description=long_description,
+    )
     output_json(result)
 
 
@@ -541,6 +578,34 @@ def detach_meld_cmd(meld_id, as_json):
     output_json(result)
 
 
+@projects.command("delete")
+@click.argument("project_id", type=int)
+@click.option("--force", is_flag=True, default=False,
+              help="Skip the interactive confirm prompt (required in no-TTY contexts).")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def delete_project_cmd(project_id, force, as_json):
+    """Delete a project (irreversible). Linked melds typically survive.
+
+    DELETE /api/projects/{project_id}/. Workaround for the dupe-project-
+    on-timeout case (Blue 2026-05-18). Without --force, prompts for
+    confirmation; in no-TTY context, --force is required.
+    """
+    if not force:
+        if not sys.stdin.isatty():
+            output_json({
+                "ok": False,
+                "error": "delete requires --force in non-interactive context",
+                "project_id": project_id,
+            })
+            sys.exit(2)
+        click.confirm(
+            f"Delete project {project_id}? This is irreversible.",
+            abort=True,
+        )
+    result = http_backend.delete_project(project_id)
+    output_json(result)
+
+
 @work_orders.command("update-notes")
 @click.argument("meld_id")
 @click.option("--maintenance", "maintenance_notes", required=True,
@@ -669,4 +734,43 @@ def upload_receipt(meld_id, file_path, description, estimate_id, as_json):
 def link_receipt(receipt_id, estimate_id, as_json):
     """Link a receipt to an invoice."""
     result = http_backend.link_receipt_to_invoice(receipt_id, estimate_id)
+    output_json(result)
+
+
+# ── invoices group (vendor-side meld-invoices manager actions) ───────────────
+
+@cli.group()
+def invoices():
+    """Manager actions on vendor-submitted meld-invoices (hold/decline)."""
+    pass
+
+
+@invoices.command("hold")
+@click.argument("invoice_id", type=int)
+@click.option("--reason", required=True,
+              help="Reason for placing the invoice on hold (vendor-visible).")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def hold_invoice_cmd(invoice_id, reason, as_json):
+    """Place a vendor's meld-invoice on hold pending revision.
+
+    PATCH /api/meld-invoices/{invoice_id}/hold/ with body {reason}.
+    Use when the invoice needs a change before approval; stronger options
+    are `decline` (reject outright) or web-side revisions.
+    """
+    result = http_backend.hold_meld_invoice(invoice_id, reason)
+    output_json(result)
+
+
+@invoices.command("decline")
+@click.argument("invoice_id", type=int)
+@click.option("--reason", required=True,
+              help="Reason for declining the invoice (vendor-visible).")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def decline_invoice_cmd(invoice_id, reason, as_json):
+    """Decline a vendor's meld-invoice (vendor must resubmit).
+
+    PATCH /api/meld-invoices/{invoice_id}/decline/ with body {reason}.
+    Stronger than `hold` — signals the work itself is rejected.
+    """
+    result = http_backend.decline_meld_invoice(invoice_id, reason)
     output_json(result)
