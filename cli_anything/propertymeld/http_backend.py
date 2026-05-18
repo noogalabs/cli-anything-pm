@@ -1868,6 +1868,69 @@ def create_meld_in_project(
 
 
 @with_recapture_retry
+def get_tenant(tenant_id) -> dict:
+    """GET /api/tenants/{tenant_id}/ — full tenant object with nested contact/user/address."""
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    return _http_get(f"tenants/{tenant_id}/", cookie_hdr)
+
+
+@with_recapture_retry
+def link_tenant_to_meld(meld_id: str, tenant_id) -> dict:
+    """Link a tenant to a meld by appending to the meld's tenants array.
+
+    PATCH /api/melds/{meld_id}/ with {"id": meld_id, "tenants": [<merged array>]}.
+    Mirrors the patch_meld_project_link shape (verified 2026-05-13). Tenants
+    field is replaced atomically — we read existing tenants first, append the
+    new tenant as a fully-hydrated object, and PATCH the merged array.
+
+    Hydration mirrors the create_meld_in_project fix (P1 #2): PM serializers
+    may walk nested fields on the tenants array, so we send full objects from
+    GET /api/tenants/{id}/ rather than stripped {"id": N} placeholders.
+
+    Idempotent: if tenant_id is already linked, returns {"already_linked": True}
+    without firing the PATCH.
+
+    Closes P1 #14 — gmail-tenant-link skill Step 5 was Playwright-only before.
+    """
+    meld_id = _validate_meld_id(meld_id)
+    tenant_id_int = int(tenant_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+
+    current = _http_get(f"melds/{meld_id}/", cookie_hdr)
+    existing_tenants = current.get("tenants") or []
+    existing_ids = {
+        t.get("id") for t in existing_tenants
+        if isinstance(t, dict) and t.get("id") is not None
+    }
+
+    if tenant_id_int in existing_ids:
+        return {
+            "ok": True,
+            "meld_id": meld_id,
+            "tenant_id": tenant_id_int,
+            "already_linked": True,
+            "tenant_count": len(existing_tenants),
+        }
+
+    new_tenant = get_tenant(tenant_id_int)
+    merged_tenants = list(existing_tenants) + [new_tenant]
+
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload = {"id": meld_id, "tenants": merged_tenants}
+    result = _http_patch(f"melds/{meld_id}/", payload, cookie_hdr, csrf_token)
+    return {
+        "ok": True,
+        "meld_id": meld_id,
+        "tenant_id": tenant_id_int,
+        "linked": True,
+        "tenant_count": len(merged_tenants),
+        "result": result,
+    }
+
+
+@with_recapture_retry
 def patch_meld_project_link(meld_id: str, project_id) -> dict:
     """Attach or detach a meld's project link.
 
