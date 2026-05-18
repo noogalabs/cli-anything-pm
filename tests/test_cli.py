@@ -454,3 +454,74 @@ class TestWorkOrdersUpdateNotesCLI:
         call = mock_fn.call_args
         assert call.args[0] == "12772911"
         assert call.args[1] == "hi"
+
+
+class TestProjectsCreateMeldInCLI:
+    """pm-dev projects create-meld-in — ergonomic --unit-id + --maintenance-id flags."""
+
+    _COMMON_ARGS = [
+        "projects", "create-meld-in", "222959",
+        "--brief-description", "b",
+        "--description", "d",
+        "--work-category", "APPLIANCES",
+        "--work-type", "TURN",
+        "--due-date", "2026-05-16T00:00:00.000Z",
+    ]
+
+    def test_id_flags_pass_stripped_objects(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.create_meld_in_project",
+                   return_value={"ok": True, "meld_id": 99, "project_id": "222959", "result": {}}) as mock_fn:
+            result = runner.invoke(cli, self._COMMON_ARGS + [
+                "--unit-id", "1870266",
+                "--maintenance-id", "57163",
+            ])
+        assert result.exit_code == 0, result.output
+        call = mock_fn.call_args
+        assert call.kwargs["unit"] == {"id": 1870266}
+        assert call.kwargs["maintenance"] == [{"id": 57163}]
+
+    def test_multiple_maintenance_ids_repeatable(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.create_meld_in_project",
+                   return_value={"ok": True, "meld_id": 99, "project_id": "222959", "result": {}}) as mock_fn:
+            result = runner.invoke(cli, self._COMMON_ARGS + [
+                "--unit-id", "1870266",
+                "--maintenance-id", "57163",
+                "--maintenance-id", "57544",
+            ])
+        assert result.exit_code == 0, result.output
+        assert mock_fn.call_args.kwargs["maintenance"] == [{"id": 57163}, {"id": 57544}]
+
+    def test_json_flags_still_work_for_power_users(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.create_meld_in_project",
+                   return_value={"ok": True, "meld_id": 99, "project_id": "222959", "result": {}}) as mock_fn:
+            result = runner.invoke(cli, self._COMMON_ARGS + [
+                "--unit-json", '{"id": 1, "display_address": {}, "prop": {}, "current_tenants": []}',
+                "--maintenance-json", '[{"id": 9}]',
+            ])
+        assert result.exit_code == 0, result.output
+        kwargs = mock_fn.call_args.kwargs
+        assert kwargs["unit"]["id"] == 1
+        assert kwargs["maintenance"] == [{"id": 9}]
+
+    def test_missing_both_unit_flags_errors(self, runner):
+        result = runner.invoke(cli, self._COMMON_ARGS + [
+            "--maintenance-id", "57163",
+        ])
+        assert result.exit_code != 0
+        assert "--unit-id" in result.output and "--unit-json" in result.output
+
+    def test_passing_both_unit_flags_errors(self, runner):
+        result = runner.invoke(cli, self._COMMON_ARGS + [
+            "--unit-id", "1870266",
+            "--unit-json", '{"id": 1}',
+            "--maintenance-id", "57163",
+        ])
+        assert result.exit_code != 0
+        assert "--unit-id" in result.output and "--unit-json" in result.output
+
+    def test_missing_both_maintenance_flags_errors(self, runner):
+        result = runner.invoke(cli, self._COMMON_ARGS + [
+            "--unit-id", "1870266",
+        ])
+        assert result.exit_code != 0
+        assert "--maintenance-id" in result.output and "--maintenance-json" in result.output

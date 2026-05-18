@@ -410,8 +410,14 @@ def add_melds_to_project_cmd(project_id, meld_ids, as_json):
 @click.option("--work-category", required=True, help="e.g. APPLIANCES, PLUMBING, HVAC")
 @click.option("--work-type", required=True, help="e.g. TURN, REPAIR")
 @click.option("--due-date", required=True, help="ISO 8601, e.g. 2026-05-16T02:52:41.393Z")
-@click.option("--unit-json", required=True, help="JSON of the unit object (from manager UI typeahead)")
-@click.option("--maintenance-json", required=True, help="JSON list of ManagementAgent objects")
+@click.option("--unit-id", type=int, default=None,
+              help="Unit PK — auto-hydrated via GET /units/{id}/. Use this OR --unit-json.")
+@click.option("--unit-json", default=None,
+              help="Full JSON unit object (power-user path). Use this OR --unit-id.")
+@click.option("--maintenance-id", "maintenance_ids", type=int, multiple=True,
+              help="ManagementAgent PK — auto-hydrated via GET /agents/{id}/. Repeat for multiple. Use this OR --maintenance-json.")
+@click.option("--maintenance-json", default=None,
+              help="Full JSON list of ManagementAgent objects (power-user path). Use this OR --maintenance-id.")
 @click.option("--tenants-json", default="[]", help="JSON list of tenant objects (default: [])")
 @click.option("--work-location", default="")
 @click.option("--priority", default="LOW")
@@ -424,17 +430,38 @@ def add_melds_to_project_cmd(project_id, meld_ids, as_json):
 @click.option("--json", "as_json", is_flag=True, default=True)
 def create_meld_in_project_cmd(
     project_id, brief_description, description, work_category, work_type,
-    due_date, unit_json, maintenance_json, tenants_json, work_location,
-    priority, permission_to_enter, tenant_presence_required, notify_tenants,
-    notify_owner, has_pets, pets, as_json,
+    due_date, unit_id, unit_json, maintenance_ids, maintenance_json, tenants_json,
+    work_location, priority, permission_to_enter, tenant_presence_required,
+    notify_tenants, notify_owner, has_pets, pets, as_json,
 ):
     """Create a new meld INSIDE an existing project.
 
-    The unit and maintenance fields are full nested objects in the captured
-    PM payload — pass them as JSON strings until we have lighter-weight
-    helpers for them.
+    PMs /list-create-meld/ endpoint requires fully-hydrated unit and
+    ManagementAgent objects. Two paths:
+
+    \b
+    - Ergonomic: --unit-id 1870266 --maintenance-id 57163 (repeatable)
+      → CLI auto-hydrates via GET /units/{id}/ and GET /agents/{id}/.
+    - Power-user: --unit-json '<full obj>' --maintenance-json '<full list>'
+      → passed through; must include nested fields or backend raises ValueError.
     """
     import json as _json
+
+    if (unit_id is None) == (unit_json is None):
+        raise click.UsageError("Exactly one of --unit-id or --unit-json is required.")
+    if bool(maintenance_ids) == bool(maintenance_json):
+        raise click.UsageError("Exactly one of --maintenance-id (repeatable) or --maintenance-json is required.")
+
+    if unit_id is not None:
+        unit = {"id": unit_id}
+    else:
+        unit = _json.loads(unit_json)
+
+    if maintenance_ids:
+        maintenance = [{"id": mid} for mid in maintenance_ids]
+    else:
+        maintenance = _json.loads(maintenance_json)
+
     result = http_backend.create_meld_in_project(
         project_id=project_id,
         brief_description=brief_description,
@@ -442,8 +469,8 @@ def create_meld_in_project_cmd(
         work_category=work_category,
         work_type=work_type,
         due_date=due_date,
-        unit=_json.loads(unit_json),
-        maintenance=_json.loads(maintenance_json),
+        unit=unit,
+        maintenance=maintenance,
         tenants=_json.loads(tenants_json),
         work_location=work_location,
         priority=priority,
