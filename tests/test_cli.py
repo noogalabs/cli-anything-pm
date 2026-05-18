@@ -619,3 +619,39 @@ class TestWorkOrdersLinkTenantCLI:
         ])
         assert result.exit_code != 0
         assert "Invalid value" in result.output or "not-a-number" in result.output
+
+
+class TestP2GapCLICommands:
+    def test_invoice_hold_calls_backend(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.hold_meld_invoice",
+                   return_value={"ok": True, "invoice_id": 3863382, "result": {}}) as mock_fn:
+            result = runner.invoke(cli, [
+                "work-orders", "invoice-hold", "3863382",
+                "--reason", "needs revision",
+            ])
+        assert result.exit_code == 0
+        mock_fn.assert_called_once_with(3863382, reason="needs revision")
+
+    def test_invoice_decline_calls_backend(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.decline_meld_invoice",
+                   return_value={"ok": True, "invoice_id": 3863382, "result": {}}) as mock_fn:
+            result = runner.invoke(cli, [
+                "work-orders", "invoice-decline", "3863382",
+                "--reason", "wrong job",
+            ])
+        assert result.exit_code == 0
+        mock_fn.assert_called_once_with(3863382, reason="wrong job")
+
+    def test_delete_file_calls_backend(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.delete_meld_file",
+                   return_value={"ok": True, "file_id": 20254356, "deleted": True}) as mock_fn:
+            result = runner.invoke(cli, ["work-orders", "delete-file", "20254356"])
+        assert result.exit_code == 0
+        mock_fn.assert_called_once_with(20254356)
+
+    def test_delete_project_calls_backend(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.delete_project",
+                   return_value={"ok": True, "project_id": 222964, "deleted": True}) as mock_fn:
+            result = runner.invoke(cli, ["projects", "delete", "222964"])
+        assert result.exit_code == 0
+        mock_fn.assert_called_once_with(222964)
