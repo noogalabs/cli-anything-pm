@@ -511,7 +511,11 @@ def send_message(
 
 
 @with_recapture_retry
-def clone_meld(meld_id: str, brief_description: Optional[str] = None) -> dict:
+def clone_meld(
+    meld_id: str,
+    brief_description: Optional[str] = None,
+    description: Optional[str] = None,
+) -> dict:
     """Clone a meld by reading the original and POSTing a copy to /api/melds/.
 
     Copies: brief_description, work_category, work_location, unit, description,
@@ -519,7 +523,11 @@ def clone_meld(meld_id: str, brief_description: Optional[str] = None) -> dict:
 
     Args:
         meld_id: Source meld ID to clone.
-        brief_description: Override description for the clone (default: "Copy of <original>").
+        brief_description: Override the short title (default: "Copy of <original>").
+        description: Override the long-form description. Without this, the
+            long-form text is inherited from the source meld — a foot-gun
+            when cloning a punch-list meld to create a different scope of
+            work (Blue's TMIITGJ regression 2026-05-14).
     """
     meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
@@ -537,9 +545,12 @@ def clone_meld(meld_id: str, brief_description: Optional[str] = None) -> dict:
         "work_location": original.get("work_location") or "",
     }
 
-    # Optional fields — copy if present
+    # Optional fields — copy if present, with description override winning.
     for field in ("description", "work_type", "priority", "has_pets", "pets",
                   "permission_to_enter", "tenant_presence_required"):
+        if field == "description" and description is not None:
+            payload["description"] = description
+            continue
         val = original.get(field)
         if val is not None:
             payload[field] = val
