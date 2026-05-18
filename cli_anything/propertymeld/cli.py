@@ -137,11 +137,17 @@ def send_message(meld_id, text, hide_tenant, hide_vendor, hide_owner, as_json):
 @work_orders.command("clone")
 @click.option("--meld-id", required=True, help="Source meld ID to clone")
 @click.option("--description", default=None, help="Override description for the clone")
+@click.option("--long-description", "long_description", default=None,
+              help="Override long-form description for the clone")
 @click.option("--json", "as_json", is_flag=True, default=True)
-def clone_meld(meld_id, description, as_json):
+def clone_meld(meld_id, description, long_description, as_json):
     """Clone a meld — creates a new meld with the same details (plain HTTP)."""
     meld_id = _normalize_meld_id(meld_id)
-    result = http_backend.clone_meld(meld_id, brief_description=description)
+    result = http_backend.clone_meld(
+        meld_id,
+        brief_description=description,
+        description=long_description,
+    )
     output_json(result)
 
 

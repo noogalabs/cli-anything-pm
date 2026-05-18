@@ -678,3 +678,36 @@ class TestUpdateMeldNotes:
             path, payload, _, _ = mp.call_args[0]
             assert path == "v2/melds/12772720/notes/"
             assert payload == {"maintenance_notes": "test"}
+
+
+class TestCloneMeld:
+    def test_description_override_wins_over_source_value(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mget, \
+             patch("cli_anything.propertymeld.http_backend._http_post") as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mget.return_value = {
+                "brief_description": "Old title",
+                "description": "old long-form text",
+                "work_category": "PLUMBING",
+                "work_location": "Bathroom",
+                "unit": {"id": 1870266},
+            }
+            mp.return_value = {"id": 555, "reference_id": "TABCDE"}
+
+            result = http_backend.clone_meld(
+                "12772911",
+                brief_description="Reset toilet",
+                description="Replace wax ring + punch list",
+            )
+
+            assert result["ok"] is True
+            assert result["new_meld_id"] == 555
+            path, payload, _, _ = mp.call_args[0]
+            assert path == "melds/"
+            assert payload["brief_description"] == "Reset toilet"
+            assert payload["description"] == "Replace wax ring + punch list"

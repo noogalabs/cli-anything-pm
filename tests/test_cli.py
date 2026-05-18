@@ -221,6 +221,22 @@ class TestWorkOrdersScheduleCLI:
 
 
 class TestWorkOrdersLifecycleCLI:
+    def test_clone_passes_short_and_long_description(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.clone_meld",
+                   return_value={"ok": True, "new_meld_id": 777}) as mock_fn:
+            result = runner.invoke(cli, ["work-orders", "clone",
+                                         "--meld-id", "12701108",
+                                         "--description", "Reset toilet",
+                                         "--long-description", "Replace wax ring and bolt caps"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["new_meld_id"] == 777
+        mock_fn.assert_called_once_with(
+            "12701108",
+            brief_description="Reset toilet",
+            description="Replace wax ring and bolt caps",
+        )
+
     def test_merge_into_destination(self, runner):
         with patch("cli_anything.propertymeld.http_backend.merge_meld",
                    return_value={"ok": True, "source": "12701108", "destination": "12701109"}) as mock_fn:
