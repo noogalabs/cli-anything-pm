@@ -1010,3 +1010,56 @@ class TestGetTenant:
             result = http_backend.get_tenant(9000009)
             assert result == _TENANT_FIXTURE
             assert mg.call_args[0][0] == "tenants/9000009/"
+
+
+class TestUpdateUnitNotes:
+    """PATCH /api/units/{id}/ with {maintenance_notes: text} — closes P3 #8 (unit-level)."""
+
+    def test_patches_correct_path_with_notes_body(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_patch") as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mp.return_value = {"id": 1754419, "maintenance_notes": "Water shut-off in basement"}
+
+            result = http_backend.update_unit_notes(1754419, "Water shut-off in basement")
+
+            assert result["ok"] is True
+            assert result["unit_id"] == 1754419
+            assert result["maintenance_notes"] == "Water shut-off in basement"
+            path, payload, _, _ = mp.call_args[0]
+            assert path == "units/1754419/"
+            assert payload == {"maintenance_notes": "Water shut-off in basement"}
+
+    def test_coerces_string_unit_id_to_int(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_patch") as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mp.return_value = {"maintenance_notes": "x"}
+
+            result = http_backend.update_unit_notes("1754419", "x")
+            assert result["unit_id"] == 1754419  # int, not str
+            path, _, _, _ = mp.call_args[0]
+            assert path == "units/1754419/"
+
+    def test_empty_notes_clears_field(self):
+        """Per pm-capture 2026-05-14T03:07:13, PATCH with empty string clears the field."""
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_patch") as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mp.return_value = {"maintenance_notes": ""}
+
+            http_backend.update_unit_notes(1754419, "")
+            _, payload, _, _ = mp.call_args[0]
+            assert payload == {"maintenance_notes": ""}

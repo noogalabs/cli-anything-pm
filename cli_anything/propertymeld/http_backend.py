@@ -1191,11 +1191,42 @@ def list_tenants(search: Optional[str] = None, limit: int = 100) -> list:
     return results[:limit]
 
 
-def get_tenant(tenant_id: str) -> dict:
-    """Get a single tenant by ID."""
+@with_recapture_retry
+def get_tenant(tenant_id) -> dict:
+    """GET /api/tenants/{tenant_id}/ — full tenant object with nested contact/user/address."""
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     return _http_get(f"tenants/{tenant_id}/", cookie_hdr)
+
+
+@with_recapture_retry
+def update_unit_notes(unit_id, maintenance_notes: str) -> dict:
+    """Update the maintenance_notes on a unit.
+
+    PATCH /api/units/{unit_id}/ with {"maintenance_notes": "<text>"} — verified
+    shape from pm-capture 2026-05-14T03:07:08 (status 200).
+
+    Unit-level notes capture per-unit quirks (water-shutoff location, breaker
+    panel access, parking quirks) that surface to vendors/techs on every meld
+    for that unit. Distinct from meld-level maintenance_notes (handled by
+    update_meld_notes) and from any future property-level notes (not yet
+    proven by capture as of P3 #8 ship).
+
+    Closes P3 #8 (orgs/ascendops/docs/pm-cli-gap-backlog-2026-05-18.md) at
+    the unit level. Property-level notes deferred pending HAR proof.
+    """
+    unit_id_int = int(unit_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload = {"maintenance_notes": maintenance_notes}
+    result = _http_patch(f"units/{unit_id_int}/", payload, cookie_hdr, csrf_token)
+    return {
+        "ok": True,
+        "unit_id": unit_id_int,
+        "maintenance_notes": result.get("maintenance_notes", maintenance_notes),
+        "result": result,
+    }
 
 
 @with_recapture_retry
@@ -1866,13 +1897,6 @@ def create_meld_in_project(
     result = _http_post(f"projects/{project_id}/list-create-meld/", payload, cookie_hdr, csrf_token)
     return {"ok": True, "project_id": project_id, "meld_id": result.get("id"), "result": result}
 
-
-@with_recapture_retry
-def get_tenant(tenant_id) -> dict:
-    """GET /api/tenants/{tenant_id}/ — full tenant object with nested contact/user/address."""
-    creds = _load_creds()
-    cookie_hdr = _cookie_header(creds)
-    return _http_get(f"tenants/{tenant_id}/", cookie_hdr)
 
 
 @with_recapture_retry

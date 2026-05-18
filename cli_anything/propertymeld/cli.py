@@ -259,6 +259,34 @@ def list_properties(limit, as_json):
     output_json(results)
 
 
+# ── units group ────────────────────────────────────────────────────────────────
+
+@cli.group()
+def units():
+    """Unit commands."""
+    pass
+
+
+@units.command("edit-notes")
+@click.argument("unit_id", type=int)
+@click.option("--notes", required=True,
+              help="New maintenance_notes text for the unit (overwrites existing)")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def edit_unit_notes_cmd(unit_id, notes, as_json):
+    """Update the maintenance_notes on a unit (per-unit quirks like water shut-off location).
+
+    Distinct from `pm-dev work-orders update-notes` (meld-level notes).
+    Use this for facts that apply to EVERY meld on a given unit.
+
+    PATCH /api/units/{unit_id}/ — verified shape from pm-capture 2026-05-14.
+
+    Example:
+      pm units edit-notes 1754419 --notes "Water shut-off in basement near furnace"
+    """
+    result = http_backend.update_unit_notes(unit_id, notes)
+    output_json(result)
+
+
 # ── tenants group ─────────────────────────────────────────────────────────────
 
 @cli.group()

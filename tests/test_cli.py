@@ -655,3 +655,32 @@ class TestP2GapCLICommands:
             result = runner.invoke(cli, ["projects", "delete", "222964"])
         assert result.exit_code == 0
         mock_fn.assert_called_once_with(222964)
+
+
+class TestUnitsPerson003NotesCLI:
+    """pm units edit-notes <unit_id> --notes <text> — closes P3 #8 unit-level."""
+
+    def test_passes_unit_id_and_notes_to_backend(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.update_unit_notes",
+                   return_value={"ok": True, "unit_id": 1754419,
+                                 "maintenance_notes": "shut-off in basement", "result": {}}) as mock_fn:
+            result = runner.invoke(cli, [
+                "units", "edit-notes", "1754419",
+                "--notes", "shut-off in basement",
+            ])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["maintenance_notes"] == "shut-off in basement"
+        mock_fn.assert_called_once_with(1754419, "shut-off in basement")
+
+    def test_requires_notes_flag(self, runner):
+        result = runner.invoke(cli, ["units", "edit-notes", "1754419"])
+        assert result.exit_code != 0
+        assert "--notes" in result.output or "Missing option" in result.output
+
+    def test_requires_int_unit_id(self, runner):
+        result = runner.invoke(cli, [
+            "units", "edit-notes", "not-a-number",
+            "--notes", "x",
+        ])
+        assert result.exit_code != 0
