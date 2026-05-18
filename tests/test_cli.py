@@ -221,6 +221,28 @@ class TestWorkOrdersScheduleCLI:
 
 
 class TestWorkOrdersLifecycleCLI:
+    def test_clone_supports_all_override_flags(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.clone_meld",
+                   return_value={"ok": True, "new_meld_id": 777}) as mock_fn:
+            result = runner.invoke(cli, ["work-orders", "clone",
+                                         "--meld-id", "90000014",
+                                         "--description", "Reset toilet",
+                                         "--long-description", "Replace wax ring + punch list",
+                                         "--no-tenant-presence-required",
+                                         "--unit-id", "9000005",
+                                         "--priority", "low"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["new_meld_id"] == 777
+        mock_fn.assert_called_once_with(
+            "90000014",
+            brief_description="Reset toilet",
+            description="Replace wax ring + punch list",
+            tenant_presence_required=False,
+            unit_id=9000005,
+            priority="LOW",
+        )
+
     def test_merge_into_destination(self, runner):
         with patch("cli_anything.propertymeld.http_backend.merge_meld",
                    return_value={"ok": True, "source": "90000014", "destination": "12701109"}) as mock_fn:

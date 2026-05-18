@@ -137,11 +137,35 @@ def send_message(meld_id, text, hide_tenant, hide_vendor, hide_owner, as_json):
 @work_orders.command("clone")
 @click.option("--meld-id", required=True, help="Source meld ID to clone")
 @click.option("--description", default=None, help="Override description for the clone")
+@click.option("--long-description", "long_description", default=None,
+              help="Override long-form description for the clone")
+@click.option("--no-tenant-presence-required", "tenant_presence_required",
+              flag_value=False, default=None,
+              help="Force tenant_presence_required=false on the clone")
+@click.option("--unit-id", type=int, default=None,
+              help="Override unit id for the clone")
+@click.option("--priority", type=click.Choice(["LOW", "MED", "HIGH", "EMERGENCY"], case_sensitive=False),
+              default=None, help="Override priority for the clone")
 @click.option("--json", "as_json", is_flag=True, default=True)
-def clone_meld(meld_id, description, as_json):
+def clone_meld(
+    meld_id,
+    description,
+    long_description,
+    tenant_presence_required,
+    unit_id,
+    priority,
+    as_json,
+):
     """Clone a meld — creates a new meld with the same details (plain HTTP)."""
     meld_id = _normalize_meld_id(meld_id)
-    result = http_backend.clone_meld(meld_id, brief_description=description)
+    result = http_backend.clone_meld(
+        meld_id,
+        brief_description=description,
+        description=long_description,
+        tenant_presence_required=tenant_presence_required,
+        unit_id=unit_id,
+        priority=priority.upper() if isinstance(priority, str) else None,
+    )
     output_json(result)
 
 
