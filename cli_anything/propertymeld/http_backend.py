@@ -1703,6 +1703,69 @@ def add_melds_to_project(project_id: str, meld_ids: list) -> dict:
 
 
 @with_recapture_retry
+def get_unit(unit_id) -> dict:
+    """GET /api/units/{unit_id}/ — full unit object with nested prop/display_address/current_tenants."""
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    return _http_get(f"units/{unit_id}/", cookie_hdr)
+
+
+@with_recapture_retry
+def get_management_agent(agent_id) -> dict:
+    """GET /api/agents/{agent_id}/ — full ManagementAgent object (maintenance/coordinator role)."""
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    return _http_get(f"agents/{agent_id}/", cookie_hdr)
+
+
+# Required nested keys on the fully-hydrated unit object PM expects on
+# /list-create-meld/. Surface-validated pre-wire so operators get a clear
+# error instead of an HTTP 500 downstream.
+_UNIT_REQUIRED_KEYS = ("display_address", "prop", "current_tenants")
+# Required nested keys on each ManagementAgent element. Same rationale.
+_MAINT_REQUIRED_KEYS = ("selected_property_groups", "denormalized_property_groups", "department")
+# Keys allowed on a "stripped" placeholder dict — anything beyond this set
+# AND missing required keys is treated as a partially-built object (error).
+_STRIPPED_KEYS = {"id", "type", "composite_id"}
+
+
+def _is_stripped(obj: dict) -> bool:
+    return isinstance(obj, dict) and "id" in obj and set(obj.keys()).issubset(_STRIPPED_KEYS)
+
+
+def _hydrate_unit(unit) -> dict:
+    """Auto-hydrate a stripped {"id": N} unit; pass full objects through; raise on partial."""
+    if not isinstance(unit, dict):
+        raise ValueError(f"unit must be a dict, got {type(unit).__name__}")
+    if _is_stripped(unit):
+        return get_unit(unit["id"])
+    missing = [k for k in _UNIT_REQUIRED_KEYS if k not in unit]
+    if missing:
+        raise ValueError(
+            f"unit object is missing required nested keys: {missing}. "
+            "Pass --unit-id to auto-hydrate, or supply a full object including "
+            "display_address, prop, current_tenants."
+        )
+    return unit
+
+
+def _hydrate_maintenance_element(elem) -> dict:
+    """Auto-hydrate a stripped {"id": N} ManagementAgent; full pass-through; raise on partial."""
+    if not isinstance(elem, dict):
+        raise ValueError(f"maintenance element must be a dict, got {type(elem).__name__}")
+    if _is_stripped(elem):
+        return get_management_agent(elem["id"])
+    missing = [k for k in _MAINT_REQUIRED_KEYS if k not in elem]
+    if missing:
+        raise ValueError(
+            f"maintenance element is missing required nested keys: {missing}. "
+            "Pass --maintenance-id to auto-hydrate, or supply a full ManagementAgent "
+            "object including selected_property_groups, denormalized_property_groups, department."
+        )
+    return elem
+
+
+@with_recapture_retry
 def create_meld_in_project(
     project_id: str,
     brief_description: str,
@@ -1726,20 +1789,31 @@ def create_meld_in_project(
     """Create a new meld INSIDE an existing project.
 
     POST /api/projects/{project_id}/list-create-meld/ — verified shape from
-    pm-capture 2026-05-13.
+    pm-capture 2026-05-13 and 2026-05-16.
+
+    PM requires FULLY HYDRATED unit and ManagementAgent objects (30+ fields
+    each, including nested prop/display_address/current_tenants on unit and
+    selected_property_groups/agent_preferences/etc on maintenance). Stripped
+    {"id": N} objects pass validation but 500 downstream.
+
+    Callers may pass either:
+      - A stripped {"id": N} dict → auto-hydrated via GET /units/{id}/ or
+        GET /agents/{id}/ before the POST.
+      - A fully-hydrated object → passed through unchanged.
+      - A partially-built dict (id + a few keys, but missing required ones) →
+        ValueError raised pre-wire with the missing keys named.
 
     The manager-UI payload uses string-typed "notify_owners_string" /
     "notify_tenants_string" alongside the boolean fields; the captured run
     sent both. We mirror that shape verbatim.
-
-    Required (per capture):
-        brief_description, description, work_category, work_type, due_date,
-        unit (the full unit object from the manager UI typeahead), maintenance
-        (list of ManagementAgent objects — pass through whatever the caller
-        provides).
-
-    Optional fields default to the captured-payload defaults.
     """
+    unit_obj = _hydrate_unit(unit)
+
+    if isinstance(maintenance, list):
+        maintenance_list = [_hydrate_maintenance_element(m) for m in maintenance]
+    else:
+        maintenance_list = [_hydrate_maintenance_element(maintenance)]
+
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
@@ -1755,14 +1829,14 @@ def create_meld_in_project(
         "description": description,
         "brief_description": brief_description,
         "work_location": work_location,
-        "maintenance": maintenance if isinstance(maintenance, list) else [maintenance],
+        "maintenance": maintenance_list,
         "tags": tags or [],
         "has_pets": has_pets,
         "notify_tenants": notify_tenants,
         "priority": priority,
         "tenants": tenants or [],
         "pets": pets,
-        "unit": unit,
+        "unit": unit_obj,
         "notify_owner": notify_owner,
     }
     result = _http_post(f"projects/{project_id}/list-create-meld/", payload, cookie_hdr, csrf_token)
