@@ -63,7 +63,16 @@ def _api_get(path: str, params: Optional[dict] = None) -> Any:
         sys.exit(1)
 
 
-def list_work_orders(status: Optional[str] = None, limit: int = 25) -> list:
+def list_work_orders(
+    status: Optional[str] = None,
+    assigned_to_tech: Optional[int] = None,
+    assigned_to_vendor: Optional[int] = None,
+    stuck_hours: Optional[float] = None,
+    created_since: Optional[str] = None,
+    status_not: Optional[str] = None,
+    no_tenant_linked: bool = False,
+    limit: int = 25,
+) -> list:
     """List work orders, optionally filtered by status.
 
     PM Nexus accepts UPPER_CASE_SNAKE_CASE values for the `status` filter and
@@ -95,6 +104,18 @@ def list_work_orders(status: Optional[str] = None, limit: int = 25) -> list:
         states = slug_to_states.get(status.lower(), [status])
         for s in states:
             params.append(("status", s))
+    if assigned_to_tech is not None:
+        params.append(("assigned_to_tech", str(assigned_to_tech)))
+    if assigned_to_vendor is not None:
+        params.append(("assigned_to_vendor", str(assigned_to_vendor)))
+    if stuck_hours is not None:
+        params.append(("stuck_hours", str(stuck_hours)))
+    if created_since:
+        params.append(("created_since", created_since))
+    if status_not:
+        params.append(("status_not", status_not))
+    if no_tenant_linked:
+        params.append(("no_tenant_linked", "true"))
 
     data = _api_get("/meld/", params)
     results = data.get("results", data) if isinstance(data, dict) else data

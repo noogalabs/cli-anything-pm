@@ -44,11 +44,38 @@ def _normalize_meld_id(meld_id):
 @click.option("--status", default=None,
               type=click.Choice(["open", "pending", "completed", "canceled"], case_sensitive=False),
               help="Filter by status (default: all)")
+@click.option("--assigned-to-tech", type=int, default=None, help="Filter to a specific in-house tech id")
+@click.option("--assigned-to-vendor", type=int, default=None, help="Filter to a specific vendor id")
+@click.option("--stuck-hours", type=float, default=None,
+              help="Filter melds stuck in current status longer than N hours")
+@click.option("--created-since", default=None, help="Filter melds created at/after ISO timestamp")
+@click.option("--status-not", default=None, help="Exclude melds in this status")
+@click.option("--no-tenant-linked", is_flag=True, default=False,
+              help="Filter to melds with no linked tenant")
 @click.option("--limit", default=25, show_default=True, help="Maximum results")
 @click.option("--json", "as_json", is_flag=True, default=True, help="Output as JSON (default)")
-def list_work_orders(status, limit, as_json):
+def list_work_orders(
+    status,
+    assigned_to_tech,
+    assigned_to_vendor,
+    stuck_hours,
+    created_since,
+    status_not,
+    no_tenant_linked,
+    limit,
+    as_json,
+):
     """List work orders."""
-    results = api_backend.list_work_orders(status=status, limit=limit)
+    results = api_backend.list_work_orders(
+        status=status,
+        assigned_to_tech=assigned_to_tech,
+        assigned_to_vendor=assigned_to_vendor,
+        stuck_hours=stuck_hours,
+        created_since=created_since,
+        status_not=status_not,
+        no_tenant_linked=no_tenant_linked,
+        limit=limit,
+    )
     output_json(results)
 
 
