@@ -682,14 +682,79 @@ def merge_meld(meld_id: str, into_meld_id: str) -> dict:
     Args:
         meld_id: Source meld ID to merge (will be cancelled).
         into_meld_id: Destination meld ID to merge into (absorbs the source).
+
+    Returns {ok: True, ...} on success.
+    Returns {ok: False, error: "destination_not_pending_assignment", ...} when PM
+    rejects the merge because the destination is no longer in PENDING_ASSIGNMENT
+    (e.g. a tech/vendor has been assigned). Per Blue/David 2026-05-18 gap-bucket
+    P1 #10: PM web UI bypasses this constraint via a different code path, but
+    the API surface we hit is strict. Until we capture the web-UI HAR and
+    implement the bypass, surface a clear error with workarounds instead of
+    sys.exit(1) so callers can act on it (vs the generic "Destination Meld not
+    found" 400 the plain _http_post helper would otherwise print to stderr +
+    exit the process).
     """
     meld_id = _validate_meld_id(meld_id)
     into_meld_id = _validate_meld_id(into_meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
-    result = _http_post(f"melds/{meld_id}/merge/", {"meld": into_meld_id}, cookie_hdr, csrf_token)
-    return {"ok": True, "merged_meld_id": meld_id, "into_meld_id": into_meld_id, "result": result}
+
+    # Inline POST so we can handle the 400 "Destination Meld not found" path
+    # without exiting. Other 4xx/5xx fall through to standard exit-with-normalized
+    # error behavior so we don't regress signals on unrelated failures.
+    payload = json.dumps({"meld": into_meld_id}).encode()
+    req = urllib.request.Request(
+        _build_url(f"melds/{meld_id}/merge/"),
+        data=payload,
+        method="POST",
+        headers={
+            "Cookie": cookie_hdr,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-CSRFToken": csrf_token,
+            "X-Requested-With": "XMLHttpRequest",
+            "User-Agent": UA,
+            "Referer": f"{BASE}/melds/",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
+            result = json.loads(resp.read())
+        return {
+            "ok": True,
+            "merged_meld_id": meld_id,
+            "into_meld_id": into_meld_id,
+            "result": result,
+        }
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
+        body = e.read().decode("utf-8", errors="ignore")
+        # PM-specific signature: 400 + "Destination Meld not found" = destination
+        # is not in PENDING_ASSIGNMENT. Translate to actionable structured error.
+        body_lower = body.lower()
+        if e.code == 400 and "destination" in body_lower and "not found" in body_lower:
+            return {
+                "ok": False,
+                "error": "destination_not_pending_assignment",
+                "message": (
+                    f"Cannot merge into meld {into_meld_id}: PM rejected with status 400 "
+                    f"'{body.strip()[:200]}'. This usually means the destination is no "
+                    f"longer in PENDING_ASSIGNMENT (a tech/vendor has been assigned). "
+                    f"PM web UI merges these via a different code path. Workarounds: "
+                    f"(a) unassign tech/vendor from destination, merge, reassign; "
+                    f"(b) leave melds separate with a unified scope comment on the "
+                    f"survivor; (c) merge in PM web UI."
+                ),
+                "destination_meld_id": into_meld_id,
+                "source_meld_id": meld_id,
+                "raw_body": body[:500],
+            }
+        # Unrecognized error path: standard normalize-and-exit so we don't
+        # silently swallow real failures (auth issues, server errors, etc).
+        print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
+        sys.exit(1)
 
 
 @with_recapture_retry
