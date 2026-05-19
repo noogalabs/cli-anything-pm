@@ -220,7 +220,7 @@ class TestWorkOrdersWorkEntriesCLI:
         ]
         with patch("cli_anything.propertymeld.http_backend.list_work_entries",
                    return_value=mock_entries) as mock_fn:
-            result = runner.invoke(cli, ["work-orders", "work-entries", "90000014"])
+            result = runner.invoke(cli, ["work-orders", "work-entries", "list", "90000014"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data[0]["agent_name"] == "Person019"
