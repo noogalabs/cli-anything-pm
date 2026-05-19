@@ -1063,3 +1063,130 @@ class TestUpdateUnitNotes:
             http_backend.update_unit_notes(1754419, "")
             _, payload, _, _ = mp.call_args[0]
             assert payload == {"maintenance_notes": ""}
+
+
+_TENANT_NOTES_FIXTURE = {
+    "id": 4043079,
+    "first_name": "Angelica",
+    "last_name": "Acevedo",
+    "middle_name": "",
+    "notes": "",
+    "is_active": True,
+    "management": 3287,
+    "user": {"id": 1934544, "email": "a@example.com"},
+    "contact": {"id": 5033775, "cell_phone": "(706) 913-7178"},
+    "leases": [{"unit_id": 1754357}],
+}
+
+
+class TestUpdateTenantNotes:
+    """PATCH /api/tenants/{id}/ with full body, mutating only `notes` — closes
+    P3 #8 (resident-level). Verified shape from pm-tenant-notes-endpoint-capture-2026-05-18.
+    """
+
+    def _wire(self, mc, mch, mcs, mg, mp, *, get_returns, patch_returns):
+        mc.return_value = {"cookie": "x"}
+        mch.return_value = "Cookie: session=xyz"
+        mcs.return_value = "csrf"
+        mg.return_value = get_returns
+        mp.return_value = patch_returns
+
+    def test_get_then_patch_full_body_with_notes_mutated(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mg, \
+             patch("cli_anything.propertymeld.http_backend._http_patch") as mp:
+            self._wire(
+                mc, mch, mcs, mg, mp,
+                get_returns=dict(_TENANT_NOTES_FIXTURE),
+                patch_returns={**_TENANT_NOTES_FIXTURE, "notes": "Access after 3pm"},
+            )
+
+            result = http_backend.update_tenant_notes(4043079, "Access after 3pm")
+
+            assert result["ok"] is True
+            assert result["tenant_id"] == 4043079
+            assert result["notes"] == "Access after 3pm"
+            # GET path verified
+            assert mg.call_args[0][0] == "tenants/4043079/"
+            # PATCH path + full-body echo verified
+            patch_path, patch_payload, _, _ = mp.call_args[0]
+            assert patch_path == "tenants/4043079/"
+            # Full body sent — not a thin patch
+            assert patch_payload["first_name"] == "Angelica"
+            assert patch_payload["last_name"] == "Acevedo"
+            assert patch_payload["id"] == 4043079
+            assert patch_payload["contact"]["cell_phone"] == "(706) 913-7178"
+            # Notes was mutated
+            assert patch_payload["notes"] == "Access after 3pm"
+
+    def test_coerces_string_tenant_id_to_int(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mg, \
+             patch("cli_anything.propertymeld.http_backend._http_patch") as mp:
+            self._wire(
+                mc, mch, mcs, mg, mp,
+                get_returns=dict(_TENANT_NOTES_FIXTURE),
+                patch_returns={**_TENANT_NOTES_FIXTURE, "notes": "x"},
+            )
+            result = http_backend.update_tenant_notes("4043079", "x")
+            assert result["tenant_id"] == 4043079  # int, not str
+            assert mg.call_args[0][0] == "tenants/4043079/"
+            assert mp.call_args[0][0] == "tenants/4043079/"
+
+    def test_empty_notes_clears_field(self):
+        """Empty string is a valid value — represents a deliberate clear."""
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mg, \
+             patch("cli_anything.propertymeld.http_backend._http_patch") as mp:
+            self._wire(
+                mc, mch, mcs, mg, mp,
+                get_returns={**_TENANT_NOTES_FIXTURE, "notes": "old value"},
+                patch_returns={**_TENANT_NOTES_FIXTURE, "notes": ""},
+            )
+            http_backend.update_tenant_notes(4043079, "")
+            _, payload, _, _ = mp.call_args[0]
+            assert payload["notes"] == ""
+
+    def test_preserves_other_fields_from_get(self):
+        """The whole point of GET-mutate-PATCH is that fields we didn't touch
+        survive — validators run on the full payload, so dropping fields is
+        what made thin-patch return 400 in the live capture."""
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mg, \
+             patch("cli_anything.propertymeld.http_backend._http_patch") as mp:
+            self._wire(
+                mc, mch, mcs, mg, mp,
+                get_returns=dict(_TENANT_NOTES_FIXTURE),
+                patch_returns={**_TENANT_NOTES_FIXTURE, "notes": "n"},
+            )
+            http_backend.update_tenant_notes(4043079, "n")
+            _, payload, _, _ = mp.call_args[0]
+            # Every non-notes key from the GET response must be in the PATCH body
+            for key in _TENANT_NOTES_FIXTURE:
+                if key == "notes":
+                    continue
+                assert key in payload, f"PATCH body dropped {key!r} — thin-patch will 400"
+
+    def test_raises_when_get_returns_non_dict(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mg, \
+             patch("cli_anything.propertymeld.http_backend._http_patch") as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mg.return_value = "not a dict — unexpected api response"
+            import pytest
+            with pytest.raises(RuntimeError, match="non-dict"):
+                http_backend.update_tenant_notes(4043079, "x")
+            # We must not have attempted a PATCH if GET was malformed
+            assert mp.call_count == 0

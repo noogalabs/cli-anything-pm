@@ -1230,6 +1230,43 @@ def update_unit_notes(unit_id, maintenance_notes: str) -> dict:
 
 
 @with_recapture_retry
+def update_tenant_notes(tenant_id, notes: str) -> dict:
+    """Update the notes field on a tenant.
+
+    Endpoint: PATCH /api/tenants/{tenant_id}/ with the FULL tenant body, mutating
+    only `notes`. Verified shape from pm-tenant-notes-endpoint-capture-2026-05-18
+    (HAR capture against tenant 4043079, status 200, round-trip-reverted).
+
+    The endpoint is NOT thin-patch — `{"notes": "..."}` alone returns 400 because
+    validators run on `first_name` / `last_name` even when not changed. We GET
+    the full tenant, mutate `notes`, and PATCH the full body back.
+
+    Field name is `notes`, NOT `maintenance_notes` — distinct from unit-level
+    (`/api/units/{id}/` with `maintenance_notes`) and meld-level
+    (`/api/v2/melds/{id}/notes/`). This is the canonical surface for
+    resident-level recallable context (preferences, schedule, access constraints)
+    that should travel with the resident across melds.
+    """
+    tenant_id_int = int(tenant_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    current = _http_get(f"tenants/{tenant_id_int}/", cookie_hdr)
+    if not isinstance(current, dict):
+        raise RuntimeError(
+            f"GET tenants/{tenant_id_int}/ returned non-dict (cannot full-body-echo)"
+        )
+    current["notes"] = notes
+    result = _http_patch(f"tenants/{tenant_id_int}/", current, cookie_hdr, csrf_token)
+    return {
+        "ok": True,
+        "tenant_id": tenant_id_int,
+        "notes": result.get("notes", notes) if isinstance(result, dict) else notes,
+        "result": result,
+    }
+
+
+@with_recapture_retry
 def list_files(meld_id: str) -> list:
     """List files (photos, attachments) on a meld via cookie HTTP.
 

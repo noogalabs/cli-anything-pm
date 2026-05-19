@@ -314,6 +314,29 @@ def get_tenant(tenant_id, as_json):
     output_json(result)
 
 
+@tenants.command("edit-notes")
+@click.argument("tenant_id", type=int)
+@click.option("--notes", required=True,
+              help="New notes text for the tenant (overwrites existing)")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def edit_tenant_notes_cmd(tenant_id, notes, as_json):
+    """Update the notes on a tenant (per-resident context, recallable across melds).
+
+    Field is `notes`, not `maintenance_notes`. Distinct from `pm units edit-notes`
+    (per-unit quirks) and `pm work-orders update-notes` (per-meld notes).
+    Use this for facts that follow the RESIDENT — schedule, preferences, access
+    constraints, household composition.
+
+    Endpoint requires a full-body PATCH (helper handles the GET → mutate → PATCH
+    roundtrip). Verified shape from pm-tenant-notes-endpoint-capture-2026-05-18.
+
+    Example:
+      pm tenants edit-notes 4043079 --notes "Schedule access after 3pm weekdays; husband home during day"
+    """
+    result = http_backend.update_tenant_notes(tenant_id, notes)
+    output_json(result)
+
+
 # ── vendors group ──────────────────────────────────────────────────────────────
 
 @cli.group()

@@ -684,3 +684,46 @@ class TestUnitsEditNotesCLI:
             "--notes", "x",
         ])
         assert result.exit_code != 0
+
+
+class TestTenantsEditNotesCLI:
+    """pm tenants edit-notes <tenant_id> --notes <text> — resident-level recallable notes."""
+
+    def test_passes_tenant_id_and_notes_to_backend(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.update_tenant_notes",
+                   return_value={"ok": True, "tenant_id": 4043079,
+                                 "notes": "Access after 3pm",
+                                 "result": {"notes": "Access after 3pm"}}) as mock_fn:
+            result = runner.invoke(cli, [
+                "tenants", "edit-notes", "4043079",
+                "--notes", "Access after 3pm",
+            ])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["notes"] == "Access after 3pm"
+        assert data["tenant_id"] == 4043079
+        mock_fn.assert_called_once_with(4043079, "Access after 3pm")
+
+    def test_requires_notes_flag(self, runner):
+        result = runner.invoke(cli, ["tenants", "edit-notes", "4043079"])
+        assert result.exit_code != 0
+        assert "--notes" in result.output or "Missing option" in result.output
+
+    def test_requires_int_tenant_id(self, runner):
+        result = runner.invoke(cli, [
+            "tenants", "edit-notes", "not-a-number",
+            "--notes", "x",
+        ])
+        assert result.exit_code != 0
+
+    def test_accepts_empty_notes_to_clear(self, runner):
+        """Clearing notes via --notes '' is a valid use (deliberate reset)."""
+        with patch("cli_anything.propertymeld.http_backend.update_tenant_notes",
+                   return_value={"ok": True, "tenant_id": 4043079,
+                                 "notes": "", "result": {"notes": ""}}) as mock_fn:
+            result = runner.invoke(cli, [
+                "tenants", "edit-notes", "4043079",
+                "--notes", "",
+            ])
+        assert result.exit_code == 0, result.output
+        mock_fn.assert_called_once_with(4043079, "")
