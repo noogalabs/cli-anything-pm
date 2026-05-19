@@ -2079,23 +2079,23 @@ def patch_meld_project_link(meld_id: str, project_id) -> dict:
 
 @with_recapture_retry
 def list_estimates(meld_id: Optional[str] = None, limit: int = 100, status: Optional[str] = None) -> list:
-    """List estimates for a meld or account."""
-    if meld_id is not None:
-        meld_id = _validate_meld_id(meld_id)
+    """List estimates for a specific meld.
+
+    PM does not expose an unscoped `/api/estimates/` list endpoint — the
+    previous fallback to that path returned HTTP 404 silently until the
+    2026-05-19 smoke matrix surfaced it. meld_id is required.
+    """
+    if meld_id is None:
+        raise ValueError(
+            "list_estimates requires meld_id — PM does not expose an unscoped /api/estimates/ list endpoint. "
+            "Pass meld_id (or use `pm estimates list --meld-id <id>` on the CLI)."
+        )
+    meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
-    if meld_id:
-        # Apply --status / --limit to the meld-scoped path too. Previously
-        # both flags were silently dropped when meld_id was set, so an
-        # operator filtering for `--status open --limit 5` against a
-        # specific meld would get back the whole estimate set unfiltered.
-        path = f"estimates/meld/{meld_id}/?limit={limit}"
-        if status:
-            path += f"&status={status}"
-    else:
-        path = f"estimates/?limit={limit}"
-        if status:
-            path += f"&status={status}"
+    path = f"estimates/meld/{meld_id}/?limit={limit}"
+    if status:
+        path += f"&status={status}"
     data = _http_get(path, cookie_hdr)
     return data.get("results", data) if isinstance(data, dict) else data
 
@@ -2163,15 +2163,23 @@ def link_estimate_to_meld(estimate_id: str, meld_id: str) -> dict:
 
 @with_recapture_retry
 def list_receipts(meld_id: Optional[str] = None, limit: int = 100) -> list:
-    """List receipts for a meld or account."""
-    if meld_id is not None:
-        meld_id = _validate_meld_id(meld_id)
+    """List receipts for a specific meld.
+
+    PM does not expose an unscoped `/api/receipts/` list endpoint — the
+    previous fallback to that path returned HTTP 404 silently until the
+    2026-05-19 smoke matrix surfaced it. meld_id is required. limit is
+    accepted but PM's meld-scoped path returns all receipts for the meld
+    (no server-side limit param honored), so the flag is informational.
+    """
+    if meld_id is None:
+        raise ValueError(
+            "list_receipts requires meld_id — PM does not expose an unscoped /api/receipts/ list endpoint. "
+            "Pass meld_id (or use `pm receipts list --meld-id <id>` on the CLI)."
+        )
+    meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
-    if meld_id:
-        path = f"melds/{meld_id}/receipts/"
-    else:
-        path = f"receipts/?limit={limit}"
+    path = f"melds/{meld_id}/receipts/"
     data = _http_get(path, cookie_hdr)
     return data.get("results", data) if isinstance(data, dict) else data
 

@@ -869,12 +869,17 @@ def estimates():
 
 
 @estimates.command("list")
-@click.option("--meld-id", default=None, help="Filter by meld ID")
+@click.option("--meld-id", required=True, help="Meld ID to scope the listing to (required — PM exposes estimates only per-meld).")
 @click.option("--status", default=None, help="Filter by status: all|draft|issued|paid")
 @click.option("--limit", default=100, show_default=True)
 @click.option("--json", "as_json", is_flag=True, default=True)
 def list_estimates(meld_id, status, limit, as_json):
-    """List estimates."""
+    """List estimates for a specific meld.
+
+    --meld-id is required because PM does not expose an unscoped /api/estimates/
+    list endpoint. The previous unscoped CLI default returned HTTP 404 silently
+    until the 2026-05-19 smoke matrix surfaced it.
+    """
     meld_id = _normalize_meld_id(meld_id)
     results = http_backend.list_estimates(meld_id=meld_id, status=status, limit=limit)
     output_json(results)
@@ -937,11 +942,16 @@ def receipts():
 
 
 @receipts.command("list")
-@click.option("--meld-id", default=None, help="Filter by meld ID")
+@click.option("--meld-id", required=True, help="Meld ID to scope the listing to (required — PM exposes receipts only per-meld).")
 @click.option("--limit", default=100, show_default=True)
 @click.option("--json", "as_json", is_flag=True, default=True)
 def list_receipts(meld_id, limit, as_json):
-    """List receipts."""
+    """List receipts for a specific meld.
+
+    --meld-id is required because PM does not expose an unscoped /api/receipts/
+    list endpoint. The previous unscoped CLI default returned HTTP 404 silently
+    until the 2026-05-19 smoke matrix surfaced it.
+    """
     meld_id = _normalize_meld_id(meld_id)
     results = http_backend.list_receipts(meld_id=meld_id, limit=limit)
     output_json(results)
