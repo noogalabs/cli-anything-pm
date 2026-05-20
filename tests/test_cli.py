@@ -549,11 +549,13 @@ class TestProjectsCreateMeldInCLI:
             result = runner.invoke(cli, self._COMMON_ARGS + [
                 "--unit-id", "9000005",
                 "--maintenance-id", "90025",
+                "--tenant-id", "9000009",
             ])
         assert result.exit_code == 0, result.output
         call = mock_fn.call_args
         assert call.kwargs["unit"] == {"id": 9000005}
         assert call.kwargs["maintenance"] == [{"id": 90025}]
+        assert call.kwargs["tenants"] == [{"id": 9000009}]
 
     def test_multiple_maintenance_ids_repeatable(self, runner):
         with patch("cli_anything.propertymeld.http_backend.create_meld_in_project",
@@ -562,9 +564,12 @@ class TestProjectsCreateMeldInCLI:
                 "--unit-id", "9000005",
                 "--maintenance-id", "90025",
                 "--maintenance-id", "90028",
+                "--tenant-id", "9000009",
+                "--tenant-id", "9000010",
             ])
         assert result.exit_code == 0, result.output
         assert mock_fn.call_args.kwargs["maintenance"] == [{"id": 90025}, {"id": 90028}]
+        assert mock_fn.call_args.kwargs["tenants"] == [{"id": 9000009}, {"id": 9000010}]
 
     def test_json_flags_still_work_for_power_users(self, runner):
         with patch("cli_anything.propertymeld.http_backend.create_meld_in_project",
@@ -572,11 +577,13 @@ class TestProjectsCreateMeldInCLI:
             result = runner.invoke(cli, self._COMMON_ARGS + [
                 "--unit-json", '{"id": 1, "display_address": {}, "prop": {}, "current_tenants": []}',
                 "--maintenance-json", '[{"id": 9}]',
+                "--tenants-json", '[{"id": 99, "contact": {}, "default_language": "en", "notification_settings": {}}]',
             ])
         assert result.exit_code == 0, result.output
         kwargs = mock_fn.call_args.kwargs
         assert kwargs["unit"]["id"] == 1
         assert kwargs["maintenance"] == [{"id": 9}]
+        assert kwargs["tenants"][0]["id"] == 99
 
     def test_missing_both_unit_flags_errors(self, runner):
         result = runner.invoke(cli, self._COMMON_ARGS + [
@@ -600,6 +607,36 @@ class TestProjectsCreateMeldInCLI:
         ])
         assert result.exit_code != 0
         assert "--maintenance-id" in result.output and "--maintenance-json" in result.output
+
+    def test_tenants_optional_defaults_empty_list(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.create_meld_in_project",
+                   return_value={"ok": True, "meld_id": 99, "project_id": "222959", "result": {}}) as mock_fn:
+            result = runner.invoke(cli, self._COMMON_ARGS + [
+                "--unit-id", "9000005",
+                "--maintenance-id", "90025",
+            ])
+        assert result.exit_code == 0, result.output
+        assert mock_fn.call_args.kwargs["tenants"] == []
+
+    def test_passing_both_tenant_id_and_tenants_json_errors(self, runner):
+        result = runner.invoke(cli, self._COMMON_ARGS + [
+            "--unit-id", "9000005",
+            "--maintenance-id", "90025",
+            "--tenant-id", "9000009",
+            "--tenants-json", '[{"id": 99}]',
+        ])
+        assert result.exit_code != 0
+        assert "--tenant-id" in result.output and "--tenants-json" in result.output
+
+    def test_empty_tenants_json_still_parses_and_errors(self, runner):
+        result = runner.invoke(cli, self._COMMON_ARGS + [
+            "--unit-id", "9000005",
+            "--maintenance-id", "90025",
+            "--tenants-json", "",
+        ])
+        assert result.exit_code != 0
+        assert result.exception is not None
+        assert "Expecting value" in str(result.exception)
 
 
 class TestWorkOrdersLinkTenantCLI:
