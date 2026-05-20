@@ -681,7 +681,10 @@ def add_melds_to_project_cmd(project_id, meld_ids, as_json):
               help="ManagementAgent PK — auto-hydrated via GET /agents/{id}/. Repeat for multiple. Use this OR --maintenance-json.")
 @click.option("--maintenance-json", default=None,
               help="Full JSON list of ManagementAgent objects (power-user path). Use this OR --maintenance-id.")
-@click.option("--tenants-json", default="[]", help="JSON list of tenant objects (default: [])")
+@click.option("--tenant-id", "tenant_ids", type=int, multiple=True,
+              help="Tenant PK — auto-hydrated via GET /tenants/{id}/. Repeat for multiple. Use this OR --tenants-json.")
+@click.option("--tenants-json", default=None,
+              help="JSON list of tenant objects (power-user path). Use this OR --tenant-id.")
 @click.option("--work-location", default="")
 @click.option("--priority", default="LOW")
 @click.option("--permission-to-enter/--no-permission-to-enter", default=True)
@@ -693,7 +696,7 @@ def add_melds_to_project_cmd(project_id, meld_ids, as_json):
 @click.option("--json", "as_json", is_flag=True, default=True)
 def create_meld_in_project_cmd(
     project_id, brief_description, description, work_category, work_type,
-    due_date, unit_id, unit_json, maintenance_ids, maintenance_json, tenants_json,
+    due_date, unit_id, unit_json, maintenance_ids, maintenance_json, tenant_ids, tenants_json,
     work_location, priority, permission_to_enter, tenant_presence_required,
     notify_tenants, notify_owner, has_pets, pets, as_json,
 ):
@@ -704,6 +707,7 @@ def create_meld_in_project_cmd(
 
     \b
     - Ergonomic: --unit-id 9000005 --maintenance-id 90025 (repeatable)
+      --tenant-id 9000009 (repeatable)
       → CLI auto-hydrates via GET /units/{id}/ and GET /agents/{id}/.
     - Power-user: --unit-json '<full obj>' --maintenance-json '<full list>'
       → passed through; must include nested fields or backend raises ValueError.
@@ -714,6 +718,8 @@ def create_meld_in_project_cmd(
         raise click.UsageError("Exactly one of --unit-id or --unit-json is required.")
     if bool(maintenance_ids) == bool(maintenance_json):
         raise click.UsageError("Exactly one of --maintenance-id (repeatable) or --maintenance-json is required.")
+    if tenant_ids and tenants_json:
+        raise click.UsageError("Use either --tenant-id (repeatable) or --tenants-json, not both.")
 
     if unit_id is not None:
         unit = {"id": unit_id}
@@ -724,6 +730,12 @@ def create_meld_in_project_cmd(
         maintenance = [{"id": mid} for mid in maintenance_ids]
     else:
         maintenance = _json.loads(maintenance_json)
+    if tenant_ids:
+        tenants = [{"id": tid} for tid in tenant_ids]
+    elif tenants_json:
+        tenants = _json.loads(tenants_json)
+    else:
+        tenants = []
 
     result = http_backend.create_meld_in_project(
         project_id=project_id,
@@ -734,7 +746,7 @@ def create_meld_in_project_cmd(
         due_date=due_date,
         unit=unit,
         maintenance=maintenance,
-        tenants=_json.loads(tenants_json),
+        tenants=tenants,
         work_location=work_location,
         priority=priority,
         permission_to_enter=permission_to_enter,
