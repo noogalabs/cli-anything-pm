@@ -628,6 +628,16 @@ class TestProjectsCreateMeldInCLI:
         assert result.exit_code != 0
         assert "--tenant-id" in result.output and "--tenants-json" in result.output
 
+    def test_empty_tenants_json_still_parses_and_errors(self, runner):
+        result = runner.invoke(cli, self._COMMON_ARGS + [
+            "--unit-id", "1870266",
+            "--maintenance-id", "57163",
+            "--tenants-json", "",
+        ])
+        assert result.exit_code != 0
+        assert result.exception is not None
+        assert "Expecting value" in str(result.exception)
+
 
 class TestWorkOrdersLinkTenantCLI:
     """pm work-orders link-tenant <meld_id> <tenant_id> — closes P1 #14."""
