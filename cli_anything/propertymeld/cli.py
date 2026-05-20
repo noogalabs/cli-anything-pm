@@ -718,7 +718,7 @@ def create_meld_in_project_cmd(
         raise click.UsageError("Exactly one of --unit-id or --unit-json is required.")
     if bool(maintenance_ids) == bool(maintenance_json):
         raise click.UsageError("Exactly one of --maintenance-id (repeatable) or --maintenance-json is required.")
-    if tenant_ids and tenants_json:
+    if tenant_ids and tenants_json is not None:
         raise click.UsageError("Use either --tenant-id (repeatable) or --tenants-json, not both.")
 
     if unit_id is not None:
@@ -732,7 +732,7 @@ def create_meld_in_project_cmd(
         maintenance = _json.loads(maintenance_json)
     if tenant_ids:
         tenants = [{"id": tid} for tid in tenant_ids]
-    elif tenants_json:
+    elif tenants_json is not None:
         tenants = _json.loads(tenants_json)
     else:
         tenants = []
