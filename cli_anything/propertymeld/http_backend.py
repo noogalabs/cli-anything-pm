@@ -1889,6 +1889,8 @@ def get_management_agent(agent_id) -> dict:
 _UNIT_REQUIRED_KEYS = ("display_address", "prop", "current_tenants")
 # Required nested keys on each ManagementAgent element. Same rationale.
 _MAINT_REQUIRED_KEYS = ("selected_property_groups", "denormalized_property_groups", "department")
+# Required nested keys on each Tenant element. Same rationale.
+_TENANT_REQUIRED_KEYS = ("contact", "default_language", "notification_settings")
 # Keys allowed on a "stripped" placeholder dict — anything beyond this set
 # AND missing required keys is treated as a partially-built object (error).
 _STRIPPED_KEYS = {"id", "type", "composite_id"}
@@ -1930,6 +1932,22 @@ def _hydrate_maintenance_element(elem) -> dict:
     return elem
 
 
+def _hydrate_tenant_element(elem) -> dict:
+    """Auto-hydrate a stripped {"id": N} Tenant; full pass-through; raise on partial."""
+    if not isinstance(elem, dict):
+        raise ValueError(f"tenant element must be a dict, got {type(elem).__name__}")
+    if _is_stripped(elem):
+        return get_tenant(elem["id"])
+    missing = [k for k in _TENANT_REQUIRED_KEYS if k not in elem]
+    if missing:
+        raise ValueError(
+            f"tenant element is missing required nested keys: {missing}. "
+            "Pass --tenant-id to auto-hydrate, or supply a full Tenant object "
+            "including contact, default_language, notification_settings."
+        )
+    return elem
+
+
 @with_recapture_retry
 def create_meld_in_project(
     project_id: str,
@@ -1956,16 +1974,18 @@ def create_meld_in_project(
     POST /api/projects/{project_id}/list-create-meld/ — verified shape from
     pm-capture 2026-05-13 and 2026-05-16.
 
-    PM requires FULLY HYDRATED unit and ManagementAgent objects (30+ fields
-    each, including nested prop/display_address/current_tenants on unit and
-    selected_property_groups/agent_preferences/etc on maintenance). Stripped
+    PM requires FULLY HYDRATED unit, ManagementAgent, and tenant objects
+    (30+ fields each, including nested prop/display_address/current_tenants on
+    unit; selected_property_groups/agent_preferences/etc on maintenance; and
+    contact/default_language/notification_settings on tenants). Stripped
     {"id": N} objects pass validation but 500 downstream.
 
     Callers may pass either:
       - A stripped {"id": N} dict → auto-hydrated via GET /units/{id}/ or
         GET /agents/{id}/ before the POST.
       - A fully-hydrated object → passed through unchanged.
-      - A partially-built dict (id + a few keys, but missing required ones) →
+      - A partially-built dict (id + a few keys, but missing required ones)
+        for unit/maintenance/tenant →
         ValueError raised pre-wire with the missing keys named.
 
     The manager-UI payload uses string-typed "notify_owners_string" /
@@ -1978,6 +1998,7 @@ def create_meld_in_project(
         maintenance_list = [_hydrate_maintenance_element(m) for m in maintenance]
     else:
         maintenance_list = [_hydrate_maintenance_element(maintenance)]
+    tenants_list = [_hydrate_tenant_element(t) for t in (tenants or [])]
 
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
@@ -1999,7 +2020,7 @@ def create_meld_in_project(
         "has_pets": has_pets,
         "notify_tenants": notify_tenants,
         "priority": priority,
-        "tenants": tenants or [],
+        "tenants": tenants_list,
         "pets": pets,
         "unit": unit_obj,
         "notify_owner": notify_owner,
