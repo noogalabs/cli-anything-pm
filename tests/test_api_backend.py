@@ -465,6 +465,18 @@ _FULL_AGENT_FIXTURE = {
     "property_groups": [29374],
 }
 
+_FULL_TENANT_FIXTURE = {
+    "id": 99,
+    "type": "Tenant",
+    "composite_id": "3-99",
+    "first_name": "Regina",
+    "last_name": "Moses",
+    "prompt_for_mobile": False,
+    "contact": {"email": "regina@example.com", "phone": "4235550100"},
+    "default_language": "en",
+    "notification_settings": {"sms": True, "email": True},
+}
+
 
 class TestCreateMeldInProject:
     """POST /api/projects/{id}/list-create-meld/ — PM requires fully hydrated objects.
@@ -481,17 +493,19 @@ class TestCreateMeldInProject:
             patch("cli_anything.propertymeld.http_backend._http_post"),
             patch("cli_anything.propertymeld.http_backend.get_unit"),
             patch("cli_anything.propertymeld.http_backend.get_management_agent"),
+            patch("cli_anything.propertymeld.http_backend.get_tenant"),
         )
 
     def test_stripped_inputs_auto_hydrate_via_get(self):
-        mc_p, mch_p, mcs_p, mp_p, mgu_p, mga_p = self._patch_io()
-        with mc_p as mc, mch_p as mch, mcs_p as mcs, mp_p as mp, mgu_p as mgu, mga_p as mga:
+        mc_p, mch_p, mcs_p, mp_p, mgu_p, mga_p, mgt_p = self._patch_io()
+        with mc_p as mc, mch_p as mch, mcs_p as mcs, mp_p as mp, mgu_p as mgu, mga_p as mga, mgt_p as mgt:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
             mp.return_value = {"id": 12772803, "brief_description": "test"}
             mgu.return_value = _FULL_UNIT_FIXTURE
             mga.return_value = _FULL_AGENT_FIXTURE
+            mgt.return_value = _FULL_TENANT_FIXTURE
 
             result = http_backend.create_meld_in_project(
                 project_id="222959",
@@ -502,6 +516,7 @@ class TestCreateMeldInProject:
                 due_date="2026-05-16T02:52:41.393Z",
                 unit={"id": 1870266},
                 maintenance=[{"id": 57163, "type": "ManagementAgent"}],
+                tenants=[{"id": 99}],
                 work_location="ffff",
                 notify_owner=False,
                 notify_tenants=True,
@@ -512,6 +527,7 @@ class TestCreateMeldInProject:
             assert result["project_id"] == "222959"
             mgu.assert_called_once_with(1870266)
             mga.assert_called_once_with(57163)
+            mgt.assert_called_once_with(99)
             path, payload, _, _ = mp.call_args[0]
             assert path == "projects/222959/list-create-meld/"
             assert payload["project"] == "222959"
@@ -519,11 +535,12 @@ class TestCreateMeldInProject:
             assert payload["notify_tenants_string"] == "true"
             assert payload["unit"] == _FULL_UNIT_FIXTURE
             assert payload["maintenance"] == [_FULL_AGENT_FIXTURE]
+            assert payload["tenants"] == [_FULL_TENANT_FIXTURE]
 
     def test_full_objects_pass_through_unchanged(self):
         """Power-user path: pre-hydrated objects skip the GET round-trip."""
-        mc_p, mch_p, mcs_p, mp_p, mgu_p, mga_p = self._patch_io()
-        with mc_p as mc, mch_p as mch, mcs_p as mcs, mp_p as mp, mgu_p as mgu, mga_p as mga:
+        mc_p, mch_p, mcs_p, mp_p, mgu_p, mga_p, mgt_p = self._patch_io()
+        with mc_p as mc, mch_p as mch, mcs_p as mcs, mp_p as mp, mgu_p as mgu, mga_p as mga, mgt_p as mgt:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
@@ -538,23 +555,27 @@ class TestCreateMeldInProject:
                 due_date="2026-05-16T00:00:00.000Z",
                 unit=_FULL_UNIT_FIXTURE,
                 maintenance=[_FULL_AGENT_FIXTURE],
+                tenants=[_FULL_TENANT_FIXTURE],
             )
 
             mgu.assert_not_called()
             mga.assert_not_called()
+            mgt.assert_not_called()
             _, payload, _, _ = mp.call_args[0]
             assert payload["unit"] == _FULL_UNIT_FIXTURE
             assert payload["maintenance"] == [_FULL_AGENT_FIXTURE]
+            assert payload["tenants"] == [_FULL_TENANT_FIXTURE]
 
     def test_maintenance_as_single_dict_gets_wrapped_and_hydrated(self):
-        mc_p, mch_p, mcs_p, mp_p, mgu_p, mga_p = self._patch_io()
-        with mc_p as mc, mch_p as mch, mcs_p as mcs, mp_p as mp, mgu_p as mgu, mga_p as mga:
+        mc_p, mch_p, mcs_p, mp_p, mgu_p, mga_p, mgt_p = self._patch_io()
+        with mc_p as mc, mch_p as mch, mcs_p as mcs, mp_p as mp, mgu_p as mgu, mga_p as mga, mgt_p as mgt:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
             mp.return_value = {"id": 99}
             mgu.return_value = _FULL_UNIT_FIXTURE
             mga.return_value = _FULL_AGENT_FIXTURE
+            mgt.return_value = _FULL_TENANT_FIXTURE
 
             http_backend.create_meld_in_project(
                 project_id="222959",
@@ -565,10 +586,12 @@ class TestCreateMeldInProject:
                 due_date="2026-05-16T00:00:00.000Z",
                 unit={"id": 1},
                 maintenance={"id": 57163},
+                tenants=[{"id": 99}],
             )
 
             _, payload, _, _ = mp.call_args[0]
             assert payload["maintenance"] == [_FULL_AGENT_FIXTURE]
+            assert payload["tenants"] == [_FULL_TENANT_FIXTURE]
 
     def test_partial_unit_raises_with_missing_keys(self):
         with pytest.raises(ValueError, match="display_address"):
@@ -595,6 +618,45 @@ class TestCreateMeldInProject:
                 unit=_FULL_UNIT_FIXTURE,
                 maintenance=[{"id": 57163, "first_name": "David"}],
             )
+
+    def test_partial_tenant_raises_with_missing_keys(self):
+        with pytest.raises(ValueError, match="contact"):
+            http_backend.create_meld_in_project(
+                project_id="222959",
+                brief_description="b",
+                description="d",
+                work_category="APPLIANCES",
+                work_type="TURN",
+                due_date="2026-05-16T00:00:00.000Z",
+                unit=_FULL_UNIT_FIXTURE,
+                maintenance=[_FULL_AGENT_FIXTURE],
+                tenants=[{"id": 99, "first_name": "Regina"}],
+            )
+
+    def test_empty_tenants_does_not_call_get(self):
+        mc_p, mch_p, mcs_p, mp_p, mgu_p, mga_p, mgt_p = self._patch_io()
+        with mc_p as mc, mch_p as mch, mcs_p as mcs, mp_p as mp, mgu_p as mgu, mga_p as mga, mgt_p as mgt:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mp.return_value = {"id": 99}
+            mgu.return_value = _FULL_UNIT_FIXTURE
+            mga.return_value = _FULL_AGENT_FIXTURE
+
+            http_backend.create_meld_in_project(
+                project_id="222959",
+                brief_description="b",
+                description="d",
+                work_category="APPLIANCES",
+                work_type="TURN",
+                due_date="2026-05-16T00:00:00.000Z",
+                unit={"id": 1},
+                maintenance=[{"id": 57163}],
+            )
+
+            mgt.assert_not_called()
+            _, payload, _, _ = mp.call_args[0]
+            assert payload["tenants"] == []
 
 
 class TestUnitAndAgentHydration:
