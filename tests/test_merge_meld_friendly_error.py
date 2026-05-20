@@ -1,18 +1,25 @@
-"""Contract tests for merge_meld friendly-error path (gap-bucket P1 #10, 2026-05-18).
+"""Contract tests for merge_meld captured-shape rewrite (2026-05-19).
 
-PM API rejects merge when the destination is not in PENDING_ASSIGNMENT (a
-tech/vendor has been assigned). PM web UI bypasses this constraint via a
-different code path we haven't reverse-engineered yet. Until then, the CLI
-translates the 400 "Destination Meld not found" response into a structured
-{ok:false, error, message, ...} payload so callers can act on it instead of
-the bare 400 + sys.exit(1) that _http_post would otherwise produce.
+Earlier today's tests (test_returns_structured_error_on_destination_400, etc.)
+were locked against a buggy CLI shape that PM was rejecting because the URL
+semantic was flipped (CLI put source in URL; PM expected destination) and the
+body field name was wrong (CLI sent {"meld": dest}; PM expected
+{"destination_id", "source_ids": [...]}).
 
-These tests pin the new error envelope shape + verify the happy path still
-returns the expected {ok:true} structure.
+Capture doc:
+    orgs/ascendops/docs/pm-create-meld-in-and-merge-endpoint-capture-2026-05-19.md
+
+These tests pin the captured-shape behavior:
+- URL is /api/melds/{destination_id}/merge/
+- Body is {"destination_id": int, "source_ids": [int, ...]}
+- Multi-source single-call shape supported (source_ids is array)
+- Legacy positional args (meld_id=, into_meld_id=) supported via compat shim
+  but emit no friendly-error envelope on 400 (the prior envelope was a
+  symptom-handler for our own buggy payload, not a real PM constraint)
 """
-import io
 import json
 import urllib.error
+
 import pytest
 
 from cli_anything.propertymeld import http_backend as hb
@@ -38,110 +45,114 @@ def _patch_creds_csrf(monkeypatch):
     monkeypatch.setattr(hb, "_get_csrf_token", lambda cookie_hdr: "csrf-fake")
 
 
-class TestMergeMeldHappyPath:
-    def test_returns_ok_with_merged_meld_id_on_success(self, monkeypatch):
+class TestMergeCapturedShape:
+    def test_single_source_uses_destination_in_url_and_body(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
+        captured = {}
 
         def fake_urlopen(req, **kw):
-            assert req.get_method() == "POST"
-            assert "/melds/90000014/merge/" in req.full_url
-            body = json.loads(req.data)
-            # _validate_meld_id coerces to int, so payload carries int meld id.
-            assert body["meld"] == 12701109
-            return _FakeResp(body=b'{"id": 90000014, "status": "MANAGER_CANCELED"}')
+            captured["url"] = req.full_url
+            captured["body"] = json.loads(req.data)
+            captured["method"] = req.get_method()
+            return _FakeResp(body=b'{"message": "Melds merged successfully"}')
 
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
-        result = hb.merge_meld("90000014", "12701109")
+        result = hb.merge_meld(destination_id="12819946", source_ids=["12820134"])
+
+        assert "/melds/12819946/merge/" in captured["url"], "URL must use destination id"
+        assert captured["method"] == "POST"
+        assert captured["body"] == {"destination_id": 12819946, "source_ids": [12820134]}
         assert result["ok"] is True
-        assert result["merged_meld_id"] == 90000014
-        assert result["into_meld_id"] == 12701109
-        assert result["result"]["status"] == "MANAGER_CANCELED"
+        assert result["destination_meld_id"] == 12819946
+        assert result["source_meld_ids"] == [12820134]
+        assert result["result"]["message"] == "Melds merged successfully"
 
+    def test_multi_source_packs_into_source_ids_array(self, monkeypatch):
+        _patch_creds_csrf(monkeypatch)
+        captured = {}
 
-class TestMergeMeldDestinationAssigned:
-    """Gap-bucket P1 #10: friendly error when destination is not PENDING_ASSIGNMENT."""
-
-    def _raise_destination_400(self, monkeypatch):
         def fake_urlopen(req, **kw):
-            body = b'{"detail": "Destination Meld not found"}'
+            captured["url"] = req.full_url
+            captured["body"] = json.loads(req.data)
+            return _FakeResp(body=b'{"message": "Melds merged successfully"}')
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+        result = hb.merge_meld(
+            destination_id="12819946",
+            source_ids=["12820134", "12820186"],
+        )
+
+        assert captured["body"]["destination_id"] == 12819946
+        assert captured["body"]["source_ids"] == [12820134, 12820186]
+        assert result["source_meld_ids"] == [12820134, 12820186]
+
+    def test_single_source_passed_as_scalar_is_coerced_to_list(self, monkeypatch):
+        _patch_creds_csrf(monkeypatch)
+        captured = {}
+
+        def fake_urlopen(req, **kw):
+            captured["body"] = json.loads(req.data)
+            return _FakeResp(body=b'{"message": "ok"}')
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+        hb.merge_meld(destination_id="12819946", source_ids="12820134")
+        assert captured["body"]["source_ids"] == [12820134]
+
+    def test_empty_source_ids_raises(self, monkeypatch):
+        _patch_creds_csrf(monkeypatch)
+        called = []
+
+        def fake_urlopen(req, **kw):
+            called.append(req.full_url)
+            return _FakeResp(body=b"{}")
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+        with pytest.raises(ValueError):
+            hb.merge_meld(destination_id="12819946", source_ids=[])
+        assert called == [], "no HTTP call should fire on empty source_ids"
+
+    def test_legacy_kwargs_meld_id_and_into_meld_id_still_work(self, monkeypatch):
+        _patch_creds_csrf(monkeypatch)
+        captured = {}
+
+        def fake_urlopen(req, **kw):
+            captured["url"] = req.full_url
+            captured["body"] = json.loads(req.data)
+            return _FakeResp(body=b'{"message": "ok"}')
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+        # Legacy call: merge_meld(meld_id=SOURCE, into_meld_id=DEST). Compat shim
+        # should swap so URL/body use destination correctly.
+        hb.merge_meld(
+            destination_id="ignored-placeholder",
+            source_ids="ignored-placeholder",
+            meld_id="12820134",
+            into_meld_id="12819946",
+        )
+        assert "/melds/12819946/merge/" in captured["url"]
+        assert captured["body"]["destination_id"] == 12819946
+        assert captured["body"]["source_ids"] == [12820134]
+
+    def test_400_response_no_longer_translated_to_friendly_envelope(self, monkeypatch):
+        """The old 'destination_not_pending_assignment' envelope was a symptom-
+        handler for our own buggy payload. With the captured shape the 400 path
+        falls through to normalize_http_error + sys.exit(1) — real failures
+        should surface, not be papered over."""
+        _patch_creds_csrf(monkeypatch)
+
+        def fake_urlopen(req, **kw):
             err = urllib.error.HTTPError(
-                req.full_url, 400, "Bad Request", {}, io.BytesIO(body)
+                req.full_url, 400,
+                "Bad Request", {},
+                io_body(b'{"detail": "some real bad request"}'),
             )
             raise err
 
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
-
-    def test_returns_structured_error_on_destination_400(self, monkeypatch):
-        _patch_creds_csrf(monkeypatch)
-        self._raise_destination_400(monkeypatch)
-
-        result = hb.merge_meld("90000014", "12701109")
-        assert result["ok"] is False
-        assert result["error"] == "destination_not_pending_assignment"
-        assert "12701109" in result["message"]
-        assert "PENDING_ASSIGNMENT" in result["message"]
-        assert result["destination_meld_id"] == 12701109
-        assert result["source_meld_id"] == 90000014
-        # raw_body included so callers can inspect the original PM response.
-        assert "Destination Meld not found" in result["raw_body"]
-
-    def test_message_includes_workaround_suggestions(self, monkeypatch):
-        _patch_creds_csrf(monkeypatch)
-        self._raise_destination_400(monkeypatch)
-
-        result = hb.merge_meld("90000014", "12701109")
-        msg = result["message"]
-        # Each of the three documented workarounds should be in the message
-        # so the AI / human caller sees the recovery options inline.
-        assert "unassign" in msg.lower()
-        assert "scope comment" in msg.lower() or "separate" in msg.lower()
-        assert "web ui" in msg.lower()
-
-    def test_does_not_exit_process_on_destination_400(self, monkeypatch):
-        """Sanity check: the destination-400 path returns a dict, NOT sys.exit."""
-        _patch_creds_csrf(monkeypatch)
-        self._raise_destination_400(monkeypatch)
-
-        # If the function called sys.exit, pytest would raise SystemExit and
-        # this assert would not be reached.
-        result = hb.merge_meld("90000014", "12701109")
-        assert isinstance(result, dict)
-        assert result["ok"] is False
-
-
-class TestMergeMeldOtherErrors:
-    """Non-destination 400s and other 4xx/5xx still take the standard exit
-    path so we don't silently swallow real failures.
-    """
-
-    def test_500_falls_through_to_sys_exit(self, monkeypatch):
-        _patch_creds_csrf(monkeypatch)
-
-        def fake_urlopen(req, **kw):
-            body = b'{"detail": "Internal server error"}'
-            err = urllib.error.HTTPError(
-                req.full_url, 500, "Internal Server Error", {}, io.BytesIO(body)
-            )
-            raise err
-
-        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
-
         with pytest.raises(SystemExit):
-            hb.merge_meld("90000014", "12701109")
+            hb.merge_meld(destination_id="12819946", source_ids=["12820134"])
 
-    def test_400_without_destination_phrase_falls_through(self, monkeypatch):
-        """A different 400 (e.g. validation failure) should NOT be misclassified
-        as the destination-assigned case. It should sys.exit like normal."""
-        _patch_creds_csrf(monkeypatch)
 
-        def fake_urlopen(req, **kw):
-            body = b'{"detail": "Source meld not found"}'
-            err = urllib.error.HTTPError(
-                req.full_url, 400, "Bad Request", {}, io.BytesIO(body)
-            )
-            raise err
-
-        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
-
-        with pytest.raises(SystemExit):
-            hb.merge_meld("90000014", "12701109")
+def io_body(b):
+    import io
+    return io.BytesIO(b)

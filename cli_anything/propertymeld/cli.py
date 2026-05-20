@@ -318,14 +318,54 @@ def clone_meld(
 
 
 @work_orders.command("merge")
-@click.option("--meld-id", required=True, help="Source meld ID to merge (will be cancelled)")
-@click.option("--into", "into_meld_id", required=True, help="Destination meld ID (absorbs the source)")
+@click.option(
+    "--destination",
+    "destination_id",
+    default=None,
+    help="Destination meld ID — the meld that absorbs the source(s).",
+)
+@click.option(
+    "--source",
+    "source_ids",
+    multiple=True,
+    help="Source meld ID to merge into destination. Pass multiple times to merge several at once: --source X --source Y.",
+)
+@click.option(
+    "--meld-id",
+    default=None,
+    help="DEPRECATED — old source-id flag. Use --destination + --source instead. Still accepted for backwards compat.",
+)
+@click.option(
+    "--into",
+    "into_meld_id",
+    default=None,
+    help="DEPRECATED — old destination flag. Use --destination + --source instead. Still accepted for backwards compat.",
+)
 @click.option("--json", "as_json", is_flag=True, default=True)
-def merge_meld(meld_id, into_meld_id, as_json):
-    """Merge a meld into another meld. Both must be at the same unit."""
-    meld_id = _normalize_meld_id(meld_id)
-    into_meld_id = _normalize_meld_id(into_meld_id)
-    result = http_backend.merge_meld(meld_id, into_meld_id)
+def merge_meld(destination_id, source_ids, meld_id, into_meld_id, as_json):
+    """Merge one or more source melds into a destination meld. All must be at the same unit.
+
+    Captured payload shape (2026-05-19 HAR diff): web UI POSTs to
+    /api/melds/{destination_id}/merge/ with body {destination_id, source_ids[]}.
+    Previously the CLI used a flipped shape (source in URL, {meld: dest} in body)
+    which returned HTTP 400 across every meld-state combination. The --meld-id /
+    --into flags remain as deprecated shims; new callers should use
+    --destination + --source.
+    """
+    # Backwards-compat shim: legacy (--meld-id + --into) maps to (source + destination).
+    if meld_id and into_meld_id:
+        destination_id = into_meld_id
+        source_ids = (meld_id,)
+
+    if not destination_id or not source_ids:
+        raise click.UsageError(
+            "merge requires --destination + --source (or legacy --meld-id + --into). "
+            "Example: pm work-orders merge --destination 12819946 --source 12820134"
+        )
+
+    destination_id = _normalize_meld_id(destination_id)
+    normalized_sources = [_normalize_meld_id(s) for s in source_ids]
+    result = http_backend.merge_meld(destination_id, normalized_sources)
     output_json(result)
 
 

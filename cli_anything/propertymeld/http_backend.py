@@ -674,38 +674,60 @@ def rotate_api_key(key_name: Optional[str] = None) -> dict:
 
 
 @with_recapture_retry
-def merge_meld(meld_id: str, into_meld_id: str) -> dict:
-    """Merge source meld into destination meld. Both melds must be at the same unit/property.
+def merge_meld(destination_id: str, source_ids, meld_id=None, into_meld_id=None) -> dict:
+    """Merge one or more source melds into a destination meld.
 
-    The source meld will be marked MANAGER_CANCELED with "(Merged)" in PM.
+    Source melds are marked MANAGER_CANCELED with "(Merged)" in PM. All
+    melds must be at the same unit/property.
 
     Args:
-        meld_id: Source meld ID to merge (will be cancelled).
-        into_meld_id: Destination meld ID to merge into (absorbs the source).
+        destination_id: Destination meld ID — the meld that absorbs the sources.
+        source_ids: List of source meld IDs (or a single id; coerced to list).
+        meld_id, into_meld_id: DEPRECATED legacy kwargs from the pre-2026-05-19
+            broken-shape API. If passed, treated as source=meld_id, destination=
+            into_meld_id and warned in the result. Will be removed.
 
-    Returns {ok: True, ...} on success.
-    Returns {ok: False, error: "destination_not_pending_assignment", ...} when PM
-    rejects the merge because the destination is no longer in PENDING_ASSIGNMENT
-    (e.g. a tech/vendor has been assigned). Per Blue/Person031 2026-05-18 gap-bucket
-    P1 #10: PM web UI bypasses this constraint via a different code path, but
-    the API surface we hit is strict. Until we capture the web-UI HAR and
-    implement the bypass, surface a clear error with workarounds instead of
-    sys.exit(1) so callers can act on it (vs the generic "Destination Meld not
-    found" 400 the plain _http_post helper would otherwise print to stderr +
-    exit the process).
+    Endpoint shape captured from PM web UI 2026-05-20T01:14:45Z (capture doc:
+    orgs/ascendops/docs/pm-create-meld-in-and-merge-endpoint-capture-2026-05-19.md):
+
+        POST /api/melds/{destination_id}/merge/
+        body: { "destination_id": int, "source_ids": [int, ...] }
+        response: 200 { "message": "Melds merged successfully" }
+
+    Previous CLI shape (URL = source meld id, body = {"meld": dest_id}) was
+    wrong from day one — URL semantic was flipped and body field name was
+    wrong. Every prior CLI merge returned HTTP 400 "Destination Meld not found"
+    because PM was treating our SOURCE id as the destination role.
     """
-    meld_id = _validate_meld_id(meld_id)
-    into_meld_id = _validate_meld_id(into_meld_id)
+    # Legacy-arg compatibility shim — old callers passed (source, destination)
+    # positionally. If destination_id looks like a source-meld id and into_meld_id
+    # is provided, treat as legacy and swap.
+    if meld_id is not None or into_meld_id is not None:
+        # Legacy form: merge_meld(meld_id=source, into_meld_id=dest)
+        legacy_source = meld_id if meld_id is not None else destination_id
+        legacy_dest = into_meld_id if into_meld_id is not None else None
+        if legacy_dest is None:
+            raise ValueError("legacy merge_meld call missing into_meld_id")
+        destination_id = legacy_dest
+        source_ids = [legacy_source]
+
+    destination_id = _validate_meld_id(destination_id)
+    if not isinstance(source_ids, (list, tuple)):
+        source_ids = [source_ids]
+    if len(source_ids) == 0:
+        raise ValueError("merge_meld requires at least one source_id")
+    validated_sources = [_validate_meld_id(s) for s in source_ids]
+
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
 
-    # Inline POST so we can handle the 400 "Destination Meld not found" path
-    # without exiting. Other 4xx/5xx fall through to standard exit-with-normalized
-    # error behavior so we don't regress signals on unrelated failures.
-    payload = json.dumps({"meld": into_meld_id}).encode()
+    payload = json.dumps({
+        "destination_id": destination_id,
+        "source_ids": validated_sources,
+    }).encode()
     req = urllib.request.Request(
-        _build_url(f"melds/{meld_id}/merge/"),
+        _build_url(f"melds/{destination_id}/merge/"),
         data=payload,
         method="POST",
         headers={
@@ -720,39 +742,25 @@ def merge_meld(meld_id: str, into_meld_id: str) -> dict:
     )
     try:
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
-            result = json.loads(resp.read())
+            raw = resp.read().decode("utf-8", errors="ignore")
+            try:
+                result = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                result = {"raw": raw[:500]}
         return {
             "ok": True,
-            "merged_meld_id": meld_id,
-            "into_meld_id": into_meld_id,
+            "destination_meld_id": destination_id,
+            "source_meld_ids": validated_sources,
             "result": result,
         }
     except urllib.error.HTTPError as e:
         if e.code == 401:
             raise SessionExpired(e)
         body = e.read().decode("utf-8", errors="ignore")
-        # PM-specific signature: 400 + "Destination Meld not found" = destination
-        # is not in PENDING_ASSIGNMENT. Translate to actionable structured error.
-        body_lower = body.lower()
-        if e.code == 400 and "destination" in body_lower and "not found" in body_lower:
-            return {
-                "ok": False,
-                "error": "destination_not_pending_assignment",
-                "message": (
-                    f"Cannot merge into meld {into_meld_id}: PM rejected with status 400 "
-                    f"'{body.strip()[:200]}'. This usually means the destination is no "
-                    f"longer in PENDING_ASSIGNMENT (a tech/vendor has been assigned). "
-                    f"PM web UI merges these via a different code path. Workarounds: "
-                    f"(a) unassign tech/vendor from destination, merge, reassign; "
-                    f"(b) leave melds separate with a unified scope comment on the "
-                    f"survivor; (c) merge in PM web UI."
-                ),
-                "destination_meld_id": into_meld_id,
-                "source_meld_id": meld_id,
-                "raw_body": body[:500],
-            }
-        # Unrecognized error path: standard normalize-and-exit so we don't
-        # silently swallow real failures (auth issues, server errors, etc).
+        # Standard normalize-and-exit on errors. The earlier "Destination Meld
+        # not found" 400 was a symptom of the wrong-shape body, not a real
+        # destination-state constraint — the captured web UI payload works
+        # against ANY meld state (PENDING_ASSIGNMENT, assigned, etc.).
         print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
         sys.exit(1)
 

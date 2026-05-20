@@ -279,16 +279,33 @@ class TestWorkOrdersLifecycleCLI:
             priority="LOW",
         )
 
-    def test_merge_into_destination(self, runner):
+    def test_merge_into_destination_legacy_flags(self, runner):
+        """Backwards-compat path: --meld-id + --into are mapped to the captured
+        web-UI shape (--destination + --source) under the hood."""
         with patch("cli_anything.propertymeld.http_backend.merge_meld",
-                   return_value={"ok": True, "source": "90000014", "destination": "12701109"}) as mock_fn:
+                   return_value={"ok": True, "destination_meld_id": 12701109,
+                                 "source_meld_ids": [90000014]}) as mock_fn:
             result = runner.invoke(cli, ["work-orders", "merge",
                                          "--meld-id", "90000014",
                                          "--into", "12701109"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data["destination"] == "12701109"
-        mock_fn.assert_called_once_with("90000014", "12701109")
+        assert data["destination_meld_id"] == 12701109
+        # Legacy --meld-id=source + --into=destination maps to
+        # http_backend.merge_meld(destination_id, [source_id]).
+        mock_fn.assert_called_once_with("12701109", ["90000014"])
+
+    def test_merge_with_new_destination_source_flags(self, runner):
+        """Native captured-shape path: --destination + --source(s)."""
+        with patch("cli_anything.propertymeld.http_backend.merge_meld",
+                   return_value={"ok": True, "destination_meld_id": 12819946,
+                                 "source_meld_ids": [12820134, 12820186]}) as mock_fn:
+            result = runner.invoke(cli, ["work-orders", "merge",
+                                         "--destination", "12819946",
+                                         "--source", "12820134",
+                                         "--source", "12820186"])
+        assert result.exit_code == 0
+        mock_fn.assert_called_once_with("12819946", ["12820134", "12820186"])
 
     def test_complete_with_notes(self, runner):
         with patch("cli_anything.propertymeld.http_backend.complete_meld",
