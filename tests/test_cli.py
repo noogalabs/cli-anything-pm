@@ -608,6 +608,15 @@ class TestProjectsCreateMeldInCLI:
         assert result.exit_code != 0
         assert "--maintenance-id" in result.output and "--maintenance-json" in result.output
 
+    def test_passing_maintenance_id_and_empty_maintenance_json_errors(self, runner):
+        result = runner.invoke(cli, self._COMMON_ARGS + [
+            "--unit-id", "9000005",
+            "--maintenance-id", "90025",
+            "--maintenance-json", "",
+        ])
+        assert result.exit_code != 0
+        assert "--maintenance-id" in result.output and "--maintenance-json" in result.output
+
     def test_tenants_optional_defaults_empty_list(self, runner):
         with patch("cli_anything.propertymeld.http_backend.create_meld_in_project",
                    return_value={"ok": True, "meld_id": 99, "project_id": "222959", "result": {}}) as mock_fn:
