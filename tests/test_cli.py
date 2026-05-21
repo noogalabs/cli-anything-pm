@@ -664,6 +664,44 @@ class TestProjectsCreateMeldInCLI:
         assert "Expecting value" in str(result.exception)
 
 
+class TestWorkOrdersCreateCLI:
+    """pm work-orders create — standalone meld creation."""
+
+    _COMMON_ARGS = [
+        "work-orders", "create",
+        "--brief-description", "b",
+        "--description", "d",
+        "--work-category", "APPLIANCES",
+        "--work-type", "TURN",
+        "--due-date", "2026-05-16T00:00:00.000Z",
+    ]
+
+    def test_work_orders_create_runs_with_ergonomic_flags(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.create_meld",
+                   return_value={"ok": True, "meld_id": 12772803, "result": {}}) as mock_fn:
+            result = runner.invoke(cli, self._COMMON_ARGS + [
+                "--unit-id", "9000005",
+                "--maintenance-id", "90025",
+                "--tenant-id", "9000009",
+            ])
+        assert result.exit_code == 0, result.output
+        kwargs = mock_fn.call_args.kwargs
+        assert kwargs["unit"] == {"id": 9000005}
+        assert kwargs["maintenance"] == [{"id": 90025}]
+        assert kwargs["tenants"] == [{"id": 9000009}]
+
+    def test_work_orders_create_emits_meld_id(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.create_meld",
+                   return_value={"ok": True, "meld_id": 12772803, "result": {"id": 12772803}}):
+            result = runner.invoke(cli, self._COMMON_ARGS + [
+                "--unit-id", "9000005",
+                "--maintenance-id", "90025",
+            ])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["meld_id"] == 12772803
+
+
 class TestWorkOrdersLinkTenantCLI:
     """pm work-orders link-tenant <meld_id> <tenant_id> — closes P1 #14."""
 
