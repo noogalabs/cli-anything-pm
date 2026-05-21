@@ -654,6 +654,87 @@ def inspect_work_order(meld_id, as_json):
     output_json(result)
 
 
+@work_orders.command("create")
+@click.option("--brief-description", required=True)
+@click.option("--description", required=True)
+@click.option("--work-category", required=True)
+@click.option("--work-type", required=True)
+@click.option("--due-date", required=True, help="ISO 8601, e.g. 2026-05-16T02:52:41.393Z")
+@click.option("--unit-id", type=int, default=None,
+              help="Unit PK — auto-hydrated via GET /units/{id}/. Use this OR --unit-json.")
+@click.option("--unit-json", default=None,
+              help="Full JSON unit object (power-user path). Use this OR --unit-id.")
+@click.option("--maintenance-id", "maintenance_ids", type=int, multiple=True,
+              help="ManagementAgent PK — auto-hydrated via GET /agents/{id}/. Repeat for multiple. Use this OR --maintenance-json.")
+@click.option("--maintenance-json", default=None,
+              help="Full JSON list of ManagementAgent objects (power-user path). Use this OR --maintenance-id.")
+@click.option("--tenant-id", "tenant_ids", type=int, multiple=True,
+              help="Tenant PK — auto-hydrated via GET /tenants/{id}/. Repeat for multiple. Use this OR --tenants-json.")
+@click.option("--tenants-json", default=None,
+              help="JSON list of tenant objects (power-user path). Use this OR --tenant-id.")
+@click.option("--work-location", default="")
+@click.option("--priority", default="LOW")
+@click.option("--permission-to-enter/--no-permission-to-enter", default=True)
+@click.option("--tenant-presence-required/--no-tenant-presence-required", default=False)
+@click.option("--notify-tenants/--no-notify-tenants", default=True)
+@click.option("--notify-owners/--no-notify-owners", default=False)
+@click.option("--has-pets/--no-has-pets", default=False)
+@click.option("--pets", default="")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def create_work_order_cmd(
+    brief_description, description, work_category, work_type, due_date,
+    unit_id, unit_json, maintenance_ids, maintenance_json, tenant_ids, tenants_json,
+    work_location, priority, permission_to_enter, tenant_presence_required,
+    notify_tenants, notify_owners, has_pets, pets, as_json,
+):
+    """Create a standalone meld (work order) via POST /api/melds/."""
+    import json as _json
+
+    if (unit_id is None) == (unit_json is None):
+        raise click.UsageError("Exactly one of --unit-id or --unit-json is required.")
+    if bool(maintenance_ids) == bool(maintenance_json):
+        raise click.UsageError("Exactly one of --maintenance-id (repeatable) or --maintenance-json is required.")
+    if tenant_ids and tenants_json is not None:
+        raise click.UsageError("Use either --tenant-id (repeatable) or --tenants-json, not both.")
+
+    if unit_id is not None:
+        unit = {"id": unit_id}
+    else:
+        unit = _json.loads(unit_json)
+
+    if maintenance_ids:
+        maintenance = [{"id": mid} for mid in maintenance_ids]
+    else:
+        maintenance = _json.loads(maintenance_json)
+    if tenant_ids:
+        tenants = [{"id": tid} for tid in tenant_ids]
+    elif tenants_json is not None:
+        tenants = _json.loads(tenants_json)
+    else:
+        tenants = []
+
+    result = http_backend.create_meld(
+        brief_description=brief_description,
+        description=description,
+        work_category=work_category,
+        work_type=work_type,
+        due_date=due_date,
+        unit=unit,
+        maintenance=maintenance,
+        tenants=tenants,
+        work_location=work_location,
+        priority=priority,
+        permission_to_enter=permission_to_enter,
+        tenant_presence_required=tenant_presence_required,
+        notify_tenants=notify_tenants,
+        notify_owners=notify_owners,
+        has_pets=has_pets,
+        pets=pets,
+        prop=None,
+    )
+    output_json(result)
+
+
 # ── projects group ────────────────────────────────────────────────────────────
 
 @cli.group()
