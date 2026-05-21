@@ -11,6 +11,22 @@ pip install -e .
 playwright install chromium  # for browser backend commands
 ```
 
+### Post-merge install refresh (operator side)
+
+**Editable pipx installs (`pipx install --editable`) do not auto-update on source pulls.**
+After pulling new commits, run:
+
+```bash
+pipx reinstall cli-anything-pm        # pm-stable surface
+pipx reinstall cli-anything-pm-dev    # pm-dev surface (if installed separately)
+```
+
+The reinstall picks up any CLI-shape changes (new subcommands, new flags, group→command refactors).
+
+This catches the install-lag class of bug, where an operator's `pm` binary is missing recently merged subcommands or flags. Source is correct; the editable install never refreshed.
+
+**Triage tip:** If you see `command not found` or `no such option` for a CLI command that exists in `main` HEAD, suspect install lag first. Run `pipx reinstall cli-anything-pm` before scoping a source bug.
+
 ## Configuration
 
 Add to your agent's `.env`:
