@@ -182,6 +182,34 @@ class TestValidateMeldIdGuard:
         assert "integer PK" in str(exc.value)
 
 
+class TestListAgents:
+    def test_list_agents_returns_plain_list(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds", return_value={}), \
+             patch("cli_anything.propertymeld.http_backend._cookie_header", return_value="cookie"), \
+             patch("cli_anything.propertymeld.http_backend._http_get",
+                   return_value=[{"id": 57541}, {"id": 57544}, {"id": 57545}]):
+            result = http_backend.list_agents()
+        assert isinstance(result, list)
+        assert len(result) == 3
+
+    def test_list_agents_returns_results_when_paginated_shape(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds", return_value={}), \
+             patch("cli_anything.propertymeld.http_backend._cookie_header", return_value="cookie"), \
+             patch("cli_anything.propertymeld.http_backend._http_get",
+                   return_value={"results": [{"id": 57541}]}):
+            result = http_backend.list_agents()
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["id"] == 57541
+
+    def test_list_agents_returns_empty_list_on_empty(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds", return_value={}), \
+             patch("cli_anything.propertymeld.http_backend._cookie_header", return_value="cookie"), \
+             patch("cli_anything.propertymeld.http_backend._http_get", return_value=[]):
+            result = http_backend.list_agents()
+        assert result == []
+
+
 class TestRecaptureRetry:
     def _session_expired(self):
         return http_backend.SessionExpired(

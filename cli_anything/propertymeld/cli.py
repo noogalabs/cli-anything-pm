@@ -515,6 +515,35 @@ def list_vendors(limit, as_json):
     output_json(results)
 
 
+# ── agents group ───────────────────────────────────────────────────────────────
+
+@cli.group()
+def agents():
+    """In-house technician (management-agent) roster commands."""
+    pass
+
+
+@agents.command("list")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def list_agents_cmd(as_json):
+    """List all in-house technicians in the management-agent roster."""
+    results = http_backend.list_agents()
+    output_json(results)
+
+
+@agents.command("search")
+@click.argument("query")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def search_agents_cmd(query, as_json):
+    """Fuzzy search agents by name (matches first_name + last_name case-insensitive substring)."""
+    query_lower = query.lower()
+    results = [
+        a for a in http_backend.list_agents()
+        if query_lower in (a.get("first_name", "").lower() + " " + a.get("last_name", "").lower())
+    ]
+    output_json(results)
+
+
 # ── assign-tech ────────────────────────────────────────────────────────────────
 
 @cli.command("assign-tech")
