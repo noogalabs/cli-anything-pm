@@ -183,20 +183,21 @@ class TestValidateMeldIdGuard:
 
 
 class TestListAgents:
-    def test_list_agents_returns_plain_list(self):
+    def test_list_agents_uses_paginate_all(self):
         with patch("cli_anything.propertymeld.http_backend._load_creds", return_value={}), \
              patch("cli_anything.propertymeld.http_backend._cookie_header", return_value="cookie"), \
-             patch("cli_anything.propertymeld.http_backend._http_get",
-                   return_value=[{"id": 57541}, {"id": 57544}, {"id": 57545}]):
+             patch("cli_anything.propertymeld.http_backend._paginate_all",
+                   return_value=[{"id": 57541}, {"id": 57544}, {"id": 57545}]) as paginate_mock:
             result = http_backend.list_agents()
+        paginate_mock.assert_called_once_with("agents/?limit=100", "cookie")
         assert isinstance(result, list)
         assert len(result) == 3
 
-    def test_list_agents_returns_results_when_paginated_shape(self):
+    def test_list_agents_returns_paginated_items(self):
         with patch("cli_anything.propertymeld.http_backend._load_creds", return_value={}), \
              patch("cli_anything.propertymeld.http_backend._cookie_header", return_value="cookie"), \
-             patch("cli_anything.propertymeld.http_backend._http_get",
-                   return_value={"results": [{"id": 57541}]}):
+             patch("cli_anything.propertymeld.http_backend._paginate_all",
+                   return_value=[{"id": 57541}]):
             result = http_backend.list_agents()
         assert isinstance(result, list)
         assert len(result) == 1
@@ -205,7 +206,7 @@ class TestListAgents:
     def test_list_agents_returns_empty_list_on_empty(self):
         with patch("cli_anything.propertymeld.http_backend._load_creds", return_value={}), \
              patch("cli_anything.propertymeld.http_backend._cookie_header", return_value="cookie"), \
-             patch("cli_anything.propertymeld.http_backend._http_get", return_value=[]):
+             patch("cli_anything.propertymeld.http_backend._paginate_all", return_value=[]):
             result = http_backend.list_agents()
         assert result == []
 

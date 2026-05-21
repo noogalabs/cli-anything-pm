@@ -1887,8 +1887,8 @@ def get_management_agent(agent_id) -> dict:
 def list_agents() -> list:
     """GET /api/agents/ — list all in-house technicians (management-agent roster).
 
-    Returns plain list (no pagination wrapper). Tenant typically has < 20 agents
-    so server-side limit isn't honored — caller filters client-side if needed.
+    Fetches all pages via DRF `next` links (not just page 1), so larger rosters
+    do not silently truncate.
 
     Use for: roster lookup by name when pm vendors search misses. Closes the
     silent misread class where in-house techs (Carlos / Casey / Silvano / etc)
@@ -1896,8 +1896,7 @@ def list_agents() -> list:
     """
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
-    result = _http_get("agents/", cookie_hdr)
-    return result if isinstance(result, list) else result.get("results", [])
+    return _paginate_all("agents/?limit=100", cookie_hdr)
 
 
 # Required nested keys on the fully-hydrated unit object PM expects on
