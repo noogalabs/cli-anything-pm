@@ -1899,6 +1899,22 @@ def list_agents() -> list:
     return _paginate_all("agents/?limit=100", cookie_hdr)
 
 
+@with_recapture_retry
+def list_all_maintenance(registered_only: bool = False) -> list:
+    """GET /api/all-maintenance/ — 26-key roster shape with composite_id + type.
+
+    This differs from GET /api/agents/{id}/ which returns a 25-key shape with
+    `role` and missing `composite_id`/`type`. Standalone POST /api/melds/
+    expects the all-maintenance shape.
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    flag = "true" if registered_only else "false"
+    path = f"all-maintenance/?registeredOnly={flag}"
+    result = _http_get(path, cookie_hdr)
+    return result if isinstance(result, list) else result.get("results", [])
+
+
 # Required nested keys on the fully-hydrated unit object PM expects on
 # /list-create-meld/. Surface-validated pre-wire so operators get a clear
 # error instead of an HTTP 500 downstream.
@@ -1960,6 +1976,39 @@ def _hydrate_tenant_element(elem) -> dict:
             f"tenant element is missing required nested keys: {missing}. "
             "Pass --tenant-id to auto-hydrate, or supply a full Tenant object "
             "including contact, default_language, notification_settings."
+        )
+    return elem
+
+
+def _hydrate_maintenance_for_meld_create(elem, all_maintenance: Optional[list] = None) -> dict:
+    """Hydrate maintenance for POST /api/melds/ standalone create.
+
+    Distinct from _hydrate_maintenance_element: /api/melds/ expects objects from
+    /api/all-maintenance/ (includes composite_id + type), not /api/agents/{id}/.
+    """
+    if not isinstance(elem, dict):
+        raise ValueError(f"maintenance element must be a dict, got {type(elem).__name__}")
+    if _is_stripped(elem):
+        target_id = elem["id"]
+        try:
+            target_id_int: Any = int(target_id)
+        except (TypeError, ValueError):
+            target_id_int = target_id
+        roster = all_maintenance if all_maintenance is not None else list_all_maintenance(registered_only=False)
+        for m in roster:
+            if not isinstance(m, dict):
+                continue
+            try:
+                if int(m.get("id", 0)) == target_id_int:
+                    return m
+            except (TypeError, ValueError):
+                if m.get("id") == target_id_int:
+                    return m
+        raise ValueError(f"maintenance id {target_id} not found in /api/all-maintenance/ roster")
+    if "composite_id" not in elem or "type" not in elem:
+        raise ValueError(
+            "maintenance element for standalone create-meld must include composite_id + type. "
+            "Pass --maintenance-id to auto-hydrate via /api/all-maintenance/, or supply a full object from that endpoint."
         )
     return elem
 
@@ -2075,11 +2124,10 @@ def create_meld(
     - tenants via _hydrate_tenant_element
     """
     unit_obj = _hydrate_unit(unit)
-
-    if isinstance(maintenance, list):
-        maintenance_list = [_hydrate_maintenance_element(m) for m in maintenance]
-    else:
-        maintenance_list = [_hydrate_maintenance_element(maintenance)]
+    maintenance_input = maintenance if isinstance(maintenance, list) else [maintenance]
+    needs_lookup = any(_is_stripped(m) for m in maintenance_input if isinstance(m, dict))
+    all_maintenance = list_all_maintenance(registered_only=False) if needs_lookup else None
+    maintenance_list = [_hydrate_maintenance_for_meld_create(m, all_maintenance) for m in maintenance_input]
     tenants_list = [_hydrate_tenant_element(t) for t in (tenants or [])]
 
     creds = _load_creds()

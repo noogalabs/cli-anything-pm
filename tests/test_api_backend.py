@@ -698,7 +698,7 @@ class TestCreateMeld:
             patch("cli_anything.propertymeld.http_backend._get_csrf_token"),
             patch("cli_anything.propertymeld.http_backend._http_post"),
             patch("cli_anything.propertymeld.http_backend.get_unit"),
-            patch("cli_anything.propertymeld.http_backend.get_management_agent"),
+            patch("cli_anything.propertymeld.http_backend.list_all_maintenance"),
             patch("cli_anything.propertymeld.http_backend.get_tenant"),
         )
 
@@ -710,7 +710,7 @@ class TestCreateMeld:
             mcs.return_value = "csrf"
             mp.return_value = {"id": 12772803, "brief_description": "test"}
             mgu.return_value = _FULL_UNIT_FIXTURE
-            mga.return_value = _FULL_AGENT_FIXTURE
+            mga.return_value = [{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-57163", "type": "ManagementAgent"}]
             mgt.return_value = _FULL_TENANT_FIXTURE
 
             result = http_backend.create_meld(
@@ -728,12 +728,14 @@ class TestCreateMeld:
             assert result["ok"] is True
             assert result["meld_id"] == 12772803
             mgu.assert_called_once_with(9000005)
-            mga.assert_called_once_with(90025)
+            mga.assert_called_once_with(registered_only=False)
             mgt.assert_called_once_with(99)
             path, payload, _, _ = mp.call_args[0]
             assert path == "melds/"
             assert payload["unit"] == _FULL_UNIT_FIXTURE
-            assert payload["maintenance"] == [_FULL_AGENT_FIXTURE]
+            assert payload["maintenance"][0]["id"] == 90025
+            assert payload["maintenance"][0]["composite_id"] == "ManagementAgent-57163"
+            assert payload["maintenance"][0]["type"] == "ManagementAgent"
             assert payload["tenants"] == [_FULL_TENANT_FIXTURE]
 
     def test_create_meld_payload_uses_notify_owners_plural(self):
@@ -744,7 +746,7 @@ class TestCreateMeld:
             mcs.return_value = "csrf"
             mp.return_value = {"id": 99}
             mgu.return_value = _FULL_UNIT_FIXTURE
-            mga.return_value = _FULL_AGENT_FIXTURE
+            mga.return_value = [{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-57163", "type": "ManagementAgent"}]
 
             http_backend.create_meld(
                 brief_description="b",
@@ -769,7 +771,7 @@ class TestCreateMeld:
             mcs.return_value = "csrf"
             mp.return_value = {"id": 99}
             mgu.return_value = _FULL_UNIT_FIXTURE
-            mga.return_value = _FULL_AGENT_FIXTURE
+            mga.return_value = [{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-57163", "type": "ManagementAgent"}]
 
             http_backend.create_meld(
                 brief_description="b",
@@ -790,6 +792,7 @@ class TestCreateMeld:
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
             mp.return_value = {"id": 99}
+            mga.return_value = []
 
             http_backend.create_meld(
                 brief_description="b",
@@ -798,7 +801,7 @@ class TestCreateMeld:
                 work_type="PREVENTIVE_MAINTENANCE",
                 due_date="2026-05-16T00:00:00.000Z",
                 unit=_FULL_UNIT_FIXTURE,
-                maintenance=[_FULL_AGENT_FIXTURE],
+                maintenance=[{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-57163", "type": "ManagementAgent"}],
                 tenants=[_FULL_TENANT_FIXTURE],
             )
 
@@ -807,7 +810,9 @@ class TestCreateMeld:
             mgt.assert_not_called()
             _, payload, _, _ = mp.call_args[0]
             assert payload["unit"] == _FULL_UNIT_FIXTURE
-            assert payload["maintenance"] == [_FULL_AGENT_FIXTURE]
+            assert payload["maintenance"][0]["id"] == _FULL_AGENT_FIXTURE["id"]
+            assert payload["maintenance"][0]["composite_id"] == "ManagementAgent-57163"
+            assert payload["maintenance"][0]["type"] == "ManagementAgent"
             assert payload["tenants"] == [_FULL_TENANT_FIXTURE]
 
     def test_create_meld_partial_unit_raises(self):
@@ -821,6 +826,78 @@ class TestCreateMeld:
                 unit={"id": 1, "some_other_key": "x"},
                 maintenance=[_FULL_AGENT_FIXTURE],
             )
+
+    def test_create_meld_full_maintenance_without_composite_id_raises(self):
+        mc_p, mch_p, mcs_p, mp_p, mgu_p, mga_p, mgt_p = self._patch_io()
+        with mc_p as mc, mch_p as mch, mcs_p as mcs, mp_p as mp, mgu_p as mgu, mga_p as mga, mgt_p as mgt:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mp.return_value = {"id": 99}
+            mgu.return_value = _FULL_UNIT_FIXTURE
+            mga.return_value = []
+            bad = dict(_FULL_AGENT_FIXTURE)
+            bad.pop("composite_id", None)
+            with pytest.raises(ValueError, match="composite_id \\+ type"):
+                http_backend.create_meld(
+                    brief_description="b",
+                    description="d",
+                    work_category="APPLIANCES",
+                    work_type="TURN",
+                    due_date="2026-05-16T00:00:00.000Z",
+                    unit=_FULL_UNIT_FIXTURE,
+                    maintenance=[bad],
+                )
+            mp.assert_not_called()
+
+    def test_create_meld_unknown_maintenance_id_raises_clear_error(self):
+        mc_p, mch_p, mcs_p, mp_p, mgu_p, mga_p, mgt_p = self._patch_io()
+        with mc_p as mc, mch_p as mch, mcs_p as mcs, mp_p as mp, mgu_p as mgu, mga_p as mga, mgt_p as mgt:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mp.return_value = {"id": 99}
+            mgu.return_value = _FULL_UNIT_FIXTURE
+            mga.return_value = [{**_FULL_AGENT_FIXTURE, "id": 90025, "composite_id": "ManagementAgent-57163", "type": "ManagementAgent"}]
+
+            with pytest.raises(ValueError, match="maintenance id 999 not found"):
+                http_backend.create_meld(
+                    brief_description="b",
+                    description="d",
+                    work_category="APPLIANCES",
+                    work_type="TURN",
+                    due_date="2026-05-16T00:00:00.000Z",
+                    unit={"id": 1},
+                    maintenance=[{"id": 999}],
+                )
+
+    def test_create_meld_stripped_maintenance_with_string_id_matches(self):
+        mc_p, mch_p, mcs_p, mp_p, mgu_p, mga_p, mgt_p = self._patch_io()
+        with mc_p as mc, mch_p as mch, mcs_p as mcs, mp_p as mp, mgu_p as mgu, mga_p as mga, mgt_p as mgt:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mp.return_value = {"id": 12772803, "brief_description": "test"}
+            mgu.return_value = _FULL_UNIT_FIXTURE
+            mga.return_value = [{**_FULL_AGENT_FIXTURE, "id": 90025, "composite_id": "ManagementAgent-57163", "type": "ManagementAgent"}]
+            mgt.return_value = _FULL_TENANT_FIXTURE
+
+            result = http_backend.create_meld(
+                brief_description="test",
+                description="test",
+                work_category="APPLIANCES",
+                work_type="TURN",
+                due_date="2026-05-16T02:52:41.393Z",
+                unit={"id": 9000005},
+                maintenance=[{"id": "90025"}],
+                tenants=[{"id": 99}],
+                work_location="inside",
+            )
+
+            assert result["ok"] is True
+            path, payload, _, _ = mp.call_args[0]
+            assert path == "melds/"
+            assert payload["maintenance"][0]["id"] == 90025
 
 
 class TestUnitAndAgentHydration:
