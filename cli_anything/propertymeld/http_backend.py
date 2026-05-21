@@ -2029,6 +2029,72 @@ def create_meld_in_project(
     return {"ok": True, "project_id": project_id, "meld_id": result.get("id"), "result": result}
 
 
+@with_recapture_retry
+def create_meld(
+    brief_description: str,
+    description: str,
+    work_category: str,
+    work_type: str,
+    due_date: Optional[str],
+    unit,
+    maintenance,
+    work_location: str = "",
+    tenants: Optional[list] = None,
+    priority: str = "LOW",
+    permission_to_enter: bool = True,
+    tenant_presence_required: bool = False,
+    notify_tenants: bool = True,
+    notify_owners: bool = False,
+    has_pets: bool = False,
+    pets: str = "",
+    tags: Optional[list] = None,
+    prop: Optional[dict] = None,
+) -> dict:
+    """Create a new standalone meld.
+
+    POST /api/melds/ — verified shape from 2026-05-16 HAR capture.
+    Uses the same hydration helpers as create_meld_in_project:
+    - unit via _hydrate_unit
+    - maintenance via _hydrate_maintenance_element
+    - tenants via _hydrate_tenant_element
+    """
+    unit_obj = _hydrate_unit(unit)
+
+    if isinstance(maintenance, list):
+        maintenance_list = [_hydrate_maintenance_element(m) for m in maintenance]
+    else:
+        maintenance_list = [_hydrate_maintenance_element(maintenance)]
+    tenants_list = [_hydrate_tenant_element(t) for t in (tenants or [])]
+
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    payload = {
+        "brief_description": brief_description,
+        "description": description,
+        "due_date": due_date,
+        "has_pets": has_pets,
+        "maintenance": maintenance_list,
+        "notify_owners": notify_owners,
+        "notify_owners_string": "true" if notify_owners else "false",
+        "notify_tenants": notify_tenants,
+        "notify_tenants_string": "true" if notify_tenants else "false",
+        "permission_to_enter": permission_to_enter,
+        "pets": pets,
+        "priority": priority,
+        "prop": prop,
+        "tags": tags or [],
+        "tenant_presence_required": tenant_presence_required,
+        "tenants": tenants_list,
+        "unit": unit_obj,
+        "work_category": work_category,
+        "work_location": work_location,
+        "work_type": work_type,
+    }
+    result = _http_post("melds/", payload, cookie_hdr, csrf_token)
+    return {"ok": True, "meld_id": result.get("id"), "result": result}
+
+
 
 @with_recapture_retry
 def link_tenant_to_meld(meld_id: str, tenant_id) -> dict:
