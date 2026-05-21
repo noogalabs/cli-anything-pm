@@ -113,6 +113,31 @@ class TestVendorsCLI:
         assert data[0]["name"] == "Dyer HVAC"
 
 
+class TestAgentsCLI:
+    def test_agents_list_runs_and_emits_json(self, runner):
+        mock_agents = [{"id": 1, "first_name": "Person019", "last_name": "Person029"}]
+        with patch("cli_anything.propertymeld.http_backend.list_agents",
+                   return_value=mock_agents):
+            result = runner.invoke(cli, ["agents", "list"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data[0]["first_name"] == "Person019"
+
+    def test_agents_search_filters_by_name(self, runner):
+        mock_agents = [
+            {"id": 1, "first_name": "Person019", "last_name": "Person029"},
+            {"id": 2, "first_name": "Person030", "last_name": "Person021"},
+            {"id": 3, "first_name": "Person017", "last_name": "Person034"},
+        ]
+        with patch("cli_anything.propertymeld.http_backend.list_agents",
+                   return_value=mock_agents):
+            result = runner.invoke(cli, ["agents", "search", "carlos"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert len(data) == 1
+        assert data[0]["first_name"] == "Person019"
+
+
 class TestProbeCLI:
     def test_probe_outputs_ok(self, runner):
         with patch("cli_anything.propertymeld.api_backend.probe",

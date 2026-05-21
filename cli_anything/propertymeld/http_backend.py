@@ -1883,6 +1883,22 @@ def get_management_agent(agent_id) -> dict:
     return _http_get(f"agents/{agent_id}/", cookie_hdr)
 
 
+@with_recapture_retry
+def list_agents() -> list:
+    """GET /api/agents/ — list all in-house technicians (management-agent roster).
+
+    Fetches all pages via DRF `next` links (not just page 1), so larger rosters
+    do not silently truncate.
+
+    Use for: roster lookup by name when pm vendors search misses. Closes the
+    silent misread class where in-house techs (Person019 / Person030 / Person017 / etc)
+    get mistaken for missing vendors.
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    return _paginate_all("agents/?limit=100", cookie_hdr)
+
+
 # Required nested keys on the fully-hydrated unit object PM expects on
 # /list-create-meld/. Surface-validated pre-wire so operators get a clear
 # error instead of an HTTP 500 downstream.
