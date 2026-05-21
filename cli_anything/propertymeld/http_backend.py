@@ -1990,10 +1990,20 @@ def _hydrate_maintenance_for_meld_create(elem, all_maintenance: Optional[list] =
         raise ValueError(f"maintenance element must be a dict, got {type(elem).__name__}")
     if _is_stripped(elem):
         target_id = elem["id"]
+        try:
+            target_id_int: Any = int(target_id)
+        except (TypeError, ValueError):
+            target_id_int = target_id
         roster = all_maintenance if all_maintenance is not None else list_all_maintenance(registered_only=False)
         for m in roster:
-            if isinstance(m, dict) and m.get("id") == target_id:
-                return m
+            if not isinstance(m, dict):
+                continue
+            try:
+                if int(m.get("id", 0)) == target_id_int:
+                    return m
+            except (TypeError, ValueError):
+                if m.get("id") == target_id_int:
+                    return m
         raise ValueError(f"maintenance id {target_id} not found in /api/all-maintenance/ roster")
     if "composite_id" not in elem or "type" not in elem:
         raise ValueError(
