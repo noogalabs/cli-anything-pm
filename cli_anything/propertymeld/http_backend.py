@@ -1226,11 +1226,75 @@ def schedule_appointment(meld_id: str, dtstart: str, duration_hours: float = 2.0
     }
 
 
+# Minimum digits required in the search needle before we attempt a
+# phone-number match. Below this threshold a stray digit in a name-shaped
+# query would match every tenant whose phone happens to contain it, which
+# is almost never what the user wants. Four digits is a sensible floor —
+# enough specificity to be intentional (e.g. last-4 of a phone), short
+# enough to still be ergonomic.
+_PHONE_DIGIT_FLOOR = 4
+
+
+def _digits_only(s: str) -> str:
+    """Return only ASCII digits from ``s`` (empty string for None/non-str)."""
+    if not s:
+        return ""
+    return "".join(ch for ch in str(s) if ch.isdigit())
+
+
+def _filter_tenants(tenants: list, search: str) -> list:
+    """Apply the tenant search predicate to a list of (flat) tenant dicts.
+
+    See ``list_tenants`` docstring for the full semantics. Split out as a
+    pure function so it can be unit-tested without mocking the HTTP layer.
+    """
+    needle = (search or "").lower().strip()
+    if not needle:
+        return list(tenants)
+    needle_digits = _digits_only(needle)
+    phone_eligible = len(needle_digits) >= _PHONE_DIGIT_FLOOR
+
+    matches = []
+    for t in tenants:
+        first = (t.get("first_name") or "").lower()
+        last = (t.get("last_name") or "").lower()
+        # Collapse runs of whitespace — real PM data has tenants with
+        # trailing-space first_names (e.g. "Resident " / "Person039") that would
+        # otherwise produce "erica  mapp" and miss a "resident beta" needle.
+        full_name = " ".join(f"{first} {last}".split())
+        email = (t.get("email") or "").lower()
+        if needle in full_name or needle in email:
+            matches.append(t)
+            continue
+        if phone_eligible:
+            stored_digits = _digits_only(t.get("phone"))
+            if stored_digits and needle_digits in stored_digits:
+                matches.append(t)
+    return matches
+
+
 def list_tenants(search: Optional[str] = None, limit: int = 100) -> list:
-    """List tenants, optionally filtered client-side by name or email.
+    """List tenants, optionally filtered client-side by name, email, or phone.
+
+    The /api/tenants/ list response is FLAT — phone is a top-level ``phone``
+    string (e.g. ``"(202) 555-0106"``) and email is top-level ``email``.
+    There is NO nested ``contact`` or ``user`` object on the list shape (the
+    detail endpoint ``/api/tenants/{id}/`` does return the nested objects;
+    see ``get_tenant``).
+
+    Search semantics (case-insensitive):
+      * Name: matched against the combined ``"first_name last_name"`` string
+        so multi-word queries like ``"Resident Beta"`` work.
+      * Email: substring match against top-level ``email``.
+      * Phone: BOTH the needle and the stored phone are normalized to
+        digits-only before substring match. The phone branch only fires
+        when the needle contains at least 4 digits, to avoid trivial
+        matches from name-shaped queries that happen to contain a digit
+        or two.
 
     Args:
-        search: Case-insensitive substring matched against first_name, last_name, or email.
+        search: Case-insensitive substring matched against name / email /
+            (digits-normalized) phone as described above.
         limit: Maximum number of results to return (after client-side filter).
     """
     creds = _load_creds()
@@ -1243,15 +1307,7 @@ def list_tenants(search: Optional[str] = None, limit: int = 100) -> list:
     page_size = 200
     if search:
         results = _paginate_all(f"tenants/?limit={page_size}", cookie_hdr)
-        needle = search.lower()
-        results = [
-            t for t in results
-            if needle in (t.get("first_name") or "").lower()
-            or needle in (t.get("last_name") or "").lower()
-            or needle in ((t.get("user") or {}).get("email") or "").lower()
-            or needle in ((t.get("contact") or {}).get("cell_phone") or "")
-            or needle in ((t.get("contact") or {}).get("home_phone") or "")
-        ]
+        results = _filter_tenants(results, search)
         return results[:limit]
 
     results: list = []
