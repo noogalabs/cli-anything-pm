@@ -374,6 +374,130 @@ class TestTenantsCLI:
         assert data["first_name"] == "Jane"
 
 
+# Fixture mirrors the actual /api/tenants/ list shape verified live on
+# 2026-05-23 — flat email + phone at the top level, no nested contact/user.
+_TENANT_FIXTURE = [
+    {"id": 4043079, "first_name": "Angelica", "last_name": "Acevedo",
+     "email": "angelica@calebcha.org", "phone": "(706) 913-7178"},
+    {"id": 4043080, "first_name": "Erica", "last_name": "Mapp",
+     "email": "erica.mapp@example.com", "phone": "+1 (423) 760-6490"},
+    {"id": 4043081, "first_name": "John", "last_name": "Smith",
+     "email": "jsmith@example.com", "phone": "423-555-1212"},
+    {"id": 4043082, "first_name": "Jane", "last_name": "Doe",
+     "email": "jane.doe@example.com", "phone": None},
+]
+
+
+class TestFilterTenants:
+    """Direct unit tests on the search predicate (no HTTP layer involved)."""
+
+    def test_single_word_lastname_match(self):
+        from cli_anything.propertymeld.http_backend import _filter_tenants
+        out = _filter_tenants(_TENANT_FIXTURE, "Acevedo")
+        assert [t["id"] for t in out] == [4043079]
+
+    def test_multi_word_name_match(self):
+        from cli_anything.propertymeld.http_backend import _filter_tenants
+        out = _filter_tenants(_TENANT_FIXTURE, "Angelica Acevedo")
+        assert [t["id"] for t in out] == [4043079]
+
+    def test_multi_word_name_match_case_insensitive(self):
+        from cli_anything.propertymeld.http_backend import _filter_tenants
+        out = _filter_tenants(_TENANT_FIXTURE, "erica mapp")
+        assert [t["id"] for t in out] == [4043080]
+
+    def test_email_substring_match(self):
+        from cli_anything.propertymeld.http_backend import _filter_tenants
+        out = _filter_tenants(_TENANT_FIXTURE, "calebcha")
+        assert [t["id"] for t in out] == [4043079]
+
+    def test_phone_formatted_needle_matches_formatted_stored(self):
+        from cli_anything.propertymeld.http_backend import _filter_tenants
+        out = _filter_tenants(_TENANT_FIXTURE, "(706) 913-7178")
+        assert [t["id"] for t in out] == [4043079]
+
+    def test_phone_digits_only_needle_matches_formatted_stored(self):
+        from cli_anything.propertymeld.http_backend import _filter_tenants
+        out = _filter_tenants(_TENANT_FIXTURE, "7069137178")
+        assert [t["id"] for t in out] == [4043079]
+
+    def test_phone_dashed_needle_matches_formatted_stored(self):
+        from cli_anything.propertymeld.http_backend import _filter_tenants
+        out = _filter_tenants(_TENANT_FIXTURE, "706-913-7178")
+        assert [t["id"] for t in out] == [4043079]
+
+    def test_phone_partial_digits_above_floor_matches(self):
+        from cli_anything.propertymeld.http_backend import _filter_tenants
+        # 7+ digit tail of the stored phone — should still hit.
+        out = _filter_tenants(_TENANT_FIXTURE, "9137178")
+        assert [t["id"] for t in out] == [4043079]
+
+    def test_phone_below_digit_floor_does_not_match(self):
+        from cli_anything.propertymeld.http_backend import _filter_tenants
+        # "913" is only 3 digits — below the 4-digit floor, so the phone
+        # branch is skipped. "913" doesn't appear in any name/email, so
+        # the result must be empty (NOT a spurious phone hit).
+        out = _filter_tenants(_TENANT_FIXTURE, "913")
+        assert out == []
+
+    def test_empty_search_returns_all(self):
+        from cli_anything.propertymeld.http_backend import _filter_tenants
+        out = _filter_tenants(_TENANT_FIXTURE, "")
+        assert len(out) == len(_TENANT_FIXTURE)
+
+    def test_no_match_returns_empty(self):
+        from cli_anything.propertymeld.http_backend import _filter_tenants
+        out = _filter_tenants(_TENANT_FIXTURE, "ZzNoSuchPerson")
+        assert out == []
+
+    def test_phone_match_tolerates_country_code_and_punctuation(self):
+        from cli_anything.propertymeld.http_backend import _filter_tenants
+        # Stored: "+1 (423) 760-6490" → digits "14237606490"
+        # Needle digits "4237606490" should be a substring → match.
+        out = _filter_tenants(_TENANT_FIXTURE, "(423) 760-6490")
+        assert [t["id"] for t in out] == [4043080]
+
+    def test_name_query_does_not_accidentally_phone_match(self):
+        from cli_anything.propertymeld.http_backend import _filter_tenants
+        # "Smith" has no digits → phone branch skipped → only name/email
+        # matching applies. Verifies the no-digits short-circuit.
+        out = _filter_tenants(_TENANT_FIXTURE, "Smith")
+        assert [t["id"] for t in out] == [4043081]
+
+    def test_multi_word_match_tolerates_trailing_whitespace(self):
+        from cli_anything.propertymeld.http_backend import _filter_tenants
+        # Real PM data has tenants with trailing-space first_name (e.g.
+        # "Erica " / "Mapp"). The combined-name match must collapse
+        # internal whitespace so "Erica Mapp" still hits.
+        fixture = [
+            {"id": 3735586, "first_name": "Erica ", "last_name": "Mapp",
+             "email": "erica.mapp@example.com", "phone": None},
+        ]
+        out = _filter_tenants(fixture, "Erica Mapp")
+        assert [t["id"] for t in out] == [3735586]
+
+    def test_phone_none_tenant_is_safe(self):
+        from cli_anything.propertymeld.http_backend import _filter_tenants
+        # Tenant 4043082 has phone=None. Should not crash, should not
+        # match a phone needle.
+        out = _filter_tenants(_TENANT_FIXTURE, "5551212")
+        assert [t["id"] for t in out] == [4043081]
+
+
+class TestListTenantsIntegratesFilter:
+    """Smoke-tests that list_tenants delegates to _filter_tenants when search is set."""
+
+    def test_search_path_paginates_and_filters(self):
+        from cli_anything.propertymeld import http_backend
+        with patch("cli_anything.propertymeld.http_backend._load_creds", return_value={}), \
+             patch("cli_anything.propertymeld.http_backend._cookie_header", return_value=""), \
+             patch("cli_anything.propertymeld.http_backend._paginate_all",
+                   return_value=list(_TENANT_FIXTURE)) as mock_paginate:
+            out = http_backend.list_tenants(search="Erica Mapp", limit=10)
+        mock_paginate.assert_called_once()
+        assert [t["id"] for t in out] == [4043080]
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Phase 2 backport coverage: projects / estimates / receipts / vendor-invites /
 # work-orders schedule-vendor
