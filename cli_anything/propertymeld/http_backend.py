@@ -13,13 +13,16 @@ Two API contexts:
 """
 import functools
 import json
+import mimetypes
 import os
 import re
 import ssl
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
+import uuid
 from typing import Any, Callable, Optional
 
 from .utils import normalize_http_error
@@ -2483,85 +2486,154 @@ def upload_receipt(meld_id: str, file_path: str, description: str = "", linked_e
         return error
 
 
-def upload_meld_file(meld_id: str, file_path: str, uploader_role: str = "manager", description: str = "") -> dict:
-    """Upload a file attachment to a meld via cookie HTTP.
+def _pm_presign_upload(presign_path: str, filename: str, content_type: str, cookie_hdr: str) -> dict:
+    """Fetch an S3 POST policy from PM's `/files/generate-policy/` endpoint.
 
-    Routes by uploader_role:
-      manager → POST /api/melds/{id}/files/         (manager session)
-      tenant  → POST /api/melds/{id}/tenant-files/  (manager-side backfill)
-      vendor  → POST /api/melds/{id}/vendor-files/  (manager-side backfill)
+    Returns the parsed `{url, fields}` dict. `fields` includes `key`, `policy`,
+    `signature`, `AWSAccessKeyId`, `acl`, `success_action_status`.
 
-    Closes the file-upload coverage gap flagged 5/07: previously only
-    receipts had upload coverage; manager + tenant + vendor file uploads
-    now work via this single function with --as flag.
+    Raises urllib.error.HTTPError verbatim so the caller can surface PM's
+    own error body via normalize_http_error.
     """
-    meld_id = _validate_meld_id(meld_id)
-    import os as _os
-    from pathlib import Path as _Path
-
-    if not _os.path.exists(file_path):
-        return {"ok": False, "error": f"File not found: {file_path}"}
-
-    role_to_endpoint = {
-        "manager": "files",
-        "tenant": "tenant-files",
-        "vendor": "vendor-files",
-    }
-    if uploader_role not in role_to_endpoint:
-        return {"ok": False, "error": f"Unknown uploader_role '{uploader_role}'. Use manager|tenant|vendor."}
-    endpoint = role_to_endpoint[uploader_role]
-
-    creds = _load_creds()
-    cookie_hdr = _cookie_header(creds)
-    csrf_token = _get_csrf_token(cookie_hdr)
-
-    file_name = _Path(file_path).name
-    with open(file_path, "rb") as f:
-        file_data = f.read()
-
-    boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
-    body_parts = []
-    body_parts.append(f"--{boundary}".encode())
-    body_parts.append(b'Content-Disposition: form-data; name="meld_id"')
-    body_parts.append(b"")
-    body_parts.append(str(meld_id).encode())
-
-    if description:
-        body_parts.append(f"--{boundary}".encode())
-        body_parts.append(b'Content-Disposition: form-data; name="description"')
-        body_parts.append(b"")
-        body_parts.append(description.encode())
-
-    body_parts.append(f"--{boundary}".encode())
-    body_parts.append(f'Content-Disposition: form-data; name="file"; filename="{file_name}"'.encode())
-    body_parts.append(b"Content-Type: application/octet-stream")
-    body_parts.append(b"")
-    body_parts.append(file_data)
-    body_parts.append(f"--{boundary}--".encode())
-    body_parts.append(b"")
-
-    body = b"\r\n".join(body_parts)
-
+    qs = urllib.parse.urlencode({"filename": filename, "content_type": content_type})
+    url = f"{BASE}/api/{presign_path}?{qs}"
     req = urllib.request.Request(
-        f"{BASE}/api/melds/{int(meld_id)}/{endpoint}/",
-        data=body,
-        method="POST",
+        url,
         headers={
             "Cookie": cookie_hdr,
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
             "Accept": "application/json",
-            "X-CSRFToken": csrf_token,
             "X-Requested-With": "XMLHttpRequest",
             "User-Agent": UA,
             "Referer": f"{BASE}/melds/",
         },
     )
+    with urllib.request.urlopen(req, context=_ssl_ctx, timeout=30) as resp:
+        return json.loads(resp.read())
+
+
+def _s3_post_file(policy: dict, file_bytes: bytes, filename: str, content_type: str) -> None:
+    """Upload file bytes to S3 via the presigned POST policy from PM.
+
+    Raises urllib.error.HTTPError on non-2xx S3 response.
+    """
+    boundary = f"----CLIBoundary{uuid.uuid4().hex}"
+    parts: list[bytes] = []
+    # S3 form fields from the policy MUST come before the `file` field.
+    for k, v in policy["fields"].items():
+        parts.append(f"--{boundary}".encode())
+        parts.append(f'Content-Disposition: form-data; name="{k}"'.encode())
+        parts.append(b"")
+        parts.append(str(v).encode())
+    parts.append(f"--{boundary}".encode())
+    parts.append(f'Content-Disposition: form-data; name="file"; filename="{filename}"'.encode())
+    parts.append(f"Content-Type: {content_type}".encode())
+    parts.append(b"")
+    parts.append(file_bytes)
+    parts.append(f"--{boundary}--".encode())
+    parts.append(b"")
+    body = b"\r\n".join(parts)
+
+    req = urllib.request.Request(
+        policy["url"],
+        data=body,
+        method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    # S3 returns 201 (success_action_status=201) with an XML body we don't need.
+    with urllib.request.urlopen(req, context=_ssl_ctx, timeout=120) as resp:
+        resp.read()
+
+
+@with_recapture_retry
+def upload_meld_file(meld_id: str, file_path: str, uploader_role: str = "manager", description: str = "") -> dict:
+    """Upload a file attachment to a meld via the PM presign + S3 + commit flow.
+
+    PM API migrated this endpoint from accepting multipart binary uploads to
+    a 3-step S3-presign flow (regression observed 2026-05-24: previous multipart
+    impl returned 400 `{"file": ["Not a valid string."], "filename": ["This
+    field is required."]}`). The current shape mirrors what PM's web UI does:
+
+      1. GET  /api/{presign_path}/?filename=&content_type=  → S3 POST policy
+      2. POST <S3 url> multipart with the policy fields + file bytes → 201
+      3. POST /api/melds/{meld_id}/{commit_endpoint}/ with JSON body
+         `{file: <s3_key>, filename: <name>, meld_id: <id>}` → 201
+
+    Routes by uploader_role:
+      manager → presign melds/files/generate-policy/   → commit melds/{id}/files/
+      tenant  → presign tenants/files/generate-policy/ → commit melds/{id}/tenant-files/
+      vendor  → presign vendors/files/generate-policy/ → commit melds/{id}/vendor-files/
+
+    The manager path is verified end-to-end against live PM. The tenant and
+    vendor commit endpoints currently return HTTP 500 from a manager cookie
+    session; their presign + S3 steps succeed but the commit step does not.
+    Errors are surfaced verbatim — the existing CLI docstring notes that
+    those routes may require additional auth.
+    """
+    meld_id = _validate_meld_id(meld_id)
+
+    if not os.path.exists(file_path):
+        return {"ok": False, "error": f"File not found: {file_path}"}
+
+    role_to_routes = {
+        "manager": ("melds/files/generate-policy/", "files"),
+        "tenant": ("tenants/files/generate-policy/", "tenant-files"),
+        "vendor": ("vendors/files/generate-policy/", "vendor-files"),
+    }
+    if uploader_role not in role_to_routes:
+        return {"ok": False, "error": f"Unknown uploader_role '{uploader_role}'. Use manager|tenant|vendor."}
+    presign_path, commit_endpoint = role_to_routes[uploader_role]
+
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+
+    file_name = os.path.basename(file_path)
+    content_type, _enc = mimetypes.guess_type(file_name)
+    content_type = content_type or "application/octet-stream"
+    with open(file_path, "rb") as f:
+        file_bytes = f.read()
 
     try:
+        policy = _pm_presign_upload(presign_path, file_name, content_type, cookie_hdr)
+        _s3_post_file(policy, file_bytes, file_name, content_type)
+
+        payload = {
+            "file": policy["fields"]["key"],
+            "filename": file_name,
+            "meld_id": int(meld_id),
+        }
+        if description:
+            payload["description"] = description
+
+        # Commit POST — done inline (not via _http_post) because that helper
+        # sys.exits on non-401 errors, while upload's return contract is to
+        # surface the PM error verbatim via `{ok: False, ...}`.
+        commit_url = f"{BASE}/api/melds/{int(meld_id)}/{commit_endpoint}/"
+        req = urllib.request.Request(
+            commit_url,
+            data=json.dumps(payload).encode(),
+            method="POST",
+            headers={
+                "Cookie": cookie_hdr,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "X-CSRFToken": csrf_token,
+                "X-Requested-With": "XMLHttpRequest",
+                "User-Agent": UA,
+                "Referer": f"{BASE}/melds/",
+            },
+        )
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=30) as resp:
             result = json.loads(resp.read())
-            return {"ok": True, "uploader_role": uploader_role, "file_id": result.get("id"), "result": result}
+        return {
+            "ok": True,
+            "uploader_role": uploader_role,
+            "file_id": result.get("id"),
+            "result": result,
+        }
     except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
         body_err = e.read().decode("utf-8", errors="ignore")
         error = normalize_http_error(e.code, body_err)
         error["ok"] = False
