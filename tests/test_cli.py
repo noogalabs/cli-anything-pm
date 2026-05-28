@@ -137,6 +137,34 @@ class TestAgentsCLI:
         assert len(data) == 1
         assert data[0]["first_name"] == "Carlos"
 
+    def test_agents_get_returns_full_record(self, runner):
+        mock_agent = {
+            "id": 57541,
+            "first_name": "Carlos",
+            "last_name": "Calel",
+            "role": "MAINTENANCE",
+            "contact": None,
+            "user": {"email": "carlos@example.com"},
+        }
+        with patch("cli_anything.propertymeld.http_backend.get_management_agent",
+                   return_value=mock_agent) as mock_fn:
+            result = runner.invoke(cli, ["agents", "get", "57541"])
+        assert result.exit_code == 0
+        mock_fn.assert_called_once_with(57541)
+        data = json.loads(result.output)
+        assert data["id"] == 57541
+        assert data["first_name"] == "Carlos"
+        # contact-None case (no contact record exists) surfaces as-is — operator
+        # sees the PM data shape rather than silently missing the gap.
+        assert data["contact"] is None
+        assert data["user"]["email"] == "carlos@example.com"
+
+    def test_agents_get_requires_int_id(self, runner):
+        # agent_id is typed int — click rejects non-integer arg with exit_code 2
+        result = runner.invoke(cli, ["agents", "get", "not-an-int"])
+        assert result.exit_code == 2
+        assert "Invalid value" in result.output or "Error" in result.output
+
 
 class TestProbeCLI:
     def test_probe_outputs_ok(self, runner):
