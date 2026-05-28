@@ -544,6 +544,36 @@ def search_agents_cmd(query, as_json):
     output_json(results)
 
 
+@agents.command("get")
+@click.argument("agent_id", type=int)
+@click.option("--json", "as_json", is_flag=True, default=True)
+def get_agent_cmd(agent_id, as_json):
+    """Get a single agent (in-house tech) by ID — full per-agent detail.
+
+    Returns the full ManagementAgent object including the ``user`` embed
+    (email + last_login) and the ``contact`` field. The ``pm agents list``
+    response is shallow (id + name + role only); this command surfaces the
+    full per-agent record so callers can see what PM has on file.
+
+    Phone-data caveat (Blue gap #N+3): the ``contact`` field on the agent
+    detail endpoint is EITHER ``None`` (no contact record exists in PM —
+    observed on Person019 90026) OR an integer FK to a Person001 record that is
+    NOT exposed via the cookie-path ``/api/contacts/{id}/`` endpoint (404
+    on probe). This means cell_phone / business_phone are NOT recoverable
+    via this command alone for in-house techs whose contact lives in a
+    separate non-public table. PM web UI shows the phones via an internal
+    endpoint we have not captured yet. Operator workaround until then: read
+    the phone numbers from PM web UI manually OR populate them through a
+    different process. Closing this CLI gap surfaces the PM data shape so
+    operators see the underlying limitation rather than silently missing it.
+
+    Closes Blue gap-bucket #N+3 (CLI surface only — operator-pain root cause
+    is a separate PM data-exposure gap).
+    """
+    result = http_backend.get_management_agent(agent_id)
+    output_json(result)
+
+
 # ── assign-tech ────────────────────────────────────────────────────────────────
 
 @cli.command("assign-tech")
