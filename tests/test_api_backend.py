@@ -83,6 +83,10 @@ class TestListWorkOrders:
         assert results == [{"id": 999}]
 
     def test_new_filter_flags_are_forwarded_to_query(self):
+        # NOTE: no_tenant_linked moved to a separate test below — that flag now
+        # delegates to http_backend.list_work_orders_rich (cookie-path) rather
+        # than pushing a Nexus query param. PM Nexus server-side predicate was
+        # wrong (used has_registered_tenant=False instead of len(tenants)==0).
         with patch("urllib.request.urlopen") as mock_open:
             mock_open.side_effect = [
                 make_response(TOKEN_RESPONSE),
@@ -94,7 +98,6 @@ class TestListWorkOrders:
                 stuck_hours=48,
                 created_since="2026-05-18T00:00:00Z",
                 status_not="COMPLETED",
-                no_tenant_linked=True,
             )
         url = mock_open.call_args_list[1][0][0].full_url
         assert "assigned_to_tech=57163" in url
@@ -102,7 +105,75 @@ class TestListWorkOrders:
         assert "stuck_hours=48" in url
         assert "created_since=2026-05-18T00%3A00%3A00Z" in url
         assert "status_not=COMPLETED" in url
-        assert "no_tenant_linked=true" in url
+        # no_tenant_linked is intentionally NOT pushed as a Nexus query param
+        # anymore — verified by the separate test_no_tenant_linked_delegates_*
+        # tests below.
+        assert "no_tenant_linked" not in url
+
+    def test_no_tenant_linked_delegates_to_cookie_path_helper(self):
+        # When no_tenant_linked=True, api_backend should bypass Nexus and call
+        # http_backend.list_work_orders_rich which returns the tenants[] field.
+        # Fixture covers three tenants-field shapes intentionally:
+        #   * tenants=[]     → empty list, the canonical 'no tenant linked' case
+        #   * tenants=[...]  → populated, must be filtered OUT
+        #   * tenants=None   → null/missing field, treated as no-tenant-linked
+        #                      so a malformed PM response can't silently slip a
+        #                      real meld past the filter (truthy-check semantics
+        #                      documented in api_backend.list_work_orders).
+        rich_results = [
+            {"id": 1001, "tenants": []},
+            {"id": 1002, "tenants": [{"id": 5, "first_name": "Reece"}]},
+            {"id": 1003, "tenants": None},
+        ]
+        with patch(
+            "cli_anything.propertymeld.http_backend.list_work_orders_rich",
+            return_value=rich_results,
+        ) as mock_rich, patch("urllib.request.urlopen") as mock_open:
+            results = api_backend.list_work_orders(
+                no_tenant_linked=True, status="open", limit=25
+            )
+        # rich helper called once with status + over-fetch limit
+        assert mock_rich.call_count == 1
+        # Nexus path NOT hit (no urllib request fired)
+        assert mock_open.call_count == 0
+        # Post-filter keeps only empty/null tenants entries
+        assert [r["id"] for r in results] == [1001, 1003]
+
+    def test_no_tenant_linked_respects_caller_limit_after_filter(self):
+        rich_results = [{"id": i, "tenants": []} for i in range(50)]
+        with patch(
+            "cli_anything.propertymeld.http_backend.list_work_orders_rich",
+            return_value=rich_results,
+        ):
+            results = api_backend.list_work_orders(no_tenant_linked=True, limit=10)
+        assert len(results) == 10
+        assert [r["id"] for r in results] == list(range(10))
+
+    @pytest.mark.parametrize("flag_kwarg,flag_name", [
+        ("assigned_to_tech", "--assigned-to-tech"),
+        ("assigned_to_vendor", "--assigned-to-vendor"),
+        ("stuck_hours", "--stuck-hours"),
+        ("created_since", "--created-since"),
+        ("status_not", "--status-not"),
+    ])
+    def test_no_tenant_linked_rejects_incompatible_filter_combos(
+        self, flag_kwarg, flag_name, capsys
+    ):
+        # Combining --no-tenant-linked with Nexus-only filters silently
+        # returned the wrong meld set pre-fix (cookie-path delegation drops
+        # those query params). Loud-fail per silent-failure-half-ships rule.
+        kwargs = {"no_tenant_linked": True, flag_kwarg: 99 if flag_kwarg != "created_since" and flag_kwarg != "status_not" else "x"}
+        with patch(
+            "cli_anything.propertymeld.http_backend.list_work_orders_rich"
+        ) as mock_rich:
+            with pytest.raises(SystemExit) as exc_info:
+                api_backend.list_work_orders(**kwargs)
+        assert exc_info.value.code == 2
+        # The rich-path delegation must NOT fire when the combo is rejected.
+        assert mock_rich.call_count == 0
+        captured = capsys.readouterr()
+        assert flag_name in captured.err
+        assert "no-tenant-linked" in captured.err.lower()
 
 
 class TestGetWorkOrder:
