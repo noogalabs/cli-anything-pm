@@ -1959,6 +1959,56 @@ def list_agents() -> list:
 
 
 @with_recapture_retry
+def list_work_orders_rich(limit: int = 25, status: Optional[str] = None) -> list:
+    """GET /api/melds/ via cookie-auth — 68-field rich shape including tenants,
+    in_house_servicers, vendor_assignment_requests, managementappointment.
+
+    Nexus /api/v2/meld/ returns a 43-field shallow shape that OMITS the nested
+    relations (tenants[], in_house_servicers[], etc). When a caller needs to
+    filter on or read those relations from a list call, route through here
+    instead of Nexus to avoid per-meld GET fan-out.
+
+    Current callers:
+      * api_backend.list_work_orders --no-tenant-linked (Gap #23) — Nexus
+        server-side filter has wrong semantic (uses has_registered_tenant=False
+        instead of len(tenants)==0). Delegating to cookie-path returns the
+        tenants[] field so we can post-filter client-side. REMOVE this delegation
+        once PM fixes the server-side predicate OR exposes tenants in Nexus list.
+
+    Args:
+        limit: maximum results to fetch from the cookie API (single page).
+        status: optional status slug, mirrors api_backend semantics where
+            "open" maps to the three PENDING_* states (OR'd via repeated params).
+
+    Note: cookie-API page size caps at 100. Callers needing >100 results should
+    paginate via _paginate_all in a future iteration; this helper does a single
+    page fetch sized to the requested limit (clamped to 100).
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    page_limit = min(max(limit, 1), 100)
+    params: list[tuple[str, str]] = [("limit", str(page_limit))]
+    if status:
+        slug_to_states = {
+            "open": [
+                "PENDING_ASSIGNMENT",
+                "PENDING_VENDOR",
+                "PENDING_MORE_MANAGEMENT_AVAILABILITY",
+            ],
+            "pending": ["PENDING_VENDOR"],
+            "completed": ["COMPLETED"],
+            "canceled": ["MANAGER_CANCELED"],
+        }
+        for s in slug_to_states.get(status.lower(), [status]):
+            params.append(("status", s))
+    path = "melds/?" + urllib.parse.urlencode(params)
+    result = _http_get(path, cookie_hdr)
+    if isinstance(result, list):
+        return result
+    return result.get("results", [])
+
+
+@with_recapture_retry
 def list_all_maintenance(registered_only: bool = False) -> list:
     """GET /api/all-maintenance/ — 26-key roster shape with composite_id + type.
 
