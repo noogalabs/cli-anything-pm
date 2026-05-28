@@ -88,7 +88,26 @@ def list_work_orders(
     The CLI exposes friendlier slugs ("open", "pending", "completed",
     "canceled"). "open" maps to ALL three PENDING_* states sent as repeated
     `status=` query params, which Nexus interprets as a logical OR.
+
+    --no-tenant-linked routing: PM's Nexus server-side filter uses the wrong
+    predicate (`has_registered_tenant=False` instead of `len(tenants)==0`),
+    returning false positives for melds whose tenant simply hasn't registered
+    for the PM portal. Nexus list response also OMITS the tenants[] field so
+    we can't post-filter client-side here. When this flag is set we delegate
+    to cookie-path `/api/melds/` via http_backend.list_work_orders_rich (which
+    returns the tenants[] field) and filter on `not r.get("tenants")`. Remove
+    the delegation once PM fixes the server-side predicate.
     """
+    # Delegate to cookie-path when we need the tenants[] field that Nexus omits.
+    # Other server-side Nexus filters (assigned_to_*, stuck_hours, etc) don't
+    # apply on the cookie path — callers combining --no-tenant-linked with
+    # those filters get tenants-empty results only (the common AM-sweep case).
+    if no_tenant_linked:
+        from . import http_backend
+        rich = http_backend.list_work_orders_rich(limit=max(limit * 4, 100), status=status)
+        filtered = [r for r in rich if not r.get("tenants")]
+        return filtered[:limit]
+
     params: list[tuple[str, str]] = [("limit", str(limit))]
     if status:
         slug_to_states = {
@@ -114,8 +133,6 @@ def list_work_orders(
         params.append(("created_since", created_since))
     if status_not:
         params.append(("status_not", status_not))
-    if no_tenant_linked:
-        params.append(("no_tenant_linked", "true"))
 
     data = _api_get("/meld/", params)
     results = data.get("results", data) if isinstance(data, dict) else data
