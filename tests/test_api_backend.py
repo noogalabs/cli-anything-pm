@@ -113,6 +113,13 @@ class TestListWorkOrders:
     def test_no_tenant_linked_delegates_to_cookie_path_helper(self):
         # When no_tenant_linked=True, api_backend should bypass Nexus and call
         # http_backend.list_work_orders_rich which returns the tenants[] field.
+        # Fixture covers three tenants-field shapes intentionally:
+        #   * tenants=[]     → empty list, the canonical 'no tenant linked' case
+        #   * tenants=[...]  → populated, must be filtered OUT
+        #   * tenants=None   → null/missing field, treated as no-tenant-linked
+        #                      so a malformed PM response can't silently slip a
+        #                      real meld past the filter (truthy-check semantics
+        #                      documented in api_backend.list_work_orders).
         rich_results = [
             {"id": 1001, "tenants": []},
             {"id": 1002, "tenants": [{"id": 5, "first_name": "Reece"}]},
@@ -141,6 +148,32 @@ class TestListWorkOrders:
             results = api_backend.list_work_orders(no_tenant_linked=True, limit=10)
         assert len(results) == 10
         assert [r["id"] for r in results] == list(range(10))
+
+    @pytest.mark.parametrize("flag_kwarg,flag_name", [
+        ("assigned_to_tech", "--assigned-to-tech"),
+        ("assigned_to_vendor", "--assigned-to-vendor"),
+        ("stuck_hours", "--stuck-hours"),
+        ("created_since", "--created-since"),
+        ("status_not", "--status-not"),
+    ])
+    def test_no_tenant_linked_rejects_incompatible_filter_combos(
+        self, flag_kwarg, flag_name, capsys
+    ):
+        # Combining --no-tenant-linked with Nexus-only filters silently
+        # returned the wrong meld set pre-fix (cookie-path delegation drops
+        # those query params). Loud-fail per silent-failure-half-ships rule.
+        kwargs = {"no_tenant_linked": True, flag_kwarg: 99 if flag_kwarg != "created_since" and flag_kwarg != "status_not" else "x"}
+        with patch(
+            "cli_anything.propertymeld.http_backend.list_work_orders_rich"
+        ) as mock_rich:
+            with pytest.raises(SystemExit) as exc_info:
+                api_backend.list_work_orders(**kwargs)
+        assert exc_info.value.code == 2
+        # The rich-path delegation must NOT fire when the combo is rejected.
+        assert mock_rich.call_count == 0
+        captured = capsys.readouterr()
+        assert flag_name in captured.err
+        assert "no-tenant-linked" in captured.err.lower()
 
 
 class TestGetWorkOrder:

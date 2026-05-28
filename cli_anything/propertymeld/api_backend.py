@@ -99,10 +99,44 @@ def list_work_orders(
     the delegation once PM fixes the server-side predicate.
     """
     # Delegate to cookie-path when we need the tenants[] field that Nexus omits.
-    # Other server-side Nexus filters (assigned_to_*, stuck_hours, etc) don't
-    # apply on the cookie path — callers combining --no-tenant-linked with
-    # those filters get tenants-empty results only (the common AM-sweep case).
+    # The cookie-path /api/melds/ list endpoint does NOT honor the Nexus
+    # query filter set (assigned_to_*, stuck_hours, created_since, status_not).
+    # Silently dropping those filters when --no-tenant-linked is combined with
+    # them returns wrong-meld sets to the caller — a silent-failure-half-ship
+    # per locked rule (feedback_no_silent_failure_half_ships, 2026-05-23).
+    # Reject the combo loudly until v1.1 wires client-side filtering on the
+    # cookie response. AM-sweep case (--no-tenant-linked + status alone) ships
+    # clean; combo callers get a clear error and choose to drop the conflict
+    # or wait for the full-feature fix.
+    #
+    # Over-fetch heuristic: max(limit*4, 100). Sized for typical AM-sweep where
+    # truly-empty melds are ~10-20% of the open list. For atypical workloads
+    # (e.g. limit=500 + low FP ratio) the post-filter can silently truncate
+    # without surfacing 'result may be incomplete'. Switch to _paginate_all in
+    # http_backend.list_work_orders_rich if a real consumer needs accurate
+    # full-corpus filtering past the 100-per-page cap.
+    #
+    # `tenants` field can be a list, None, or missing — truthy-check `not
+    # r.get("tenants")` treats all three as 'no tenant linked' so a malformed
+    # response can't silently slip a real meld past the filter.
     if no_tenant_linked:
+        incompatible = {
+            "--assigned-to-tech": assigned_to_tech,
+            "--assigned-to-vendor": assigned_to_vendor,
+            "--stuck-hours": stuck_hours,
+            "--created-since": created_since,
+            "--status-not": status_not,
+        }
+        set_flags = [name for name, val in incompatible.items() if val is not None]
+        if set_flags:
+            print_error(
+                "--no-tenant-linked cannot be combined with "
+                f"{', '.join(set_flags)} yet — the cookie-path delegation "
+                "drops Nexus query params. Drop the conflicting flag(s) or "
+                "use --no-tenant-linked alone (status + limit still apply)."
+            )
+            sys.exit(2)
+
         from . import http_backend
         rich = http_backend.list_work_orders_rich(limit=max(limit * 4, 100), status=status)
         filtered = [r for r in rich if not r.get("tenants")]
