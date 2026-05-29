@@ -410,6 +410,46 @@ def _http_patch(path: str, payload: dict, cookie_hdr: str, csrf_token: str, *, s
         sys.exit(1)
 
 
+def _http_patch_no_exit(path: str, payload: dict, cookie_hdr: str, csrf_token: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
+    """PATCH variant that RETURNS a normalized error dict on non-401 HTTPError
+    instead of sys.exit(1).
+
+    The default _http_patch sys.exit(1)s on error, which is correct for the
+    20+ top-level CLI write paths that have no artifact to lose. But callers
+    that have ALREADY created an artifact (e.g. clone_meld's post-create
+    coordinator assignment) must NOT hard-exit — that would orphan the new
+    meld and drop its id. Those callers use this variant and inspect the
+    returned dict for an `error`/`status_code` to recover (return the artifact
+    id + a loud warning) instead of dying.
+
+    401 still raises SessionExpired so @with_recapture_retry can re-auth —
+    that path is unchanged. Only non-401 HTTPErrors are converted to a dict.
+    """
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        _build_url(path, side=side, vendor_id=vendor_id),
+        data=data,
+        method="PATCH",
+        headers={
+            "Cookie": cookie_hdr,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-CSRFToken": csrf_token,
+            "X-Requested-With": "XMLHttpRequest",
+            "User-Agent": UA,
+            "Referer": f"{BASE}/melds/",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
+        body = e.read().decode("utf-8", errors="ignore")
+        return normalize_http_error(e.code, body)
+
+
 def _http_delete(path: str, cookie_hdr: str, csrf_token: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
     """DELETE a browser-session API path. Returns parsed JSON, or {} on 204."""
     req = urllib.request.Request(
@@ -660,7 +700,13 @@ def set_coordinator(meld_id: str, user_id: int) -> dict:
         "coordinator": int(user_id),
     }
 
-    result = _http_patch(f"melds/{meld_id}/", payload, cookie_hdr, csrf_token)
+    # Use the NON-EXITING patch variant: set_coordinator is called by
+    # clone_meld AFTER the clone POST already created a meld, so a coordinator
+    # PATCH 4xx/5xx must return {ok: False} (letting clone_meld surface a loud
+    # warning + still return the new meld id) rather than sys.exit(1) and
+    # orphan the clone. 401 still raises SessionExpired inside the helper, so
+    # @with_recapture_retry re-auths unchanged.
+    result = _http_patch_no_exit(f"melds/{meld_id}/", payload, cookie_hdr, csrf_token)
     if isinstance(result, dict) and isinstance(result.get("status_code"), int) and result["status_code"] >= 400:
         return {"ok": False, "error": "coordinator PATCH failed", "detail": result}
 
