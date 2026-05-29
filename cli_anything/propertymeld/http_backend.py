@@ -521,11 +521,15 @@ def clone_meld(
     tenant_presence_required: Optional[bool] = None,
     unit_id: Optional[int] = None,
     priority: Optional[str] = None,
+    coordinator_id: Optional[int] = None,
 ) -> dict:
     """Clone a meld by reading the original and POSTing a copy to /api/melds/.
 
     Copies: brief_description, work_category, work_location, unit, description,
-    priority, tenants, maintenance.
+    work_type, priority, and the coordinator. The coordinator is inherited from
+    the source meld via a follow-up set_coordinator() PATCH after the clone is
+    created (the create POST does not have a verified coordinator-write shape),
+    so a coordinator failure never blocks the clone itself.
 
     Args:
         meld_id: Source meld ID to clone.
@@ -534,7 +538,10 @@ def clone_meld(
         description: Override long-form description for the clone.
         tenant_presence_required: Optional override for tenant-presence gate.
         unit_id: Optional override for target unit id.
-        priority: Optional override for priority (LOW|MED|HIGH|EMERGENCY).
+        priority: Optional override for priority (LOW|MEDIUM|HIGH|EMERGENCY).
+        coordinator_id: Optional override coordinator user id. When omitted the
+            clone inherits the source meld's coordinator; when None and the
+            source has no coordinator, no coordinator is set.
     """
     meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
@@ -580,13 +587,86 @@ def clone_meld(
 
     result = _http_post("melds/", payload, cookie_hdr, csrf_token)
     new_id = result.get("id")
-    return {
+
+    # Inherit the coordinator (single-field on melds). The detail GET returns
+    # coordinator as an object {id, ...}; the explicit --coordinator-id override
+    # wins, otherwise we carry the source's coordinator id forward. Set it via
+    # the verified full-echo PATCH (set_coordinator) AFTER the clone exists so a
+    # coordinator failure surfaces as a warning rather than dropping the clone.
+    src_coord = original.get("coordinator")
+    src_coord_id = (
+        src_coord.get("id") if isinstance(src_coord, dict)
+        else (src_coord if isinstance(src_coord, int) else None)
+    )
+    coord_to_set = coordinator_id if coordinator_id is not None else src_coord_id
+
+    out = {
         "ok": True,
         "cloned_from": meld_id,
         "new_meld_id": new_id,
         "brief_description": desc,
         "reference_id": result.get("reference_id"),
     }
+
+    if coord_to_set is not None and new_id is not None:
+        coord_result = set_coordinator(new_id, int(coord_to_set))
+        if coord_result.get("ok"):
+            out["coordinator_id"] = coord_result.get("coordinator_id")
+        else:
+            # Loud, not silent: the clone succeeded but coordinator assignment
+            # did not — the caller must know to set it manually.
+            out["coordinator_warning"] = (
+                f"clone created (meld {new_id}) but coordinator assignment "
+                f"to {coord_to_set} failed: {coord_result.get('error')}"
+            )
+
+    return out
+
+
+@with_recapture_retry
+def set_coordinator(meld_id: str, user_id: int) -> dict:
+    """Set the coordinator on a meld via a full-payload-echo PATCH.
+
+    PM requires a FULL payload echo on meld PATCH — a delta PATCH returns HTTP
+    400 with field-required errors for brief_description, work_location,
+    work_category, work_type, and priority (verified live 2026-05-29). So we
+    fetch the current meld, overlay the coordinator, and PATCH the full required
+    set. The coordinator detail-GET shape is an object {id, ...}, but PATCH
+    accepts the bare int user id (verified live, same session).
+
+    Args:
+        meld_id: Meld ID to set the coordinator on.
+        user_id: ManagementAgent user id to assign as coordinator.
+    """
+    meld_id = _validate_meld_id(meld_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+
+    current = _http_get(f"melds/{meld_id}/", cookie_hdr)
+    if not isinstance(current, dict) or current.get("error"):
+        return {
+            "ok": False,
+            "error": "could not fetch current meld state for full-payload echo",
+            "detail": current,
+        }
+
+    payload: dict = {
+        "brief_description": current.get("brief_description"),
+        "work_location": current.get("work_location") or "",
+        "work_category": current.get("work_category"),
+        "work_type": current.get("work_type"),
+        "priority": current.get("priority"),
+        "coordinator": int(user_id),
+    }
+
+    result = _http_patch(f"melds/{meld_id}/", payload, cookie_hdr, csrf_token)
+    if isinstance(result, dict) and isinstance(result.get("status_code"), int) and result["status_code"] >= 400:
+        return {"ok": False, "error": "coordinator PATCH failed", "detail": result}
+
+    new_coord = result.get("coordinator") if isinstance(result, dict) else None
+    coord_id = new_coord.get("id") if isinstance(new_coord, dict) else new_coord
+    return {"ok": True, "meld_id": meld_id, "coordinator_id": coord_id}
 
 
 @with_recapture_retry
