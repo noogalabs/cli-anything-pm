@@ -330,7 +330,48 @@ class TestWorkOrdersLifecycleCLI:
             tenant_presence_required=False,
             unit_id=9000005,
             priority="LOW",
+            coordinator_id=None,
         )
+
+    def test_clone_priority_medium_token_is_accepted(self, runner):
+        """Regression: PM's real enum is MEDIUM (not MED). --priority medium
+        must normalize to 'MEDIUM'; the old 'med' token is no longer a valid
+        Click choice."""
+        with patch("cli_anything.propertymeld.http_backend.clone_meld",
+                   return_value={"ok": True, "new_meld_id": 778}) as mock_fn:
+            ok = runner.invoke(cli, ["work-orders", "clone",
+                                     "--meld-id", "90000014",
+                                     "--priority", "medium"])
+            bad = runner.invoke(cli, ["work-orders", "clone",
+                                      "--meld-id", "90000014",
+                                      "--priority", "med"])
+        assert ok.exit_code == 0
+        assert mock_fn.call_args.kwargs["priority"] == "MEDIUM"
+        # 'med' is no longer a valid choice — Click rejects before the backend.
+        assert bad.exit_code != 0
+        assert "med" in bad.output.lower()
+
+    def test_clone_coordinator_id_override_passes_through(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.clone_meld",
+                   return_value={"ok": True, "new_meld_id": 779,
+                                 "coordinator_id": 99999}) as mock_fn:
+            result = runner.invoke(cli, ["work-orders", "clone",
+                                         "--meld-id", "90000014",
+                                         "--coordinator-id", "99999"])
+        assert result.exit_code == 0
+        assert mock_fn.call_args.kwargs["coordinator_id"] == 99999
+
+    def test_set_coordinator_cmd_calls_backend(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.set_coordinator",
+                   return_value={"ok": True, "meld_id": 90000014,
+                                 "coordinator_id": 90025}) as mock_fn:
+            result = runner.invoke(cli, ["work-orders", "set-coordinator",
+                                         "--meld-id", "90000014",
+                                         "--user-id", "90025"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["coordinator_id"] == 90025
+        mock_fn.assert_called_once_with("90000014", 90025)
 
     def test_merge_into_destination_legacy_flags(self, runner):
         """Backwards-compat path: --meld-id + --into are mapped to the captured

@@ -292,8 +292,11 @@ def send_message(meld_id, text, hide_tenant, hide_vendor, hide_owner, as_json):
               help="Force tenant_presence_required=false on the clone")
 @click.option("--unit-id", type=int, default=None,
               help="Override unit id for the clone")
-@click.option("--priority", type=click.Choice(["LOW", "MED", "HIGH", "EMERGENCY"], case_sensitive=False),
+@click.option("--priority", type=click.Choice(["LOW", "MEDIUM", "HIGH", "EMERGENCY"], case_sensitive=False),
               default=None, help="Override priority for the clone")
+@click.option("--coordinator-id", "coordinator_id", type=int, default=None,
+              help="Override the inherited coordinator with this user id. "
+                   "By default the clone inherits the source meld's coordinator.")
 @click.option("--json", "as_json", is_flag=True, default=True)
 def clone_meld(
     meld_id,
@@ -302,9 +305,14 @@ def clone_meld(
     tenant_presence_required,
     unit_id,
     priority,
+    coordinator_id,
     as_json,
 ):
-    """Clone a meld — creates a new meld with the same details (plain HTTP)."""
+    """Clone a meld — creates a new meld with the same details (plain HTTP).
+
+    The clone inherits the source meld's coordinator by default; pass
+    --coordinator-id to assign a different one.
+    """
     meld_id = _normalize_meld_id(meld_id)
     result = http_backend.clone_meld(
         meld_id,
@@ -313,7 +321,24 @@ def clone_meld(
         tenant_presence_required=tenant_presence_required,
         unit_id=unit_id,
         priority=priority.upper() if isinstance(priority, str) else None,
+        coordinator_id=coordinator_id,
     )
+    output_json(result)
+
+
+@work_orders.command("set-coordinator")
+@click.option("--meld-id", required=True, help="Meld ID to set the coordinator on")
+@click.option("--user-id", "user_id", type=int, required=True,
+              help="ManagementAgent user id to assign as coordinator")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def set_coordinator_cmd(meld_id, user_id, as_json):
+    """Set the coordinator on a meld.
+
+    PM requires a full-payload echo on meld PATCH; the backend handles that by
+    fetching current state and overlaying the coordinator.
+    """
+    meld_id = _normalize_meld_id(meld_id)
+    result = http_backend.set_coordinator(meld_id, user_id)
     output_json(result)
 
 
