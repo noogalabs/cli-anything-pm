@@ -1000,22 +1000,37 @@ class TestUnitAndAgentHydration:
 
 
 class TestPatchMeldProjectLink:
-    """PATCH /api/melds/{id}/ with {"id":<m>,"project":<pid|None>} — pm-capture verified."""
+    """PATCH /api/melds/{id}/ — full-payload echo (delta 400s, verified live 2026-05-29)."""
+
+    # Current meld returned by the GET that feeds the full-echo payload.
+    _CURRENT_MELD = {
+        "id": 12772756,
+        "brief_description": "b",
+        "work_location": "loc",
+        "work_category": "APPLIANCES",
+        "work_type": "TURN",
+        "priority": "MEDIUM",
+        "project": None,
+    }
+    _ECHO_FIELDS = ("brief_description", "work_location", "work_category", "work_type", "priority")
 
     def _patched(self):
         return (
             patch("cli_anything.propertymeld.http_backend._load_creds"),
             patch("cli_anything.propertymeld.http_backend._cookie_header"),
             patch("cli_anything.propertymeld.http_backend._get_csrf_token"),
+            patch("cli_anything.propertymeld.http_backend._http_get"),
             patch("cli_anything.propertymeld.http_backend._http_patch"),
         )
 
     def test_attach(self):
-        mock_creds_p, mock_cookie_p, mock_csrf_p, mock_patch_p = self._patched()
-        with mock_creds_p as mc, mock_cookie_p as mch, mock_csrf_p as mcs, mock_patch_p as mpt:
+        mock_creds_p, mock_cookie_p, mock_csrf_p, mock_get_p, mock_patch_p = self._patched()
+        with mock_creds_p as mc, mock_cookie_p as mch, mock_csrf_p as mcs, \
+             mock_get_p as mg, mock_patch_p as mpt:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
+            mg.return_value = dict(self._CURRENT_MELD)
             mpt.return_value = {"id": 12772756, "project": 222959}
 
             result = http_backend.patch_meld_project_link("12772756", 222959)
@@ -1025,14 +1040,21 @@ class TestPatchMeldProjectLink:
             assert result["project_id"] == 222959
             path, payload, _, _ = mpt.call_args[0]
             assert path == "melds/12772756/"
-            assert payload == {"id": 12772756, "project": 222959}
+            # Full-echo: every required field present (delta would 400 in prod),
+            # plus the project being set. A regression to a delta payload fails here.
+            for field in self._ECHO_FIELDS:
+                assert field in payload, f"full-echo payload missing {field}"
+            assert payload["project"] == 222959
+            assert "id" not in payload
 
     def test_detach_sends_null(self):
-        mock_creds_p, mock_cookie_p, mock_csrf_p, mock_patch_p = self._patched()
-        with mock_creds_p as mc, mock_cookie_p as mch, mock_csrf_p as mcs, mock_patch_p as mpt:
+        mock_creds_p, mock_cookie_p, mock_csrf_p, mock_get_p, mock_patch_p = self._patched()
+        with mock_creds_p as mc, mock_cookie_p as mch, mock_csrf_p as mcs, \
+             mock_get_p as mg, mock_patch_p as mpt:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
+            mg.return_value = dict(self._CURRENT_MELD)
             mpt.return_value = {"id": 12772756, "project": None}
 
             result = http_backend.patch_meld_project_link("12772756", None)
@@ -1040,7 +1062,10 @@ class TestPatchMeldProjectLink:
             assert result["ok"] is True
             assert result["project_id"] is None
             _, payload, _, _ = mpt.call_args[0]
-            assert payload == {"id": 12772756, "project": None}
+            for field in self._ECHO_FIELDS:
+                assert field in payload, f"full-echo payload missing {field}"
+            assert payload["project"] is None
+            assert "id" not in payload
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1314,7 +1339,13 @@ class TestLinkTenantToMeld:
             assert result["tenant_count"] == 2
             path, payload, _, _ = mp.call_args[0]
             assert path == "melds/90000003/"
-            assert payload["id"] == 90000003
+            # Full-echo PATCH: required meld fields must be present (delta 400s in
+            # prod, verified live 2026-05-29). A regression to a delta payload
+            # (just {"id", "tenants"}) fails these assertions.
+            for field in ("brief_description", "work_location", "work_category",
+                          "work_type", "priority"):
+                assert field in payload, f"full-echo payload missing {field}"
+            assert "id" not in payload
             assert len(payload["tenants"]) == 2
             assert _TENANT_FIXTURE in payload["tenants"]
             assert existing in payload["tenants"]

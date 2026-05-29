@@ -2440,10 +2440,13 @@ def create_meld(
 def link_tenant_to_meld(meld_id: str, tenant_id) -> dict:
     """Link a tenant to a meld by appending to the meld's tenants array.
 
-    PATCH /api/melds/{meld_id}/ with {"id": meld_id, "tenants": [<merged array>]}.
-    Mirrors the patch_meld_project_link shape (verified 2026-05-13). Tenants
-    field is replaced atomically — we read existing tenants first, append the
-    new tenant as a fully-hydrated object, and PATCH the merged array.
+    PATCH /api/melds/{meld_id}/ requires a full-payload echo: delta PATCHes
+    return HTTP 400 with field-required errors for brief_description,
+    work_location, work_category, work_type, and priority (verified live
+    2026-05-29), mirroring the set_coordinator shape. Tenants field is replaced
+    atomically — we read existing tenants first, append the new tenant as a
+    fully-hydrated object, and PATCH the merged array with the required meld
+    fields echoed from the current meld.
 
     Hydration mirrors the create_meld_in_project fix (P1 #2): PM serializers
     may walk nested fields on the tenants array, so we send full objects from
@@ -2479,7 +2482,14 @@ def link_tenant_to_meld(meld_id: str, tenant_id) -> dict:
     merged_tenants = list(existing_tenants) + [new_tenant]
 
     csrf_token = _get_csrf_token(cookie_hdr)
-    payload = {"id": meld_id, "tenants": merged_tenants}
+    payload = {
+        "brief_description": current.get("brief_description"),
+        "work_location": current.get("work_location") or "",
+        "work_category": current.get("work_category"),
+        "work_type": current.get("work_type"),
+        "priority": current.get("priority"),
+        "tenants": merged_tenants,
+    }
     result = _http_patch(f"melds/{meld_id}/", payload, cookie_hdr, csrf_token)
     return {
         "ok": True,
@@ -2495,8 +2505,11 @@ def link_tenant_to_meld(meld_id: str, tenant_id) -> dict:
 def patch_meld_project_link(meld_id: str, project_id) -> dict:
     """Attach or detach a meld's project link.
 
-    PATCH /api/melds/{meld_id}/ with {"id": meld_id, "project": <pid|None>}
-    — verified shape from pm-capture 2026-05-13.
+    PATCH /api/melds/{meld_id}/ requires a full-payload echo: delta PATCHes
+    return HTTP 400 with field-required errors for brief_description,
+    work_location, work_category, work_type, and priority (verified live
+    2026-05-29). We fetch the current meld, echo those required fields, and
+    overlay project.
 
     Pass project_id=None to detach. Pass an integer or string project id to
     attach. PM stores the linked project id back on the meld.
@@ -2504,8 +2517,16 @@ def patch_meld_project_link(meld_id: str, project_id) -> dict:
     meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
+    current = _http_get(f"melds/{meld_id}/", cookie_hdr)
     csrf_token = _get_csrf_token(cookie_hdr)
-    payload: dict = {"id": meld_id, "project": project_id}
+    payload: dict = {
+        "brief_description": current.get("brief_description"),
+        "work_location": current.get("work_location") or "",
+        "work_category": current.get("work_category"),
+        "work_type": current.get("work_type"),
+        "priority": current.get("priority"),
+        "project": project_id,
+    }
     result = _http_patch(f"melds/{meld_id}/", payload, cookie_hdr, csrf_token)
     return {"ok": True, "meld_id": meld_id, "project_id": project_id, "result": result}
 
