@@ -207,6 +207,42 @@ def _http_get(path: str, cookie_hdr: str, *, side: str = "manager", vendor_id: O
         sys.exit(1)
 
 
+def _http_get_no_exit(path: str, cookie_hdr: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
+    """GET variant that RETURNS a normalized error dict on non-401 HTTPError
+    instead of sys.exit(1).
+
+    Sibling of _http_patch_no_exit, for the SAME reason: callers that have
+    already created an artifact (clone_meld's post-create coordinator
+    assignment does fetch-first to build the full-echo PATCH payload) must not
+    hard-exit on a read-after-write 404 or a 403/500 on the detail fetch —
+    that would orphan the new meld and drop its id one step BEFORE the no-exit
+    PATCH path is even reached. Those callers use this variant and inspect the
+    returned dict for an `error`/`status_code` to recover.
+
+    401 still raises SessionExpired so @with_recapture_retry can re-auth —
+    that path is unchanged. Only non-401 HTTPErrors are converted to a dict.
+    Global _http_get is untouched; its other callers keep sys.exit semantics.
+    """
+    req = urllib.request.Request(
+        _build_url(path, side=side, vendor_id=vendor_id),
+        headers={
+            "Cookie": cookie_hdr,
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "User-Agent": UA,
+            "Referer": f"{BASE}/melds/",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
+        body = e.read().decode("utf-8", errors="ignore")
+        return normalize_http_error(e.code, body)
+
+
 def _paginate_all(path: str, cookie_hdr: str, max_pages: int = 50) -> list:
     """Walk the DRF `next` link chain and concatenate `results` arrays.
 
@@ -683,7 +719,12 @@ def set_coordinator(meld_id: str, user_id: int) -> dict:
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
 
-    current = _http_get(f"melds/{meld_id}/", cookie_hdr)
+    # NON-EXITING fetch: when set_coordinator runs from clone_meld AFTER the
+    # clone POST, a read-after-write 404 or a 403/500 on this detail GET must
+    # return {ok: False} (so clone_meld surfaces a warning + still returns the
+    # new meld id) rather than sys.exit(1) and orphan the clone one step before
+    # the no-exit PATCH leg. 401 still raises SessionExpired inside the helper.
+    current = _http_get_no_exit(f"melds/{meld_id}/", cookie_hdr)
     if not isinstance(current, dict) or current.get("error"):
         return {
             "ok": False,

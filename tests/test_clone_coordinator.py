@@ -32,7 +32,8 @@ SOURCE_MELD = {
 class TestSetCoordinator:
     def test_full_echo_payload_with_int_coordinator(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
-        monkeypatch.setattr(hb, "_http_get", lambda path, ck: dict(SOURCE_MELD))
+        # set_coordinator fetch-first uses the NON-EXITING get variant.
+        monkeypatch.setattr(hb, "_http_get_no_exit", lambda path, ck: dict(SOURCE_MELD))
         captured = {}
 
         def fake_patch(path, payload, ck, csrf):
@@ -58,10 +59,11 @@ class TestSetCoordinator:
 
     def test_fetch_failure_surfaces_error_not_silent(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
-        monkeypatch.setattr(hb, "_http_get",
+        # Fetch returns an error dict (no exit) — the NO-EXIT get variant.
+        monkeypatch.setattr(hb, "_http_get_no_exit",
                             lambda path, ck: {"error": "HTTP 404", "status_code": 404})
-        # _http_patch must NOT be called if the fetch failed.
-        monkeypatch.setattr(hb, "_http_patch",
+        # PATCH must NOT be attempted if the fetch failed.
+        monkeypatch.setattr(hb, "_http_patch_no_exit",
                             lambda *a, **k: pytest.fail("PATCH attempted despite fetch failure"))
         result = hb.set_coordinator(111, 57163)
         assert result["ok"] is False
@@ -69,7 +71,7 @@ class TestSetCoordinator:
 
     def test_patch_400_surfaces_error(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
-        monkeypatch.setattr(hb, "_http_get", lambda path, ck: dict(SOURCE_MELD))
+        monkeypatch.setattr(hb, "_http_get_no_exit", lambda path, ck: dict(SOURCE_MELD))
         # set_coordinator must use the NON-EXITING patch variant.
         monkeypatch.setattr(hb, "_http_patch_no_exit",
                             lambda *a, **k: {"error": "HTTP 400", "status_code": 400})
@@ -113,6 +115,27 @@ class TestHttpPatchNoExit:
         # 401 must still raise SessionExpired (recapture-retry path unchanged).
         with pytest.raises(hb.SessionExpired):
             hb._http_patch_no_exit("melds/1/", {"x": 1}, "ck", "csrf")
+
+    def test_http_get_no_exit_returns_error_dict_on_4xx_not_systemexit(self, monkeypatch):
+        err = self._raise_httperror(404)
+
+        def boom(req, **kw):
+            raise err
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", boom)
+        result = hb._http_get_no_exit("melds/1/", "ck")
+        assert isinstance(result, dict)
+        assert result["status_code"] == 404
+
+    def test_http_get_no_exit_preserves_session_expired_on_401(self, monkeypatch):
+        err = self._raise_httperror(401)
+
+        def boom(req, **kw):
+            raise err
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", boom)
+        with pytest.raises(hb.SessionExpired):
+            hb._http_get_no_exit("melds/1/", "ck")
 
 
 class TestCloneCoordinatorInheritance:
@@ -186,8 +209,8 @@ class TestCloneCoordinatorInheritance:
         the REAL set_coordinator -> _http_patch_no_exit path (set_coordinator is
         NOT mocked here) — the earlier test mocked it too high to catch this."""
         _patch_creds_csrf(monkeypatch)
-        # _http_get serves both the source read and set_coordinator's echo read.
-        monkeypatch.setattr(hb, "_http_get", lambda path, ck: dict(SOURCE_MELD))
+        monkeypatch.setattr(hb, "_http_get", lambda path, ck: dict(SOURCE_MELD))  # clone source read
+        monkeypatch.setattr(hb, "_http_get_no_exit", lambda path, ck: dict(SOURCE_MELD))  # set_coordinator echo read
         monkeypatch.setattr(hb, "_http_post",
                             lambda path, payload, ck, csrf: {"id": 999, "reference_id": "TNEW"})
         # The follow-up coordinator PATCH returns a 4xx error dict (no exit).
@@ -202,5 +225,32 @@ class TestCloneCoordinatorInheritance:
 
         assert result["ok"] is True
         assert result["new_meld_id"] == 999  # clone id preserved
+        assert "coordinator_warning" in result
+        assert "57163" in result["coordinator_warning"]
+
+    def test_clone_coordinator_FETCH_fails_returns_id_and_warning_not_exit(self, monkeypatch):
+        """Second-boundary P2 (Codex re-review of the fix): set_coordinator does
+        fetch-FIRST for the full-echo payload, and that GET also used to
+        sys.exit on non-401. A post-clone read-after-write 404/500 on the echo
+        fetch must NOT exit — clone id is preserved + warning emitted. Exercises
+        the REAL set_coordinator path with the FETCH leg failing (not the PATCH)."""
+        _patch_creds_csrf(monkeypatch)
+        monkeypatch.setattr(hb, "_http_get", lambda path, ck: dict(SOURCE_MELD))  # clone source read
+        monkeypatch.setattr(hb, "_http_post",
+                            lambda path, payload, ck, csrf: {"id": 999, "reference_id": "TNEW"})
+        # set_coordinator's fetch-first GET returns a 404 error dict (no exit).
+        monkeypatch.setattr(hb, "_http_get_no_exit",
+                            lambda path, ck: {"error": "HTTP 404", "status_code": 404})
+        # Guards: neither EXITING helper may run on this recovery path.
+        monkeypatch.setattr(hb, "_http_patch",
+                            lambda *a, **k: pytest.fail("clone path used the sys.exit _http_patch"))
+        # PATCH must never be reached because the fetch failed first.
+        monkeypatch.setattr(hb, "_http_patch_no_exit",
+                            lambda *a, **k: pytest.fail("PATCH attempted despite failed echo fetch"))
+
+        result = hb.clone_meld(111)  # must NOT raise SystemExit
+
+        assert result["ok"] is True
+        assert result["new_meld_id"] == 999  # clone id preserved despite fetch failure
         assert "coordinator_warning" in result
         assert "57163" in result["coordinator_warning"]
