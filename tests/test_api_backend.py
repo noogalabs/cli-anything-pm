@@ -216,8 +216,8 @@ class TestListWorkOrders:
         assert mock_rich.call_count == 1
         assert results[0]["in_house_servicers"][0]["agent"]["id"] == 57544
         assert results[0]["managementappointment"][0]["id"] == 7001
-        assert results[1]["vendor_assignment_requests"][0]["vendor"]["name"] == "Dyer HVAC"
-        assert results[1]["vendorappointment"][0]["id"] == 8001
+        assert "vendor_assignment_requests" not in results[0]
+        assert "vendorappointment" not in results[0]
 
     def test_include_tech_empty_when_no_tech(self):
         with patch("urllib.request.urlopen") as mock_open, patch(
@@ -232,8 +232,8 @@ class TestListWorkOrders:
 
         assert results[0]["in_house_servicers"] == []
         assert results[0]["managementappointment"] == []
-        assert results[0]["vendor_assignment_requests"] == []
-        assert results[0]["vendorappointment"] == []
+        assert "vendor_assignment_requests" not in results[0]
+        assert "vendorappointment" not in results[0]
 
     def test_include_tech_preserves_existing_nexus_assignment_fields(self):
         nexus_managementappointment = [{"id": 7001, "in_house_servicers": [57544]}]
@@ -324,8 +324,6 @@ class TestGetWorkOrder:
                     },
                 }
             ],
-            "vendor_assignment_requests": [],
-            "vendorappointment": [],
         }
         with patch("urllib.request.urlopen") as mock_open, patch(
             "cli_anything.propertymeld.http_backend.get_work_order_rich",

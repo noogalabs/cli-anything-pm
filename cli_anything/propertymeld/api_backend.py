@@ -203,8 +203,6 @@ def _list_work_orders_nexus(
 _ASSIGNMENT_FIELDS = (
     "in_house_servicers",
     "managementappointment",
-    "vendor_assignment_requests",
-    "vendorappointment",
 )
 
 

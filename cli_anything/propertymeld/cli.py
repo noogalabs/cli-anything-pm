@@ -53,7 +53,7 @@ def _normalize_meld_id(meld_id):
 @click.option("--no-tenant-linked", is_flag=True, default=False,
               help="Filter to melds with no linked tenant")
 @click.option("--include-tech", is_flag=True, default=False,
-              help="Include rich technician assignment fields")
+              help="Include in-house technician fields; vendor data is separate")
 @click.option("--limit", default=25, show_default=True, help="Maximum results")
 @click.option("--json", "as_json", is_flag=True, default=True, help="Output as JSON (default)")
 def list_work_orders(
@@ -86,7 +86,7 @@ def list_work_orders(
 @work_orders.command("get")
 @click.argument("meld_id")
 @click.option("--include-tech", is_flag=True, default=False,
-              help="Include rich technician assignment fields")
+              help="Include in-house technician fields; vendor data is separate")
 @click.option("--json", "as_json", is_flag=True, default=True)
 def get_work_order(meld_id, include_tech, as_json):
     """Get a single work order by ID."""
