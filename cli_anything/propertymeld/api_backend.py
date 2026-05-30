@@ -71,6 +71,7 @@ def list_work_orders(
     created_since: Optional[str] = None,
     status_not: Optional[str] = None,
     no_tenant_linked: bool = False,
+    include_tech: bool = False,
     limit: int = 25,
 ) -> list:
     """List work orders, optionally filtered by status.
@@ -142,6 +143,41 @@ def list_work_orders(
         filtered = [r for r in rich if not r.get("tenants")]
         return filtered[:limit]
 
+    results = _list_work_orders_nexus(
+        status=status,
+        assigned_to_tech=assigned_to_tech,
+        assigned_to_vendor=assigned_to_vendor,
+        stuck_hours=stuck_hours,
+        created_since=created_since,
+        status_not=status_not,
+        limit=limit,
+    )
+    if include_tech:
+        from . import http_backend
+        detail_fetcher = http_backend.get_work_order_rich
+        try:
+            rich = http_backend.list_work_orders_rich(limit=max(limit, 100), status=status)
+        except (Exception, SystemExit) as exc:
+            _warn_include_tech_unavailable(f"cookie list fetch failed: {exc}")
+            rich = []
+            detail_fetcher = lambda _meld_id: {}
+        else:
+            if results and not rich:
+                _warn_include_tech_unavailable("cookie list returned no rows")
+        _merge_assignment_fields(results, rich, detail_fetcher)
+    return results
+
+
+def _list_work_orders_nexus(
+    status: Optional[str] = None,
+    assigned_to_tech: Optional[int] = None,
+    assigned_to_vendor: Optional[int] = None,
+    stuck_hours: Optional[float] = None,
+    created_since: Optional[str] = None,
+    status_not: Optional[str] = None,
+    limit: int = 25,
+) -> list:
+    """List work orders through Nexus only."""
     params: list[tuple[str, str]] = [("limit", str(limit))]
     if status:
         slug_to_states = {
@@ -173,10 +209,61 @@ def list_work_orders(
     return results
 
 
-def get_work_order(meld_id: str) -> dict:
+_ASSIGNMENT_FIELDS = (
+    "in_house_servicers",
+    "managementappointment",
+)
+
+
+def _merge_assignment_fields(
+    base_results: list[dict],
+    rich_results: list[dict],
+    detail_fetcher,
+) -> None:
+    """Merge cookie-path assignment fields into Nexus-shaped work orders."""
+    rich_by_id = {str(r.get("id")): r for r in rich_results if isinstance(r, dict)}
+    for item in base_results:
+        meld_id = str(item.get("id"))
+        rich = rich_by_id.get(meld_id)
+        if rich is None and meld_id and meld_id != "None":
+            try:
+                rich = detail_fetcher(meld_id)
+            except (Exception, SystemExit) as exc:
+                _warn_include_tech_unavailable(
+                    f"cookie detail fetch failed for meld {meld_id}: {exc}"
+                )
+                rich = {}
+        for field in _ASSIGNMENT_FIELDS:
+            if item.get(field):
+                continue
+            item[field] = (rich or {}).get(field) or []
+
+
+def _warn_include_tech_unavailable(reason: str) -> None:
+    print(
+        "Warning: --include-tech could not verify cookie-path in-house tech "
+        f"fields ({reason}); empty in_house_servicers may mean unavailable "
+        "cookie data, not no tech assigned.",
+        file=sys.stderr,
+    )
+
+
+def get_work_order(meld_id: str, include_tech: bool = False) -> dict:
     """Get a single work order by ID."""
-    meld_id = _validate_meld_id(meld_id)
-    return _api_get(f"/meld/{meld_id}/")
+    meld_id = str(_validate_meld_id(meld_id))
+    result = _api_get(f"/meld/{meld_id}/")
+    if include_tech:
+        from . import http_backend
+        try:
+            rich = http_backend.get_work_order_rich(meld_id)
+        except (Exception, SystemExit) as exc:
+            _warn_include_tech_unavailable(
+                f"cookie detail fetch failed for meld {meld_id}: {exc}"
+            )
+            rich = {}
+        for field in _ASSIGNMENT_FIELDS:
+            result[field] = rich.get(field) or []
+    return result
 
 
 def list_properties(limit: int = 100) -> list:
