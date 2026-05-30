@@ -2176,6 +2176,15 @@ def list_work_orders_rich(limit: int = 25, status: Optional[str] = None) -> list
 
 
 @with_recapture_retry
+def get_work_order_rich(meld_id: str) -> dict:
+    """GET /api/melds/{id}/ via cookie-auth for rich assignment fields."""
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    result = _http_get(f"melds/{meld_id}/", cookie_hdr)
+    return result if isinstance(result, dict) else {}
+
+
+@with_recapture_retry
 def list_all_maintenance(registered_only: bool = False) -> list:
     """GET /api/all-maintenance/ — 26-key roster shape with composite_id + type.
 
