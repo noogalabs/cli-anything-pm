@@ -54,6 +54,7 @@ class TestWorkOrdersCLI:
             created_since=None,
             status_not=None,
             no_tenant_linked=False,
+            include_tech=False,
             limit=25,
         )
 
@@ -81,8 +82,17 @@ class TestWorkOrdersCLI:
             created_since="2026-05-18T00:00:00Z",
             status_not="COMPLETED",
             no_tenant_linked=True,
+            include_tech=False,
             limit=25,
         )
+
+    def test_list_with_include_tech_flag(self, runner):
+        with patch("cli_anything.propertymeld.api_backend.list_work_orders",
+                   return_value=MOCK_WO_LIST) as mock_fn:
+            result = runner.invoke(cli, ["work-orders", "list", "--include-tech"])
+        assert result.exit_code == 0
+        mock_fn.assert_called_once()
+        assert mock_fn.call_args.kwargs["include_tech"] is True
 
     def test_get_outputs_single_json(self, runner):
         with patch("cli_anything.propertymeld.api_backend.get_work_order",
@@ -91,6 +101,13 @@ class TestWorkOrdersCLI:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["id"] == 1001
+
+    def test_get_with_include_tech_flag(self, runner):
+        with patch("cli_anything.propertymeld.api_backend.get_work_order",
+                   return_value=MOCK_WO_LIST[0]) as mock_fn:
+            result = runner.invoke(cli, ["work-orders", "get", "1001", "--include-tech"])
+        assert result.exit_code == 0
+        mock_fn.assert_called_once_with("1001", include_tech=True)
 
 
 class TestPropertiesCLI:
