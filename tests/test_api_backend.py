@@ -235,6 +235,46 @@ class TestListWorkOrders:
         assert "vendor_assignment_requests" not in results[0]
         assert "vendorappointment" not in results[0]
 
+    def test_include_tech_warns_when_cookie_list_empty(self, capsys):
+        with patch("urllib.request.urlopen") as mock_open, patch(
+            "cli_anything.propertymeld.http_backend.list_work_orders_rich",
+            return_value=[],
+        ), patch(
+            "cli_anything.propertymeld.http_backend.get_work_order_rich",
+            return_value={},
+        ):
+            mock_open.side_effect = [
+                make_response(TOKEN_RESPONSE),
+                make_response({"results": [{"id": 1001}]}),
+            ]
+            results = api_backend.list_work_orders(include_tech=True)
+
+        assert results[0]["in_house_servicers"] == []
+        captured = capsys.readouterr()
+        assert "Warning: --include-tech" in captured.err
+        assert "cookie list returned no rows" in captured.err
+        assert captured.out == ""
+
+    def test_include_tech_warns_when_cookie_list_fails(self, capsys):
+        with patch("urllib.request.urlopen") as mock_open, patch(
+            "cli_anything.propertymeld.http_backend.list_work_orders_rich",
+            side_effect=RuntimeError("cookie unavailable"),
+        ), patch(
+            "cli_anything.propertymeld.http_backend.get_work_order_rich",
+        ) as mock_detail:
+            mock_open.side_effect = [
+                make_response(TOKEN_RESPONSE),
+                make_response({"results": [{"id": 1001}]}),
+            ]
+            results = api_backend.list_work_orders(include_tech=True)
+
+        assert results[0]["in_house_servicers"] == []
+        assert mock_detail.call_count == 0
+        captured = capsys.readouterr()
+        assert "cookie list fetch failed" in captured.err
+        assert "cookie unavailable" in captured.err
+        assert captured.out == ""
+
     def test_include_tech_preserves_existing_nexus_assignment_fields(self):
         nexus_managementappointment = [{"id": 7001, "in_house_servicers": [57544]}]
         with patch("urllib.request.urlopen") as mock_open, patch(
@@ -338,6 +378,23 @@ class TestGetWorkOrder:
         mock_rich.assert_called_once_with("12904264")
         assert result["in_house_servicers"][0]["agent"]["id"] == 57544
         assert result["managementappointment"][0]["management_assignment"]["in_house_servicers"][0]["last_name"] == "servin"
+
+    def test_include_tech_warns_when_cookie_detail_fails(self, capsys):
+        with patch("urllib.request.urlopen") as mock_open, patch(
+            "cli_anything.propertymeld.http_backend.get_work_order_rich",
+            side_effect=RuntimeError("cookie unavailable"),
+        ):
+            mock_open.side_effect = [
+                make_response(TOKEN_RESPONSE),
+                make_response({"id": 12904264, "status": "PENDING_ASSIGNMENT"}),
+            ]
+            result = api_backend.get_work_order("12904264", include_tech=True)
+
+        assert result["in_house_servicers"] == []
+        captured = capsys.readouterr()
+        assert "cookie detail fetch failed for meld 12904264" in captured.err
+        assert "cookie unavailable" in captured.err
+        assert captured.out == ""
 
 
 class TestListProperties:

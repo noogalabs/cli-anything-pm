@@ -154,8 +154,17 @@ def list_work_orders(
     )
     if include_tech:
         from . import http_backend
-        rich = http_backend.list_work_orders_rich(limit=max(limit, 100), status=status)
-        _merge_assignment_fields(results, rich, http_backend.get_work_order_rich)
+        detail_fetcher = http_backend.get_work_order_rich
+        try:
+            rich = http_backend.list_work_orders_rich(limit=max(limit, 100), status=status)
+        except (Exception, SystemExit) as exc:
+            _warn_include_tech_unavailable(f"cookie list fetch failed: {exc}")
+            rich = []
+            detail_fetcher = lambda _meld_id: {}
+        else:
+            if results and not rich:
+                _warn_include_tech_unavailable("cookie list returned no rows")
+        _merge_assignment_fields(results, rich, detail_fetcher)
     return results
 
 
@@ -217,11 +226,26 @@ def _merge_assignment_fields(
         meld_id = str(item.get("id"))
         rich = rich_by_id.get(meld_id)
         if rich is None and meld_id and meld_id != "None":
-            rich = detail_fetcher(meld_id)
+            try:
+                rich = detail_fetcher(meld_id)
+            except (Exception, SystemExit) as exc:
+                _warn_include_tech_unavailable(
+                    f"cookie detail fetch failed for meld {meld_id}: {exc}"
+                )
+                rich = {}
         for field in _ASSIGNMENT_FIELDS:
             if item.get(field):
                 continue
             item[field] = (rich or {}).get(field) or []
+
+
+def _warn_include_tech_unavailable(reason: str) -> None:
+    print(
+        "Warning: --include-tech could not verify cookie-path in-house tech "
+        f"fields ({reason}); empty in_house_servicers may mean unavailable "
+        "cookie data, not no tech assigned.",
+        file=sys.stderr,
+    )
 
 
 def get_work_order(meld_id: str, include_tech: bool = False) -> dict:
@@ -230,7 +254,13 @@ def get_work_order(meld_id: str, include_tech: bool = False) -> dict:
     result = _api_get(f"/meld/{meld_id}/")
     if include_tech:
         from . import http_backend
-        rich = http_backend.get_work_order_rich(meld_id)
+        try:
+            rich = http_backend.get_work_order_rich(meld_id)
+        except (Exception, SystemExit) as exc:
+            _warn_include_tech_unavailable(
+                f"cookie detail fetch failed for meld {meld_id}: {exc}"
+            )
+            rich = {}
         for field in _ASSIGNMENT_FIELDS:
             result[field] = rich.get(field) or []
     return result
