@@ -349,3 +349,98 @@ class TestTenantInvite:
         assert result["error"] == "malformed cell phone"
         assert result["cell_phone_errors"] == ["Supplied phone number is invalid"]
         assert result["status_code"] == 400
+
+
+def _tenant_contact_fixture():
+    return {
+        "id": 4427861,
+        "user": {
+            "id": 1626736,
+            "email": "david@noogalabs.com",
+            "first_name": "David",
+            "last_name": "Hunter",
+        },
+        "contact": {
+            "id": 5429857,
+            "home_phone": "old home",
+            "cell_phone": "(678) 923-5467",
+            "business_phone": "",
+            "primary_email": "david@noogalabs.com",
+            "secondary_email": "david@noogalabs.com",
+            "tertiary_email": "",
+            "tenant_objs": [3287],
+        },
+        "invited": True,
+        "last_invite": {"id": 13708659, "email": "david@noogalabs.com"},
+        "first_name": "David",
+        "middle_name": "",
+        "last_name": "Hunter",
+        "notes": "notes section",
+        "prompt_for_mobile": True,
+        "default_language": "",
+        "address": None,
+        "management": 3287,
+        "leases": [],
+        "links": [],
+    }
+
+
+class TestTenantContactEdit:
+    def test_get_then_puts_full_tenant_object_with_only_contact_updates(self, monkeypatch):
+        _patch_creds_csrf(monkeypatch)
+        original = _tenant_contact_fixture()
+        updated = json.loads(json.dumps(original))
+        updated["contact"]["cell_phone"] = "(678) 923-7654"
+        calls = []
+
+        def fake_urlopen(req, **kw):
+            calls.append({
+                "method": req.get_method(),
+                "url": req.full_url,
+                "body": req.data,
+            })
+            if req.get_method() == "GET":
+                return _FakeResp(json.dumps(original).encode())
+            return _FakeResp(json.dumps(updated).encode())
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        result = hb.edit_tenant_contact(4427861, cell_phone="(678) 923-7654")
+
+        assert [call["method"] for call in calls] == ["GET", "PUT"]
+        assert calls[0]["url"].endswith("/tenants/4427861/")
+        assert calls[1]["url"].endswith("/tenants/4427861/")
+        put_body = json.loads(calls[1]["body"])
+        expected = json.loads(json.dumps(original))
+        expected["contact"]["cell_phone"] = "(678) 923-7654"
+        assert put_body == expected
+        assert put_body["contact"]["home_phone"] == "old home"
+        assert put_body["contact"]["secondary_email"] == "david@noogalabs.com"
+        assert put_body["notes"] == "notes section"
+        assert result["ok"] is True
+        assert result["tenant_id"] == 4427861
+
+    def test_put_4xx_surfaces_loudly(self, monkeypatch, capsys):
+        _patch_creds_csrf(monkeypatch)
+        original = _tenant_contact_fixture()
+
+        def fake_urlopen(req, **kw):
+            if req.get_method() == "GET":
+                return _FakeResp(json.dumps(original).encode())
+            raise urllib.error.HTTPError(
+                url=req.full_url,
+                code=403,
+                msg="Forbidden",
+                hdrs={},
+                fp=io.BytesIO(b'{"detail":"Forbidden"}'),
+            )
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        with pytest.raises(SystemExit) as exc:
+            hb.edit_tenant_contact(4427861, cell_phone="4235550100")
+
+        assert exc.value.code == 1
+        stderr = capsys.readouterr().err
+        assert '"status_code": 403' in stderr
+        assert "Forbidden" in stderr
