@@ -129,6 +129,35 @@ class TestVendorsCLI:
         data = json.loads(result.output)
         assert data[0]["name"] == "Dyer HVAC"
 
+    def test_invite_passes_captured_args(self, runner):
+        with patch(
+            "cli_anything.propertymeld.http_backend.invite_vendor",
+            return_value={"ok": True, "email": "david+zztest@noogalabs.com"},
+        ) as mock_fn:
+            result = runner.invoke(cli, [
+                "vendors", "invite",
+                "--email", "david+zztest@noogalabs.com",
+                "--first-name", "ZZ TEST CAPTURE",
+                "--last-name", "test last name ",
+                "--company", "test company name",
+                "--line1", "123 test address chattanooga tn ",
+                "--postcode", "37421",
+                "--phone", "2025550133",
+            ])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["ok"] is True
+        mock_fn.assert_called_once_with(
+            email="david+zztest@noogalabs.com",
+            first_name="ZZ TEST CAPTURE",
+            last_name="test last name ",
+            company="test company name",
+            line1="123 test address chattanooga tn ",
+            postcode="37421",
+            phone="2025550133",
+            state="",
+        )
+
 
 class TestAgentsCLI:
     def test_agents_list_runs_and_emits_json(self, runner):

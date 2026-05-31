@@ -313,6 +313,36 @@ def _http_post(path: str, payload: dict, cookie_hdr: str, csrf_token: str, *, si
         sys.exit(1)
 
 
+def _http_post_no_exit(path: str, payload: dict, cookie_hdr: str, csrf_token: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
+    """POST variant that returns normalized non-401 errors and supports empty success bodies."""
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        _build_url(path, side=side, vendor_id=vendor_id),
+        data=data,
+        method="POST",
+        headers={
+            "Cookie": cookie_hdr,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-CSRFToken": csrf_token,
+            "X-Requested-With": "XMLHttpRequest",
+            "User-Agent": UA,
+            "Referer": f"{BASE}/melds/",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
+            body = resp.read()
+            if not body:
+                return {}
+            return json.loads(body)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
+        body = e.read().decode("utf-8", errors="ignore")
+        return normalize_http_error(e.code, body)
+
+
 def _get_nexus_csrf(cookie_hdr: str) -> str:
     """Fetch and cache CSRF token from the Nexus Partner API keys page."""
     if _csrf_cache.get("nexus_token"):
@@ -1193,6 +1223,64 @@ def vendor_submit_invoice(vendor_id: str, invoice_id: int) -> dict:
         side="vendor", vendor_id=vendor_id,
     )
     return {"ok": True, "vendor_id": vendor_id, "invoice_id": invoice_id, "result": result}
+
+
+@with_recapture_retry
+def invite_vendor(
+    *,
+    email: str,
+    first_name: str,
+    last_name: str,
+    company: str,
+    line1: str,
+    postcode: str,
+    phone: str,
+    state: str = "",
+) -> dict:
+    """Create a vendor and send the portal invite in one PM call.
+
+    Captured 2026-05-31: POST /api/vendors/invite/ with an empty 201 body.
+    Duplicate/in-use email returns HTTP 400 and is surfaced as ok:false,
+    never as silent success.
+    """
+    payload = {
+        "email": email,
+        "first_name": first_name,
+        "last_name": last_name,
+        "name": company,
+        "line_1": line1,
+        "state": state or "",
+        "postcode": postcode,
+        "phone": phone,
+    }
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_post_no_exit("vendors/invite/", payload, cookie_hdr, csrf_token)
+
+    if isinstance(result, dict) and result.get("status_code") == 400:
+        return {
+            "ok": False,
+            "error": "vendor email already exists or invite is already pending",
+            "already_exists": True,
+            "already_invited": True,
+            "email": email,
+            "detail": result,
+        }
+    if isinstance(result, dict) and isinstance(result.get("status_code"), int) and result["status_code"] >= 400:
+        return {
+            "ok": False,
+            "error": "vendor invite failed",
+            "email": email,
+            "detail": result,
+        }
+
+    return {
+        "ok": True,
+        "email": email,
+        "company": company,
+        "result": result,
+    }
 
 
 @with_recapture_retry

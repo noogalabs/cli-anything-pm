@@ -49,6 +49,7 @@ pm work-orders get 12345 --json             # Single work order
 pm work-orders comments 12345 --json        # Comments (browser)
 pm work-orders assign-tech --work-order-id 12345 --tech Person019 --json
 pm work-orders assign-vendor --work-order-id 12345 --vendor "Dyer HVAC" --json
+pm vendors invite --email vendor@example.com --first-name Fixture --last-name Person035 --company "Person035 Plumbing" --line1 "123 Main St" --postcode 37421 --phone 2025550110
 ```
 
 ## Architecture
