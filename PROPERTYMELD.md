@@ -17,6 +17,7 @@ Property Meld uses OAuth2 client credentials (Nexus API).
 | Properties | `GET /property/` | |
 | Vendors | `GET /vendor/` | Nexus read path |
 | Vendor invite | `POST /vendors/invite/` | Cookie-session manager API; creates vendor + sends portal invite |
+| Tenant invite | `POST /tenants/` | Cookie-session manager API; creates tenant and optionally sends invite |
 | Comments | Browser only | Cookie-session API: `/m/{multitenant}/api/comments/?meld={id}` |
 | Assign tech | Browser-session API | Canonical CLI: `pm work-orders assign-tech`; top-level `pm assign-tech` remains as a deprecated alias |
 | Assign vendor | Browser-session API | Canonical CLI: `pm work-orders assign-vendor`; top-level `pm assign-vendor` remains as a deprecated alias |
@@ -30,7 +31,7 @@ Property Meld uses OAuth2 client credentials (Nexus API).
 
 ## Browser Backend Session
 
-Comments, tech assignment, vendor assignment, and vendor invites require a browser session. Credentials stored at `PM_CREDS_PATH` (JSON with `username`, `password`, `cookies` fields). Cookies are refreshed automatically on session expiry.
+Comments, tech assignment, vendor assignment, vendor invites, and tenant invites require a browser session. Credentials stored at `PM_CREDS_PATH` (JSON with `username`, `password`, `cookies` fields). Cookies are refreshed automatically on session expiry.
 
 ## Vendor Person004 (CLI)
 
@@ -54,6 +55,23 @@ Captured request shape:
 ```
 
 PM returns HTTP 400 when the invite email already exists; the CLI surfaces that as `ok: false` with `already_exists` / `already_invited`.
+
+## Tenant Person004 (CLI)
+
+Create a tenant on a unit and send the portal invite:
+
+```bash
+pm tenants invite \
+  --unit-id 9000005 \
+  --first-name Fixture \
+  --last-name Resident \
+  --email fixture.alpha@example.com \
+  --cell 2025550110
+```
+
+Use `--no-invite` to create the tenant record without sending the invite email.
+The CLI hydrates the full unit object before posting to PM because the captured
+manager UI request sends `units: [<full unit>]`, not a stripped id-only unit.
 
 ## Rate Limits
 

@@ -313,7 +313,15 @@ def _http_post(path: str, payload: dict, cookie_hdr: str, csrf_token: str, *, si
         sys.exit(1)
 
 
-def _http_post_no_exit(path: str, payload: dict, cookie_hdr: str, csrf_token: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
+def _http_post_no_exit(
+    path: str,
+    payload: dict,
+    cookie_hdr: str,
+    csrf_token: str,
+    *,
+    side: str = "manager",
+    vendor_id: Optional[str] = None,
+) -> Any:
     """POST variant that returns normalized non-401 errors and supports empty success bodies."""
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
@@ -1584,6 +1592,79 @@ def get_tenant(tenant_id) -> dict:
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     return _http_get(f"tenants/{tenant_id}/", cookie_hdr)
+
+
+@with_recapture_retry
+def invite_tenant(
+    unit_id,
+    first_name: str,
+    last_name: str,
+    email: str,
+    cell_phone: str,
+    home_phone: str = "",
+    secondary_email: Optional[str] = None,
+    notes: str = "",
+    should_invite: bool = True,
+) -> dict:
+    """Create a tenant on a unit and optionally send the PM invite email.
+
+    Captured web UI contract (2026-05-31): POST /api/tenants/ with contact,
+    names, notes, should_invite, and units containing the fully hydrated unit
+    object from GET /api/units/{id}/. A stripped {"id": unit_id} is not enough
+    for this endpoint.
+    """
+    unit_id_int = int(unit_id)
+    unit = get_unit(unit_id_int)
+    if not isinstance(unit, dict):
+        raise RuntimeError(
+            f"GET units/{unit_id_int}/ returned non-dict (cannot tenant-create)"
+        )
+
+    contact = {
+        "primary_email": email,
+        "secondary_email": secondary_email if secondary_email is not None else email,
+        "cell_phone": cell_phone,
+        "home_phone": home_phone or "",
+    }
+
+    payload = {
+        "contact": contact,
+        "units": [unit],
+        "first_name": first_name,
+        "last_name": last_name,
+        "notes": notes or "",
+        "should_invite": should_invite,
+    }
+
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result = _http_post_no_exit("tenants/", payload, cookie_hdr, csrf_token)
+
+    if isinstance(result, dict) and result.get("status_code"):
+        cell_errors = ((result.get("contact") or {}).get("cell_phone") or [])
+        if result.get("status_code") == 400 and cell_errors:
+            return {
+                "ok": False,
+                "error": "malformed cell phone",
+                "cell_phone_errors": cell_errors,
+                "status_code": 400,
+                "detail": result,
+            }
+        return {"ok": False, "error": result.get("error", "tenant invite failed"), "detail": result}
+
+    contact_result = result.get("contact") if isinstance(result, dict) else {}
+    last_invite = result.get("last_invite") if isinstance(result, dict) else None
+    return {
+        "ok": True,
+        "tenant_id": result.get("id") if isinstance(result, dict) else None,
+        "contact_id": contact_result.get("id") if isinstance(contact_result, dict) else None,
+        "unit_id": unit_id_int,
+        "invited": result.get("invited") if isinstance(result, dict) else None,
+        "should_invite": should_invite,
+        "last_invite": last_invite,
+        "result": result,
+    }
 
 
 @with_recapture_retry

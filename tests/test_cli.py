@@ -534,6 +534,55 @@ class TestTenantsCLI:
         data = json.loads(result.output)
         assert data["first_name"] == "Fixture"
 
+    def test_invite_passes_args_to_backend(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.invite_tenant",
+                   return_value={"ok": True, "tenant_id": 9000020, "invited": True}) as mock_fn:
+            result = runner.invoke(cli, [
+                "tenants", "invite",
+                "--unit-id", "9000005",
+                "--first-name", "Person031",
+                "--last-name", "Person020",
+                "--email", "david@example.com",
+                "--cell", "2025550128",
+                "--home", "2025550130",
+                "--secondary-email", "alt@example.com",
+                "--notes", "notes section",
+            ])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["tenant_id"] == 9000020
+        mock_fn.assert_called_once_with(
+            unit_id=9000005,
+            first_name="Person031",
+            last_name="Person020",
+            email="david@example.com",
+            cell_phone="2025550128",
+            home_phone="2025550130",
+            secondary_email="alt@example.com",
+            notes="notes section",
+            should_invite=True,
+        )
+
+    def test_invite_no_invite_flag(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.invite_tenant",
+                   return_value={"ok": True, "tenant_id": 9000020, "should_invite": False}) as mock_fn:
+            result = runner.invoke(cli, [
+                "tenants", "invite",
+                "--unit-id", "9000005",
+                "--first-name", "Person031",
+                "--last-name", "Person020",
+                "--email", "david@example.com",
+                "--cell", "2025550128",
+                "--no-invite",
+            ])
+        assert result.exit_code == 0, result.output
+        assert mock_fn.call_args.kwargs["should_invite"] is False
+
+    def test_invite_requires_core_fields(self, runner):
+        result = runner.invoke(cli, ["tenants", "invite", "--unit-id", "9000005"])
+        assert result.exit_code != 0
+        assert "Missing option" in result.output
+
 
 # Fixture mirrors the actual /api/tenants/ list shape verified live on
 # 2026-05-23 — flat email + phone at the top level, no nested contact/user.

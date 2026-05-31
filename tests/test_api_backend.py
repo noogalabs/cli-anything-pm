@@ -773,6 +773,146 @@ _FULL_TENANT_FIXTURE = {
 }
 
 
+_TENANT_INVITE_UNIT_FIXTURE = {
+    "id": 9000005,
+    "prop_groups": [],
+    "is_active": True,
+    "unit": "",
+    "suite": "",
+    "apartment": "",
+    "room": "",
+    "department": "",
+    "display_address": {
+        "id": 1718387,
+        "line_1": "123 Main St",
+        "city": "Chattanooga",
+        "county_province": "TN",
+        "postcode": "37421",
+    },
+    "prop": {
+        "id": 1718387,
+        "line_1": "123 Main St",
+        "property_name": "",
+        "postcode": "37421",
+        "city": "Chattanooga",
+        "county_province": "TN",
+    },
+}
+
+
+class TestTenantPerson004:
+    """POST /api/tenants/ create-with-invite from W2/W3 #19 HAR capture."""
+
+    def _patch_io(self):
+        return (
+            patch("cli_anything.propertymeld.http_backend.get_unit"),
+            patch("cli_anything.propertymeld.http_backend._load_creds"),
+            patch("cli_anything.propertymeld.http_backend._cookie_header"),
+            patch("cli_anything.propertymeld.http_backend._get_csrf_token"),
+            patch("cli_anything.propertymeld.http_backend._http_post_no_exit"),
+        )
+
+    def test_hydrates_unit_and_posts_captured_payload_shape(self):
+        gu_p, mc_p, mch_p, mcs_p, mp_p = self._patch_io()
+        with gu_p as gu, mc_p as mc, mch_p as mch, mcs_p as mcs, mp_p as mp:
+            gu.return_value = dict(_TENANT_INVITE_UNIT_FIXTURE)
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mp.return_value = {
+                "id": 9000020,
+                "contact": {"id": 5429857, "cell_phone": "(202) 555-0105"},
+                "invited": True,
+                "last_invite": {"id": 13708659, "email": "david@example.com"},
+                "notes": "notes section",
+            }
+
+            result = http_backend.invite_tenant(
+                unit_id="9000005",
+                first_name="Person031",
+                last_name="Person020",
+                email="david@example.com",
+                cell_phone="2025550128",
+                home_phone="2025550130",
+                secondary_email="alt@example.com",
+                notes="notes section",
+            )
+
+            assert result["ok"] is True
+            assert result["tenant_id"] == 9000020
+            assert result["contact_id"] == 5429857
+            gu.assert_called_once_with(9000005)
+            path, payload, _, _ = mp.call_args[0]
+            assert path == "tenants/"
+            assert payload == {
+                "contact": {
+                    "primary_email": "david@example.com",
+                    "cell_phone": "2025550128",
+                    "secondary_email": "alt@example.com",
+                    "home_phone": "2025550130",
+                },
+                "units": [_TENANT_INVITE_UNIT_FIXTURE],
+                "first_name": "Person031",
+                "last_name": "Person020",
+                "notes": "notes section",
+                "should_invite": True,
+            }
+
+    def test_no_invite_and_optional_fields_omitted(self):
+        gu_p, mc_p, mch_p, mcs_p, mp_p = self._patch_io()
+        with gu_p as gu, mc_p as mc, mch_p as mch, mcs_p as mcs, mp_p as mp:
+            gu.return_value = dict(_TENANT_INVITE_UNIT_FIXTURE)
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mp.return_value = {"id": 9000020, "contact": {}, "invited": False}
+
+            result = http_backend.invite_tenant(
+                9000005, "Person031", "Person020", "david@example.com", "2025550128",
+                should_invite=False,
+            )
+
+            assert result["should_invite"] is False
+            _, payload, _, _ = mp.call_args[0]
+            assert payload["should_invite"] is False
+            assert payload["notes"] == ""
+            assert payload["contact"] == {
+                "primary_email": "david@example.com",
+                "secondary_email": "david@example.com",
+                "cell_phone": "2025550128",
+                "home_phone": "",
+            }
+
+    def test_malformed_phone_400_surfaces_clearly(self):
+        gu_p, mc_p, mch_p, mcs_p, mp_p = self._patch_io()
+        with gu_p as gu, mc_p as mc, mch_p as mch, mcs_p as mcs, mp_p as mp:
+            gu.return_value = dict(_TENANT_INVITE_UNIT_FIXTURE)
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mp.return_value = {
+                "contact": {"cell_phone": ["Supplied phone number is invalid"]},
+                "error": "HTTP 400",
+                "status_code": 400,
+            }
+
+            result = http_backend.invite_tenant(
+                9000005, "Person031", "Person020", "david@example.com", "2025550132"
+            )
+
+            assert result["ok"] is False
+            assert result["error"] == "malformed cell phone"
+            assert result["status_code"] == 400
+            assert result["cell_phone_errors"] == ["Supplied phone number is invalid"]
+
+    def test_raises_when_unit_hydration_returns_non_dict(self):
+        with patch("cli_anything.propertymeld.http_backend.get_unit", return_value="bad"):
+            with pytest.raises(RuntimeError, match="non-dict"):
+                http_backend.invite_tenant(
+                    9000005, "Person031", "Person020", "david@example.com", "2025550128"
+                )
+
+
 class TestCreateMeldInProject:
     """POST /api/projects/{id}/list-create-meld/ — PM requires fully hydrated objects.
 
