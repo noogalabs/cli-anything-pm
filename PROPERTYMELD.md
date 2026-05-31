@@ -15,7 +15,8 @@ Property Meld uses OAuth2 client credentials (Nexus API).
 | Work orders | `GET /meld/` | Singular "meld", NOT "melds" |
 | Single work order | `GET /meld/{id}/` | |
 | Properties | `GET /property/` | |
-| Vendors | `GET /vendor/` | |
+| Vendors | `GET /vendor/` | Nexus read path |
+| Vendor invite | `POST /vendors/invite/` | Cookie-session manager API; creates vendor + sends portal invite |
 | Comments | Browser only | Cookie-session API: `/m/{multitenant}/api/comments/?meld={id}` |
 | Assign tech | Browser-session API | Canonical CLI: `pm work-orders assign-tech`; top-level `pm assign-tech` remains as a deprecated alias |
 | Assign vendor | Browser-session API | Canonical CLI: `pm work-orders assign-vendor`; top-level `pm assign-vendor` remains as a deprecated alias |
@@ -29,7 +30,30 @@ Property Meld uses OAuth2 client credentials (Nexus API).
 
 ## Browser Backend Session
 
-Comments, tech assignment, and vendor assignment require a browser session. Credentials stored at `PM_CREDS_PATH` (JSON with `username`, `password`, `cookies` fields). Cookies are refreshed automatically on session expiry.
+Comments, tech assignment, vendor assignment, and vendor invites require a browser session. Credentials stored at `PM_CREDS_PATH` (JSON with `username`, `password`, `cookies` fields). Cookies are refreshed automatically on session expiry.
+
+## Vendor Invite (CLI)
+
+Create the vendor and send the portal invite in one manager-side call:
+
+```bash
+pm vendors invite \
+  --email vendor@example.com \
+  --first-name Jane \
+  --last-name Smith \
+  --company "Smith Plumbing" \
+  --line1 "123 Main St" \
+  --postcode 37421 \
+  --phone 4235550100
+```
+
+Captured request shape:
+
+```json
+{"email":"vendor@example.com","first_name":"Jane","last_name":"Smith","name":"Smith Plumbing","line_1":"123 Main St","state":"","postcode":"37421","phone":"4235550100"}
+```
+
+PM returns HTTP 400 when the invite email already exists; the CLI surfaces that as `ok: false` with `already_exists` / `already_invited`.
 
 ## Rate Limits
 

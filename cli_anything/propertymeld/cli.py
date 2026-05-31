@@ -546,6 +546,31 @@ def list_vendors(limit, as_json):
     output_json(results)
 
 
+@vendors.command("invite")
+@click.option("--email", required=True, help="Vendor contact email.")
+@click.option("--first-name", "first_name", required=True, help="Vendor contact first name.")
+@click.option("--last-name", "last_name", required=True, help="Vendor contact last name.")
+@click.option("--company", required=True, help="Vendor company name.")
+@click.option("--line1", required=True, help="Vendor street address line 1.")
+@click.option("--postcode", required=True, help="Vendor postal code.")
+@click.option("--phone", required=True, help="Vendor phone number.")
+@click.option("--state", default="", help="Vendor state/region.")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def invite_vendor_cmd(email, first_name, last_name, company, line1, postcode, phone, state, as_json):
+    """Create a vendor and send the portal invite."""
+    result = http_backend.invite_vendor(
+        email=email,
+        first_name=first_name,
+        last_name=last_name,
+        company=company,
+        line1=line1,
+        postcode=postcode,
+        phone=phone,
+        state=state,
+    )
+    output_json(result)
+
+
 # ── agents group ───────────────────────────────────────────────────────────────
 
 @cli.group()
