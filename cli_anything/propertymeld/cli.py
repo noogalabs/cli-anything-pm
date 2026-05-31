@@ -506,6 +506,44 @@ def get_tenant(tenant_id, as_json):
     output_json(result)
 
 
+@tenants.command("invite")
+@click.option("--unit-id", required=True, type=int, help="Unit ID to attach the tenant to")
+@click.option("--first-name", required=True, help="Tenant first name")
+@click.option("--last-name", required=True, help="Tenant last name")
+@click.option("--email", required=True, help="Primary email address")
+@click.option("--cell", required=True, help="Cell phone number")
+@click.option("--home", default="", help="Optional home phone number")
+@click.option("--secondary-email", default=None, help="Optional secondary email address")
+@click.option("--notes", default="", help="Optional tenant notes")
+@click.option("--no-invite", is_flag=True, default=False, help="Create tenant without sending invite")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def invite_tenant_cmd(
+    unit_id,
+    first_name,
+    last_name,
+    email,
+    cell,
+    home,
+    secondary_email,
+    notes,
+    no_invite,
+    as_json,
+):
+    """Create a tenant on a unit and optionally send the PM invite."""
+    result = http_backend.invite_tenant(
+        unit_id=unit_id,
+        first_name=first_name,
+        last_name=last_name,
+        email=email,
+        cell_phone=cell,
+        home_phone=home,
+        secondary_email=secondary_email,
+        notes=notes,
+        should_invite=not no_invite,
+    )
+    output_json(result)
+
+
 @tenants.command("edit-notes")
 @click.argument("tenant_id", type=int)
 @click.option("--notes", required=True,

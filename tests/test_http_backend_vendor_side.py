@@ -255,3 +255,97 @@ class TestVendorInvite:
         assert result["already_invited"] is True
         assert result["email"] == "david@noogalabs.com"
         assert result["detail"]["status_code"] == 400
+
+
+class TestTenantInvite:
+    def test_posts_captured_payload_to_manager_tenants_endpoint(self, monkeypatch):
+        unit = {"id": 1870266, "name": "Unit A", "property": {"id": 3287}}
+        monkeypatch.setattr(hb, "get_unit", lambda unit_id: unit)
+        _patch_creds_csrf(monkeypatch)
+        cap = _capture_urlopen(
+            monkeypatch,
+            response_body=b'{"id":4427861,"contact":{"id":5429857},"invited":true}',
+        )
+
+        result = hb.invite_tenant(
+            unit_id=1870266,
+            first_name="David",
+            last_name="Hunter",
+            email="david@example.com",
+            cell_phone="6789235467",
+            notes="notes section",
+        )
+
+        assert cap["method"] == "POST"
+        assert "/m/" in cap["url"]
+        assert "/tenants/" in cap["url"]
+        body = json.loads(cap["body"])
+        assert body == {
+            "contact": {
+                "primary_email": "david@example.com",
+                "secondary_email": "david@example.com",
+                "cell_phone": "6789235467",
+                "home_phone": "",
+            },
+            "units": [unit],
+            "first_name": "David",
+            "last_name": "Hunter",
+            "notes": "notes section",
+            "should_invite": True,
+        }
+        assert result["ok"] is True
+        assert result["tenant_id"] == 4427861
+        assert result["contact_id"] == 5429857
+
+    def test_no_invite_sends_false(self, monkeypatch):
+        unit = {"id": 1870266, "name": "Unit A"}
+        monkeypatch.setattr(hb, "get_unit", lambda unit_id: unit)
+        _patch_creds_csrf(monkeypatch)
+        cap = _capture_urlopen(
+            monkeypatch,
+            response_body=b'{"id":4427861,"contact":{"id":5429857},"invited":false}',
+        )
+
+        result = hb.invite_tenant(
+            1870266,
+            "David",
+            "Hunter",
+            "david@example.com",
+            "6789235467",
+            should_invite=False,
+        )
+
+        body = json.loads(cap["body"])
+        assert body["should_invite"] is False
+        assert result["should_invite"] is False
+
+    def test_phone_invalid_400_returns_friendly_validation(self, monkeypatch):
+        unit = {"id": 1870266, "name": "Unit A"}
+        monkeypatch.setattr(hb, "get_unit", lambda unit_id: unit)
+        _patch_creds_csrf(monkeypatch)
+        err = urllib.error.HTTPError(
+            url="https://x/api/tenants/",
+            code=400,
+            msg="Bad Request",
+            hdrs={},
+            fp=io.BytesIO(
+                b'{"contact":{"cell_phone":["Supplied phone number is invalid"]}}'
+            ),
+        )
+
+        def boom(req, **kw):
+            raise err
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", boom)
+        result = hb.invite_tenant(
+            1870266,
+            "David",
+            "Hunter",
+            "david@example.com",
+            "bad-phone",
+        )
+
+        assert result["ok"] is False
+        assert result["error"] == "malformed cell phone"
+        assert result["cell_phone_errors"] == ["Supplied phone number is invalid"]
+        assert result["status_code"] == 400
