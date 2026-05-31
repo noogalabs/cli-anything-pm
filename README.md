@@ -47,7 +47,8 @@ pm probe                                     # Verify setup
 pm work-orders list --status open --json    # List open work orders
 pm work-orders get 12345 --json             # Single work order
 pm work-orders comments 12345 --json        # Comments (browser)
-pm assign-tech --work-order-id 12345 --tech Carlos --json
+pm work-orders assign-tech --work-order-id 12345 --tech Carlos --json
+pm work-orders assign-vendor --work-order-id 12345 --vendor "Dyer HVAC" --json
 ```
 
 ## Architecture
