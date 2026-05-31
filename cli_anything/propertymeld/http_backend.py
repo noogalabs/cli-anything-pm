@@ -1735,6 +1735,65 @@ def update_tenant_notes(tenant_id, notes: str) -> dict:
 
 
 @with_recapture_retry
+def edit_tenant_contact(
+    tenant_id,
+    *,
+    primary_email: Optional[str] = None,
+    secondary_email: Optional[str] = None,
+    cell_phone: Optional[str] = None,
+    home_phone: Optional[str] = None,
+    business_phone: Optional[str] = None,
+) -> dict:
+    """Update nested tenant contact fields via full-body PUT.
+
+    NEW-2 capture (tenant-PUT-contact-edit-200, 2026-05-31) showed the PM web UI
+    edits contact data through PUT /api/tenants/{id}/ with the full tenant object,
+    not PATCH /api/contacts/{contact_id}/. We GET the tenant, mutate only nested
+    contact fields, and PUT the whole tenant back so unrelated tenant fields
+    survive the round trip.
+    """
+    tenant_id_int = int(tenant_id)
+    updates = {
+        "primary_email": primary_email,
+        "secondary_email": secondary_email,
+        "cell_phone": cell_phone,
+        "home_phone": home_phone,
+        "business_phone": business_phone,
+    }
+    updates = {key: value for key, value in updates.items() if value is not None}
+    if not updates:
+        raise ValueError("at least one contact field is required")
+
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
+    current = _http_get(f"tenants/{tenant_id_int}/", cookie_hdr)
+    if not isinstance(current, dict):
+        raise RuntimeError(
+            f"GET tenants/{tenant_id_int}/ returned non-dict (cannot full-body-echo)"
+        )
+    contact = current.get("contact")
+    if not isinstance(contact, dict):
+        raise RuntimeError(
+            f"GET tenants/{tenant_id_int}/ returned tenant without contact object"
+        )
+
+    contact.update(updates)
+    result = _http_put(f"tenants/{tenant_id_int}/", current, cookie_hdr, csrf_token)
+    result_contact = result.get("contact", contact) if isinstance(result, dict) else contact
+    return {
+        "ok": True,
+        "tenant_id": tenant_id_int,
+        "contact": result_contact,
+        "updated_fields": sorted(updates),
+        "result": result,
+    }
+
+
+update_tenant_contact = edit_tenant_contact
+
+
+@with_recapture_retry
 def list_files(meld_id: str) -> list:
     """List files (photos, attachments) on a meld via cookie HTTP.
 

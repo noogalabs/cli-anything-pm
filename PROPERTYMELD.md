@@ -31,7 +31,7 @@ Property Meld uses OAuth2 client credentials (Nexus API).
 
 ## Browser Backend Session
 
-Comments, tech assignment, vendor assignment, vendor invites, and tenant invites require a browser session. Credentials stored at `PM_CREDS_PATH` (JSON with `username`, `password`, `cookies` fields). Cookies are refreshed automatically on session expiry.
+Comments, tech assignment, vendor assignment, vendor invites, tenant invites, and tenant contact edits require a browser session. Credentials stored at `PM_CREDS_PATH` (JSON with `username`, `password`, `cookies` fields). Cookies are refreshed automatically on session expiry.
 
 ## Vendor Invite (CLI)
 
@@ -72,6 +72,24 @@ pm tenants invite \
 Use `--no-invite` to create the tenant record without sending the invite email.
 The CLI hydrates the full unit object before posting to PM because the captured
 manager UI request sends `units: [<full unit>]`, not a stripped id-only unit.
+
+## Tenant Contact Edit (CLI)
+
+Edit tenant contact fields through the manager-side full-echo tenant PUT:
+
+```bash
+pm tenants edit-contact 4427861 \
+  --cell 4235550100 \
+  --home 4235550101 \
+  --business 4235550102 \
+  --primary-email tenant@example.com \
+  --secondary-email tenant.alt@example.com
+```
+
+The CLI fetches `tenants/{id}/`, mutates only the specified nested `contact`
+fields, then PUTs the full tenant object back to `tenants/{id}/`. This mirrors
+the web UI capture and avoids the broken `PATCH /contacts/{id}/` path, which
+returns 403.
 
 ## Rate Limits
 
