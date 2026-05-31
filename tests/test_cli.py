@@ -297,17 +297,63 @@ class TestWorkOrdersWorkEntriesCLI:
         mock_fn.assert_called_once_with("90000014")
 
 
+class TestAssignTechCLI:
+    def test_assign_tech_canonical_and_alias_stdout_match(self, runner):
+        payload = {"ok": True, "agent_id": 90026, "matched_name": "Synthetic Person 007"}
+        with patch("cli_anything.propertymeld.http_backend.assign_tech",
+                   return_value=payload) as mock_fn:
+            canonical = runner.invoke(cli, ["work-orders", "assign-tech",
+                                            "--work-order-id", "90000014",
+                                            "--tech", "carlos"])
+            alias = runner.invoke(cli, ["assign-tech",
+                                        "--work-order-id", "90000014",
+                                        "--tech", "carlos"])
+        assert canonical.exit_code == 0
+        assert alias.exit_code == 0
+        assert canonical.stdout == alias.stdout
+        assert "deprecated" not in canonical.stdout
+        assert "deprecated" not in alias.stdout
+        assert canonical.stderr == ""
+        assert alias.stderr == "note: 'pm assign-tech' is deprecated; use 'pm work-orders assign-tech'\n"
+        assert json.loads(canonical.stdout)["ok"] is True
+        assert mock_fn.call_count == 2
+        mock_fn.assert_any_call("90000014", "carlos")
+
+
 class TestAssignVendorCLI:
     def test_assign_vendor_passes_partial_name(self, runner):
         with patch("cli_anything.propertymeld.http_backend.assign_vendor_by_name",
                    return_value={"ok": True, "vendor_id": 10, "matched_name": "Dyer HVAC"}) as mock_fn:
-            result = runner.invoke(cli, ["assign-vendor",
+            result = runner.invoke(cli, ["work-orders", "assign-vendor",
                                          "--work-order-id", "90000014",
                                          "--vendor", "dyer"])
         assert result.exit_code == 0
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert data["ok"] is True
         mock_fn.assert_called_once_with("90000014", "dyer", account_prefix="1")
+
+    def test_assign_vendor_canonical_and_alias_stdout_match(self, runner):
+        payload = {"ok": True, "vendor_id": 10, "matched_name": "Dyer HVAC"}
+        with patch("cli_anything.propertymeld.http_backend.assign_vendor_by_name",
+                   return_value=payload) as mock_fn:
+            canonical = runner.invoke(cli, ["work-orders", "assign-vendor",
+                                            "--work-order-id", "90000014",
+                                            "--vendor", "dyer",
+                                            "--account", "2"])
+            alias = runner.invoke(cli, ["assign-vendor",
+                                        "--work-order-id", "90000014",
+                                        "--vendor", "dyer",
+                                        "--account", "2"])
+        assert canonical.exit_code == 0
+        assert alias.exit_code == 0
+        assert canonical.stdout == alias.stdout
+        assert "deprecated" not in canonical.stdout
+        assert "deprecated" not in alias.stdout
+        assert canonical.stderr == ""
+        assert alias.stderr == "note: 'pm assign-vendor' is deprecated; use 'pm work-orders assign-vendor'\n"
+        assert json.loads(canonical.stdout)["ok"] is True
+        assert mock_fn.call_count == 2
+        mock_fn.assert_any_call("90000014", "dyer", account_prefix="2")
 
 
 class TestWorkOrdersScheduleCLI:

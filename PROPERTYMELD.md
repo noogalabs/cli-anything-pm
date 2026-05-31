@@ -17,7 +17,8 @@ Property Meld uses OAuth2 client credentials (Nexus API).
 | Properties | `GET /property/` | |
 | Vendors | `GET /vendor/` | |
 | Comments | Browser only | Cookie-session API: `/m/{multitenant}/api/comments/?meld={id}` |
-| Assign tech | Browser only | Playwright UI automation |
+| Assign tech | Browser-session API | Canonical CLI: `pm work-orders assign-tech`; top-level `pm assign-tech` remains as a deprecated alias |
+| Assign vendor | Browser-session API | Canonical CLI: `pm work-orders assign-vendor`; top-level `pm assign-vendor` remains as a deprecated alias |
 
 ## Status Values (Nexus API)
 
@@ -28,7 +29,7 @@ Property Meld uses OAuth2 client credentials (Nexus API).
 
 ## Browser Backend Session
 
-Comments and tech assignment require a browser session. Credentials stored at `PM_CREDS_PATH` (JSON with `username`, `password`, `cookies` fields). Cookies are refreshed automatically on session expiry.
+Comments, tech assignment, and vendor assignment require a browser session. Credentials stored at `PM_CREDS_PATH` (JSON with `username`, `password`, `cookies` fields). Cookies are refreshed automatically on session expiry.
 
 ## Rate Limits
 

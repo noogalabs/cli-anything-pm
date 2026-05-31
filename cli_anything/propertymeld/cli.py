@@ -10,7 +10,7 @@ Usage:
     pm work-orders clone --meld-id 12345
     pm properties list --json
     pm vendors list --json
-    pm assign-tech --work-order-id 12345 --tech Person019 --json
+    pm work-orders assign-tech --work-order-id 12345 --tech Person019 --json
 """
 import json
 import sys
@@ -605,17 +605,47 @@ def get_agent_cmd(agent_id, as_json):
     output_json(result)
 
 
-# ── assign-tech ────────────────────────────────────────────────────────────────
+# ── assignment commands ────────────────────────────────────────────────────────
+
+def _assign_tech(work_order_id, tech, as_json):
+    work_order_id = _normalize_meld_id(work_order_id)
+    result = http_backend.assign_tech(work_order_id, tech)
+    output_json(result)
+
+
+def _assign_vendor(work_order_id, vendor, account, as_json):
+    work_order_id = _normalize_meld_id(work_order_id)
+    result = http_backend.assign_vendor_by_name(work_order_id, vendor, account_prefix=account)
+    output_json(result)
+
+
+@work_orders.command("assign-tech")
+@click.option("--work-order-id", required=True, help="Meld ID")
+@click.option("--tech", required=True, help="Tech name (partial match ok)")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def work_orders_assign_tech(work_order_id, tech, as_json):
+    """Assign an in-house tech to a work order (plain HTTP, no Playwright)."""
+    _assign_tech(work_order_id, tech, as_json)
+
+
+@work_orders.command("assign-vendor")
+@click.option("--work-order-id", required=True, help="Meld ID")
+@click.option("--vendor", required=True, help="Vendor name (partial match ok)")
+@click.option("--account", default="1", show_default=True, help="Account prefix for composite_id")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def work_orders_assign_vendor(work_order_id, vendor, account, as_json):
+    """Assign an external vendor to a work order by name (partial match)."""
+    _assign_vendor(work_order_id, vendor, account, as_json)
+
 
 @cli.command("assign-tech")
 @click.option("--work-order-id", required=True, help="Meld ID")
 @click.option("--tech", required=True, help="Tech name (partial match ok)")
 @click.option("--json", "as_json", is_flag=True, default=True)
 def assign_tech(work_order_id, tech, as_json):
-    """Assign an in-house tech to a work order (plain HTTP, no Playwright)."""
-    work_order_id = _normalize_meld_id(work_order_id)
-    result = http_backend.assign_tech(work_order_id, tech)
-    output_json(result)
+    """Deprecated alias for pm work-orders assign-tech."""
+    click.echo("note: 'pm assign-tech' is deprecated; use 'pm work-orders assign-tech'", err=True)
+    _assign_tech(work_order_id, tech, as_json)
 
 
 @cli.command("assign-vendor")
@@ -624,10 +654,9 @@ def assign_tech(work_order_id, tech, as_json):
 @click.option("--account", default="1", show_default=True, help="Account prefix for composite_id")
 @click.option("--json", "as_json", is_flag=True, default=True)
 def assign_vendor_cmd(work_order_id, vendor, account, as_json):
-    """Assign an external vendor to a work order by name (partial match)."""
-    work_order_id = _normalize_meld_id(work_order_id)
-    result = http_backend.assign_vendor_by_name(work_order_id, vendor, account_prefix=account)
-    output_json(result)
+    """Deprecated alias for pm work-orders assign-vendor."""
+    click.echo("note: 'pm assign-vendor' is deprecated; use 'pm work-orders assign-vendor'", err=True)
+    _assign_vendor(work_order_id, vendor, account, as_json)
 
 
 # ── api-keys ──────────────────────────────────────────────────────────────────
