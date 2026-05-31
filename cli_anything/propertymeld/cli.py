@@ -567,6 +567,43 @@ def edit_tenant_notes_cmd(tenant_id, notes, as_json):
     output_json(result)
 
 
+@tenants.command("edit-contact")
+@click.argument("tenant_id", type=int)
+@click.option("--primary-email", default=None, help="Set contact primary email")
+@click.option("--secondary-email", default=None, help="Set contact secondary email")
+@click.option("--cell", default=None, help="Set contact cell phone")
+@click.option("--home", default=None, help="Set contact home phone")
+@click.option("--business", default=None, help="Set contact business phone")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def edit_tenant_contact_cmd(
+    tenant_id,
+    primary_email,
+    secondary_email,
+    cell,
+    home,
+    business,
+    as_json,
+):
+    """Update nested tenant contact fields via GET-mutate-PUT full tenant body."""
+    if not any(
+        value is not None
+        for value in (primary_email, secondary_email, cell, home, business)
+    ):
+        raise click.UsageError(
+            "At least one of --primary-email, --secondary-email, --cell, --home, "
+            "or --business is required."
+        )
+    result = http_backend.edit_tenant_contact(
+        tenant_id,
+        primary_email=primary_email,
+        secondary_email=secondary_email,
+        cell_phone=cell,
+        home_phone=home,
+        business_phone=business,
+    )
+    output_json(result)
+
+
 # ── vendors group ──────────────────────────────────────────────────────────────
 
 @cli.group()

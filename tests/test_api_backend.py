@@ -1819,6 +1819,58 @@ _TENANT_NOTES_FIXTURE = {
 }
 
 
+_TENANT_CONTACT_FIXTURE = {
+    "id": 9000020,
+    "user": {
+        "id": 9000009,
+        "email": "person002@example.invalid",
+        "first_name": "Person031",
+        "last_name": "Person020",
+        "last_active_at": "2026-05-31T03:00:11.803163Z",
+        "last_active_channel": "DIGITAL",
+        "last_login": "2026-05-29T11:42:27.648293Z",
+    },
+    "contact": {
+        "id": 5429857,
+        "home_phone": "(678) 987-3214",
+        "cell_phone": "(202) 555-0105",
+        "business_phone": "",
+        "created": "2026-05-31T02:59:07.878312Z",
+        "create_by": {"org_type": "m", "persona_id": 90025},
+        "updated": "2026-05-31T02:59:07.878360Z",
+        "update_by": {"org_type": "m", "persona_id": 90025},
+        "tenant_objs": [3287],
+        "home_phone_ext": "",
+        "cell_phone_ext": "",
+        "business_phone_ext": "",
+        "primary_email": "person002@example.invalid",
+        "secondary_email": "person002@example.invalid",
+        "tertiary_email": "",
+    },
+    "invited": True,
+    "last_invite": {
+        "created": "2026-05-31T02:59:07.939013Z",
+        "email": "person002@example.invalid",
+        "id": 13708659,
+    },
+    "created": "2026-05-31T02:59:07.891911Z",
+    "create_by": {"org_type": "m", "persona_id": 90025},
+    "updated": "2026-05-31T02:59:10.803742Z",
+    "update_by": {"org_type": "m", "persona_id": 90025},
+    "is_active": True,
+    "first_name": "Person031",
+    "middle_name": "",
+    "last_name": "Person020",
+    "notes": "notes section",
+    "prompt_for_mobile": True,
+    "default_language": "",
+    "address": None,
+    "management": 3287,
+    "leases": [],
+    "links": [],
+}
+
+
 class TestUpdateTenantNotes:
     """PATCH /api/tenants/{id}/ with full body, mutating only `notes` — closes
     P3 #8 (resident-level). Verified shape from pm-tenant-notes-endpoint-capture-2026-05-18.
@@ -1929,4 +1981,101 @@ class TestUpdateTenantNotes:
             with pytest.raises(RuntimeError, match="non-dict"):
                 http_backend.update_tenant_notes(9000014, "x")
             # We must not have attempted a PATCH if GET was malformed
+            assert mp.call_count == 0
+
+
+class TestUpdateTenantPerson001:
+    """PUT /api/tenants/{id}/ with full body, mutating nested contact fields.
+
+    Covers NEW-2 / tenant-PUT-contact-edit-200 from the 2026-05-31 HAR capture.
+    """
+
+    def _wire(self, mc, mch, mcs, mg, mp, *, get_returns, put_returns):
+        mc.return_value = {"cookie": "x"}
+        mch.return_value = "Cookie: session=xyz"
+        mcs.return_value = "csrf"
+        mg.return_value = get_returns
+        mp.return_value = put_returns
+
+    def test_get_then_put_full_body_with_contact_fields_mutated(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mg, \
+             patch("cli_anything.propertymeld.http_backend._http_put") as mp, \
+             patch("cli_anything.propertymeld.http_backend._http_patch") as mpatch:
+            get_returns = json.loads(json.dumps(_TENANT_CONTACT_FIXTURE))
+            put_returns = json.loads(json.dumps(_TENANT_CONTACT_FIXTURE))
+            put_returns["contact"]["cell_phone"] = "(678) 923-7654"
+            put_returns["contact"]["home_phone"] = "(678) 987-4123"
+            put_returns["contact"]["business_phone"] = "(423) 654-1234"
+            self._wire(mc, mch, mcs, mg, mp, get_returns=get_returns, put_returns=put_returns)
+
+            result = http_backend.edit_tenant_contact(
+                9000020,
+                cell_phone="(678) 923-7654",
+                home_phone=" (678) 987-4123",
+                business_phone="2025550113",
+            )
+
+            assert result["ok"] is True
+            assert result["tenant_id"] == 9000020
+            assert result["contact"]["business_phone"] == "(423) 654-1234"
+            assert result["updated_fields"] == ["business_phone", "cell_phone", "home_phone"]
+            assert mg.call_args[0][0] == "tenants/9000020/"
+            put_path, put_payload, _, _ = mp.call_args[0]
+            assert put_path == "tenants/9000020/"
+            assert mpatch.call_count == 0
+            assert put_payload["id"] == 9000020
+            assert put_payload["first_name"] == "Person031"
+            assert put_payload["notes"] == "notes section"
+            assert put_payload["user"]["email"] == "person002@example.invalid"
+            assert put_payload["contact"]["cell_phone"] == "(678) 923-7654"
+            assert put_payload["contact"]["home_phone"] == " (678) 987-4123"
+            assert put_payload["contact"]["business_phone"] == "2025550113"
+            assert put_payload["contact"]["primary_email"] == "person002@example.invalid"
+
+    def test_mutates_email_fields_and_preserves_other_tenant_keys(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mg, \
+             patch("cli_anything.propertymeld.http_backend._http_put") as mp:
+            get_returns = json.loads(json.dumps(_TENANT_CONTACT_FIXTURE))
+            put_returns = json.loads(json.dumps(_TENANT_CONTACT_FIXTURE))
+            put_returns["contact"]["primary_email"] = "primary@example.com"
+            put_returns["contact"]["secondary_email"] = ""
+            self._wire(mc, mch, mcs, mg, mp, get_returns=get_returns, put_returns=put_returns)
+
+            http_backend.edit_tenant_contact(
+                "9000020",
+                primary_email="primary@example.com",
+                secondary_email="",
+            )
+
+            assert mg.call_args[0][0] == "tenants/9000020/"
+            assert mp.call_args[0][0] == "tenants/9000020/"
+            _, payload, _, _ = mp.call_args[0]
+            for key in _TENANT_CONTACT_FIXTURE:
+                assert key in payload, f"PUT body dropped {key!r}"
+            assert payload["contact"]["primary_email"] == "primary@example.com"
+            assert payload["contact"]["secondary_email"] == ""
+            assert payload["contact"]["tertiary_email"] == ""
+            assert payload["contact"]["cell_phone"] == "(202) 555-0105"
+
+    def test_requires_at_least_one_field(self):
+        with pytest.raises(ValueError, match="at least one"):
+            http_backend.edit_tenant_contact(9000020)
+
+    def test_raises_when_contact_missing(self):
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mg, \
+             patch("cli_anything.propertymeld.http_backend._http_put") as mp:
+            get_returns = json.loads(json.dumps(_TENANT_CONTACT_FIXTURE))
+            get_returns["contact"] = None
+            self._wire(mc, mch, mcs, mg, mp, get_returns=get_returns, put_returns={})
+            with pytest.raises(RuntimeError, match="contact object"):
+                http_backend.edit_tenant_contact(9000020, cell_phone="2025550110")
             assert mp.call_count == 0

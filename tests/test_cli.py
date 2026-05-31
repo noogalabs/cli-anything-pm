@@ -1178,3 +1178,90 @@ class TestTenantsPerson003NotesCLI:
             ])
         assert result.exit_code == 0, result.output
         mock_fn.assert_called_once_with(9000014, "")
+
+
+class TestTenantsPerson003Person001CLI:
+    """pm tenants edit-contact <tenant_id> — nested contact edit via full tenant PUT."""
+
+    def test_passes_contact_fields_to_backend(self, runner):
+        with patch(
+            "cli_anything.propertymeld.http_backend.edit_tenant_contact",
+            return_value={
+                "ok": True,
+                "tenant_id": 9000020,
+                "contact": {
+                    "primary_email": "primary@example.com",
+                    "secondary_email": "secondary@example.com",
+                    "cell_phone": "2025550110",
+                    "home_phone": "2025550111",
+                    "business_phone": "2025550112",
+                },
+                "updated_fields": [
+                    "business_phone",
+                    "cell_phone",
+                    "home_phone",
+                    "primary_email",
+                    "secondary_email",
+                ],
+                "result": {},
+            },
+        ) as mock_fn:
+            result = runner.invoke(cli, [
+                "tenants", "edit-contact", "9000020",
+                "--primary-email", "primary@example.com",
+                "--secondary-email", "secondary@example.com",
+                "--cell", "2025550110",
+                "--home", "2025550111",
+                "--business", "2025550112",
+            ])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["tenant_id"] == 9000020
+        assert data["contact"]["cell_phone"] == "2025550110"
+        mock_fn.assert_called_once_with(
+            9000020,
+            primary_email="primary@example.com",
+            secondary_email="secondary@example.com",
+            cell_phone="2025550110",
+            home_phone="2025550111",
+            business_phone="2025550112",
+        )
+
+    def test_requires_at_least_one_contact_field(self, runner):
+        result = runner.invoke(cli, ["tenants", "edit-contact", "9000020"])
+        assert result.exit_code != 0
+        assert "At least one" in result.output
+
+    def test_requires_int_tenant_id(self, runner):
+        result = runner.invoke(cli, [
+            "tenants", "edit-contact", "not-a-number",
+            "--cell", "2025550110",
+        ])
+        assert result.exit_code != 0
+
+    def test_accepts_empty_string_to_clear_field(self, runner):
+        with patch(
+            "cli_anything.propertymeld.http_backend.edit_tenant_contact",
+            return_value={
+                "ok": True,
+                "tenant_id": 9000020,
+                "contact": {"secondary_email": ""},
+                "updated_fields": ["secondary_email"],
+                "result": {},
+            },
+        ) as mock_fn:
+            result = runner.invoke(cli, [
+                "tenants", "edit-contact", "9000020",
+                "--secondary-email", "",
+            ])
+
+        assert result.exit_code == 0, result.output
+        mock_fn.assert_called_once_with(
+            9000020,
+            primary_email=None,
+            secondary_email="",
+            cell_phone=None,
+            home_phone=None,
+            business_phone=None,
+        )
