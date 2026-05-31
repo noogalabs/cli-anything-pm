@@ -10,7 +10,9 @@ Asymmetry rule guard: CREATE is nested, EDIT/DELETE is top-level (other test fil
 Surface rule guard: vendor flows route via /v/, never /m/.
 """
 import json
+import io
 import pytest
+import urllib.error
 
 from cli_anything.propertymeld import http_backend as hb
 
@@ -193,3 +195,63 @@ class TestVendorSubmitInvoice:
         assert "/decline/" not in cap["url"]
         body = json.loads(cap["body"])
         assert body == {"submit_to_manager": True}
+
+
+class TestVendorInvite:
+    def test_posts_captured_payload_to_manager_invite_endpoint(self, monkeypatch):
+        _patch_creds_csrf(monkeypatch)
+        cap = _capture_urlopen(monkeypatch, response_body=b"")
+        result = hb.invite_vendor(
+            email="david+zztest@noogalabs.com",
+            first_name="ZZ TEST CAPTURE",
+            last_name="test last name ",
+            company="test company name",
+            line1="123 test address chattanooga tn ",
+            postcode="37421",
+            phone="6784567891",
+        )
+        assert cap["method"] == "POST"
+        assert "/m/" in cap["url"]
+        assert "/vendors/invite/" in cap["url"]
+        body = json.loads(cap["body"])
+        assert body == {
+            "email": "david+zztest@noogalabs.com",
+            "first_name": "ZZ TEST CAPTURE",
+            "last_name": "test last name ",
+            "name": "test company name",
+            "line_1": "123 test address chattanooga tn ",
+            "state": "",
+            "postcode": "37421",
+            "phone": "6784567891",
+        }
+        assert result["ok"] is True
+        assert result["email"] == "david+zztest@noogalabs.com"
+
+    def test_duplicate_email_400_returns_friendly_not_silent_success(self, monkeypatch):
+        _patch_creds_csrf(monkeypatch)
+        err = urllib.error.HTTPError(
+            url="https://x/api/vendors/invite/",
+            code=400,
+            msg="Bad Request",
+            hdrs={},
+            fp=io.BytesIO(b""),
+        )
+
+        def boom(req, **kw):
+            raise err
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", boom)
+        result = hb.invite_vendor(
+            email="david@noogalabs.com",
+            first_name="ZZ TEST CAPTURE",
+            last_name="test last name ",
+            company="test company name",
+            line1="123 test address chattanooga tn ",
+            postcode="37421",
+            phone="1234567891",
+        )
+        assert result["ok"] is False
+        assert result["already_exists"] is True
+        assert result["already_invited"] is True
+        assert result["email"] == "david@noogalabs.com"
+        assert result["detail"]["status_code"] == 400
