@@ -479,6 +479,61 @@ def edit_unit_notes_cmd(unit_id, notes, as_json):
     output_json(result)
 
 
+@units.command("resolve")
+@click.option("--property", "property_ref", required=True,
+              help="Property: integer id (exact) or name/address substring (client-side match)")
+@click.option("--unit-address", required=True,
+              help="Messy unit label to resolve: 'Apt 12', 'Unit 12', '#12', '12', 'Unit A'")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def resolve_unit_cmd(property_ref, unit_address, as_json):
+    """Resolve a property + unit-address string to an integer unit PK.
+
+    Never returns a wrong PK silently: an inexact match yields a disambiguation
+    list (or a not-found with the full unit list as a backstop), so the caller
+    picks. Single-unit properties resolve confidently regardless of label.
+
+    Examples:
+      pm units resolve --property 1646329 --unit-address "Unit A"
+      pm units resolve --property "1098 N Hawthorne" --unit-address "Apt 12"
+    """
+    result = http_backend.resolve_unit_pk(property_ref, unit_address)
+    output_json(result)
+
+
+@units.command("list-by-property")
+@click.argument("property_ref")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def list_units_by_property_cmd(property_ref, as_json):
+    """List every unit (with its integer PK) for a property — resolver backstop.
+
+    PROPERTY_REF is an integer property id (exact) or a name/address substring
+    (client-side match over the full roster). Reports the unit `count` so a
+    truncated list can never mislead.
+
+    Example:
+      pm units list-by-property 1646329
+      pm units list-by-property "1098 N Hawthorne"
+    """
+    result = http_backend.list_units_by_property(property_ref)
+    output_json(result)
+
+
+@units.command("get-by-address")
+@click.option("--property", "property_ref", required=True,
+              help="Property: integer id or name/address substring")
+@click.option("--unit-address", required=True, help="Messy unit label to resolve")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def get_unit_by_address_cmd(property_ref, unit_address, as_json):
+    """Resolve (property, unit-address) and return the FULL unit object on a
+    confident single match; otherwise the same disambiguation payload as resolve.
+
+    Example:
+      pm units get-by-address --property 1646329 --unit-address "Unit A"
+    """
+    result = http_backend.get_unit_by_address(property_ref, unit_address)
+    output_json(result)
+
+
 # ── tenants group ─────────────────────────────────────────────────────────────
 
 @cli.group()

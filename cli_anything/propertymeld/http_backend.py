@@ -2329,6 +2329,258 @@ def get_unit(unit_id) -> dict:
     return _http_get(f"units/{unit_id}/", cookie_hdr)
 
 
+# ── unit-PK resolver ─────────────────────────────────────────────────────────
+# A property's units carry an integer PK (`units[].id`) but are addressed by a
+# human-typed label (`units[].unit`, e.g. "Unit A", "Apt 12", or a bare street
+# address for single-unit properties). Callers (tenant invite, work-order
+# create) need the integer PK. These helpers resolve a messy label to that PK
+# WITHOUT ever silently committing the wrong unit: an inexact match returns a
+# disambiguation list, never a guess.
+#
+# Shape verified live 2026-06-02 on the cookie/manager auth path:
+#   GET /api/properties/{id}/            -> property object, EMBEDS units[]
+#   GET /api/properties/?limit=N         -> {count,next,previous,results[]}, each
+#                                           property EMBEDS units[]
+#   unit PK field:    units[].id  (int, e.g. 1754320)
+#   unit label field: units[].unit (str) + apartment/building/floor/suite/room
+# The list endpoints do NOT honour server-side filters (prop=, search=,
+# property_name= are all ignored — count is unchanged), so property-by-name
+# resolution and unit-label matching are both CLIENT-SIDE. This mirrors the
+# list_tenants client-filter note above.
+
+_UNIT_LABEL_PREFIXES = ("apartment", "apt", "unit", "suite", "ste", "room", "rm", "no", "number")
+
+
+def normalize_unit_label(raw: Any) -> str:
+    """Normalize a messy unit label for comparison.
+
+    "Apt 12", "Unit 12", "#12", "no. 12", "  12 " all normalize to "12";
+    "Unit A" -> "a". Lowercases, strips a leading unit-designator word and any
+    leading '#', and collapses internal whitespace. Pure function — unit-tested
+    without the network. Used to match a human-typed address against the
+    `unit` / apartment / suite / etc. fields on a property's units.
+    """
+    text = str(raw or "").strip().lower()
+    text = text.lstrip("#").strip()
+    # Strip a single leading designator word ("apt 12" -> "12"), but only when
+    # something follows it — so a bare "unit" stays "unit".
+    parts = text.split()
+    if len(parts) >= 2:
+        head = parts[0].rstrip(".")
+        if head in _UNIT_LABEL_PREFIXES:
+            text = " ".join(parts[1:])
+    # Collapse internal whitespace.
+    return " ".join(text.split())
+
+
+def _unit_label_candidates(unit: dict) -> list[str]:
+    """Every comparable label form for a unit's address fields."""
+    out: list[str] = []
+    for field in ("unit", "apartment", "building", "floor", "suite", "room", "department"):
+        val = unit.get(field)
+        if val is None:
+            continue
+        norm = normalize_unit_label(val)
+        if norm:
+            out.append(norm)
+    return out
+
+
+def _summarize_unit(unit: dict) -> dict:
+    """Compact unit descriptor for disambiguation / backstop output."""
+    return {
+        "id": unit.get("id"),
+        "unit": unit.get("unit"),
+        "apartment": unit.get("apartment") or None,
+        "building": unit.get("building") or None,
+        "suite": unit.get("suite") or None,
+    }
+
+
+@with_recapture_retry
+def get_property_with_units(property_id) -> dict:
+    """GET /api/properties/{property_id}/ — property object with embedded units[].
+
+    The detail endpoint embeds the full units[] array (each with its integer
+    `id` PK), so a single call yields every unit for the property. No separate
+    units-by-property route exists; the list endpoints ignore server-side
+    filters, so this detail fetch is the canonical "units for this property"
+    primitive.
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    return _http_get(f"properties/{property_id}/", cookie_hdr)
+
+
+def _resolve_property(property_ref: str, cookie_hdr: str) -> dict:
+    """Resolve a property ref (int id or name/address substring) to its object.
+
+    Numeric ref -> direct detail fetch (cheap, exact). Non-numeric -> paginate
+    the full property roster (server-side filtering is unavailable) and match
+    `property_name` / `line_1` by case-insensitive substring.
+
+    Returns a dict with one of:
+      {"property": {...}}                      single match
+      {"ambiguous_properties": [ {...}, ... ]} >1 substring match
+      {"not_found": "<ref>"}                   0 matches
+    """
+    raw = str(property_ref).strip()
+    if raw.isdigit():
+        prop = _http_get_no_exit(f"properties/{raw}/", cookie_hdr)
+        if isinstance(prop, dict) and prop.get("id") is not None:
+            return {"property": prop}
+        return {"not_found": raw}
+
+    needle = raw.lower()
+    matches: list[dict] = []
+    for prop in _paginate_all("properties/?limit=100", cookie_hdr):
+        if not isinstance(prop, dict):
+            continue
+        hay = " ".join(
+            str(prop.get(f) or "") for f in ("property_name", "line_1", "line_2")
+        ).lower()
+        if needle in hay:
+            matches.append(prop)
+    if len(matches) == 1:
+        return {"property": matches[0]}
+    if len(matches) > 1:
+        return {
+            "ambiguous_properties": [
+                {"id": p.get("id"), "property_name": p.get("property_name"), "line_1": p.get("line_1")}
+                for p in matches
+            ]
+        }
+    return {"not_found": raw}
+
+
+def resolve_unit_pk(property_ref, unit_address: str) -> dict:
+    """Resolve (property, unit-address) -> integer unit PK, or a clear non-commit.
+
+    Resolution order, never guessing:
+      1. Resolve the property (int id -> detail fetch; name -> client-side
+         substring match over the full roster).
+      2. Pull the property's embedded units[].
+      3. Match unit_address against each unit's normalized label candidates
+         (unit / apartment / building / floor / suite / room). Exact normalized
+         match wins; if exactly one unit on the property, it is returned as a
+         confident single match regardless of label.
+      4. On 0 or >1 matches, return a disambiguation/backstop payload listing
+         every unit (id + label) — the caller picks, we never auto-commit.
+
+    Returns one of:
+      {"unit_id": <int>, "property_id": <int>, "matched_on": "<label>"}
+      {"ambiguous": [ {id,unit,...}, ... ], "property_id": <int>, "query": "<addr>"}
+      {"not_found": "<addr>", "property_id": <int>, "units": [ ... backstop ... ]}
+      {"ambiguous_properties": [...]} | {"error": "property not found ..."}
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+
+    resolved = _resolve_property(property_ref, cookie_hdr)
+    if "property" not in resolved:
+        if "ambiguous_properties" in resolved:
+            return resolved
+        return {
+            "error": f"property '{resolved.get('not_found', property_ref)}' not found",
+            "hint": "pass an integer property id, or run `pm units list-by-property <id>`",
+        }
+
+    prop = resolved["property"]
+    property_id = prop.get("id")
+    units = prop.get("units")
+    if not isinstance(units, list):
+        units = []
+
+    backstop = [_summarize_unit(u) for u in units if isinstance(u, dict)]
+
+    # A single-unit property: the lone unit IS the answer, label or not.
+    real_units = [u for u in units if isinstance(u, dict) and u.get("id") is not None]
+    if len(real_units) == 1:
+        only = real_units[0]
+        return {
+            "unit_id": only["id"],
+            "property_id": property_id,
+            "matched_on": only.get("unit"),
+            "note": "single-unit property",
+        }
+
+    target = normalize_unit_label(unit_address)
+    exact: list[dict] = []
+    for u in real_units:
+        if target and target in _unit_label_candidates(u):
+            exact.append(u)
+
+    if len(exact) == 1:
+        return {
+            "unit_id": exact[0]["id"],
+            "property_id": property_id,
+            "matched_on": exact[0].get("unit"),
+        }
+    if len(exact) > 1:
+        return {
+            "ambiguous": [_summarize_unit(u) for u in exact],
+            "property_id": property_id,
+            "query": unit_address,
+        }
+
+    return {
+        "not_found": unit_address,
+        "property_id": property_id,
+        "units": backstop,
+        "hint": "no unit matched; pick an id from `units` above or run "
+                "`pm units list-by-property <property_id>`",
+    }
+
+
+def list_units_by_property(property_ref) -> dict:
+    """List every unit (with its integer PK) for a property — disambiguation backstop.
+
+    Resolves the property the same way as resolve_unit_pk, then returns the
+    embedded units[] with their PKs. The result reports the unit count so a
+    caller can never be misled by a silently-truncated list (the units are
+    embedded in the property object, so there is no pagination to truncate).
+    """
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+
+    resolved = _resolve_property(property_ref, cookie_hdr)
+    if "property" not in resolved:
+        if "ambiguous_properties" in resolved:
+            return resolved
+        return {
+            "error": f"property '{resolved.get('not_found', property_ref)}' not found",
+        }
+
+    prop = resolved["property"]
+    units = prop.get("units")
+    if not isinstance(units, list):
+        units = []
+    real = [u for u in units if isinstance(u, dict)]
+    return {
+        "property_id": prop.get("id"),
+        "property_name": prop.get("property_name"),
+        "count": len(real),
+        "units": [_summarize_unit(u) for u in real],
+    }
+
+
+def get_unit_by_address(property_ref, unit_address: str) -> dict:
+    """Convenience lookup: resolve (property, address) and, on a confident single
+    match, return the FULL unit object via GET /api/units/{id}/.
+
+    On anything other than a confident single match, returns the same
+    disambiguation/not-found payload as resolve_unit_pk so the caller still
+    never gets a silently-wrong unit.
+    """
+    res = resolve_unit_pk(property_ref, unit_address)
+    if "unit_id" in res:
+        full = get_unit(res["unit_id"])
+        if isinstance(full, dict):
+            full.setdefault("_resolved", {"matched_on": res.get("matched_on"), "note": res.get("note")})
+        return full
+    return res
+
+
 @with_recapture_retry
 def get_management_agent(agent_id) -> dict:
     """GET /api/agents/{agent_id}/ — full ManagementAgent object (maintenance/coordinator role)."""
