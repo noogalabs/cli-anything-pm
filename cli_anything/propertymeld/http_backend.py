@@ -2453,6 +2453,7 @@ def _resolve_property(property_ref: str, cookie_hdr: str) -> dict:
     return {"not_found": raw}
 
 
+@with_recapture_retry
 def resolve_unit_pk(property_ref, unit_address: str) -> dict:
     """Resolve (property, unit-address) -> integer unit PK, or a clear non-commit.
 
@@ -2532,6 +2533,7 @@ def resolve_unit_pk(property_ref, unit_address: str) -> dict:
     }
 
 
+@with_recapture_retry
 def list_units_by_property(property_ref) -> dict:
     """List every unit (with its integer PK) for a property — disambiguation backstop.
 
@@ -2564,6 +2566,7 @@ def list_units_by_property(property_ref) -> dict:
     }
 
 
+@with_recapture_retry
 def get_unit_by_address(property_ref, unit_address: str) -> dict:
     """Convenience lookup: resolve (property, address) and, on a confident single
     match, return the FULL unit object via GET /api/units/{id}/.

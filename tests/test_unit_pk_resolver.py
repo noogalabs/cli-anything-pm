@@ -207,3 +207,63 @@ def test_get_by_address_single_match_fetches_full_unit(patch_backend, monkeypatc
 def test_get_by_address_no_match_returns_disambiguation(patch_backend):
     res = hb.get_unit_by_address(5100, "Unit Z")
     assert "not_found" in res
+
+
+# ── recapture-retry parity (PR #38 Codex P2) ─────────────────────────────────
+# The public lookup entry points reach PM through _resolve_property ->
+# _http_get_no_exit/_paginate_all, which raise SessionExpired on a 401. Without
+# @with_recapture_retry on the public fn, that 401 escaped uncaught instead of
+# refreshing the cookie like every other public call. These prove the wrap.
+
+def _session_expired():
+    import urllib.error
+    from io import BytesIO
+    return hb.SessionExpired(
+        urllib.error.HTTPError(
+            url="https://app.propertymeld.com/test",
+            code=401, msg="Unauthorized", hdrs=None, fp=BytesIO(b""),
+        )
+    )
+
+
+def test_resolve_unit_pk_recaptures_on_session_expiry(patch_backend, monkeypatch):
+    calls = {"resolve": 0, "recapture": 0}
+    real_resolve = hb._resolve_property
+
+    def flaky_resolve(property_ref, cookie_hdr):
+        calls["resolve"] += 1
+        if calls["resolve"] == 1:
+            raise _session_expired()
+        return real_resolve(property_ref, cookie_hdr)
+
+    def fake_recapture():
+        calls["recapture"] += 1
+        return True
+
+    monkeypatch.setattr(hb, "_resolve_property", flaky_resolve)
+    monkeypatch.setattr(hb, "_attempt_recapture", fake_recapture)
+
+    res = hb.resolve_unit_pk(5100, "Unit A")
+    assert res["unit_id"] == 7101          # recovered after recapture
+    assert calls["recapture"] == 1         # cookie refreshed exactly once
+    assert calls["resolve"] == 2           # public fn retried once
+
+
+def test_list_units_by_property_recaptures_on_session_expiry(patch_backend, monkeypatch):
+    calls = {"resolve": 0, "recapture": 0}
+    real_resolve = hb._resolve_property
+
+    def flaky_resolve(property_ref, cookie_hdr):
+        calls["resolve"] += 1
+        if calls["resolve"] == 1:
+            raise _session_expired()
+        return real_resolve(property_ref, cookie_hdr)
+
+    monkeypatch.setattr(hb, "_resolve_property", flaky_resolve)
+    monkeypatch.setattr(hb, "_attempt_recapture",
+                        lambda: calls.__setitem__("recapture", calls["recapture"] + 1) or True)
+
+    res = hb.list_units_by_property(5100)
+    assert res["count"] == 3
+    assert calls["recapture"] == 1
+    assert calls["resolve"] == 2
