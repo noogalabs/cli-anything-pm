@@ -25,7 +25,7 @@ import urllib.request
 import uuid
 from typing import Any, Callable, Optional
 
-from .utils import normalize_http_error
+from .utils import _is_html_response, normalize_http_error
 
 CREDS_PATH = os.environ.get(
     "PM_CREDS_PATH", os.path.expanduser("~/.claude/credentials/property-meld.json")
@@ -184,6 +184,50 @@ def _get_csrf_token(cookie_hdr: str) -> str:
     return _csrf_cache["token"]
 
 
+def _status_from_html_body(text: str) -> Optional[int]:
+    """Best-effort extract an HTTP status code from an HTML error/interstitial.
+
+    PM sometimes serves a permission-denied / not-found interstitial as an
+    HTTP **200** with an HTML body (e.g. "<h1>403 Forbidden</h1>"). The status
+    line in the body is the only signal of the real condition. Returns the
+    first 4xx/5xx code found in the title/heading, or None when no recognizable
+    code is present.
+    """
+    m = re.search(r"\b([45]\d{2})\b", text or "")
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def _parse_json_body_or_exit(raw: bytes) -> Any:
+    """Decode a 2xx body as JSON, or fail loud via the standard error convention.
+
+    PM occasionally returns a forbidden / not-found interstitial as an HTTP 200
+    with an HTML (non-JSON) body. The naked `json.loads()` on that body raised
+    an uncaught json.JSONDecodeError -> bare traceback crash. This funnels that
+    case into the SAME normalize_http_error + stderr + sys.exit(1) convention
+    already used for non-401 HTTPErrors, so callers surface a clean, actionable
+    error instead of crashing — and never mask the failure as an empty success.
+    """
+    text = raw.decode("utf-8", errors="ignore") if isinstance(raw, (bytes, bytearray)) else str(raw)
+    try:
+        return json.loads(text)
+    except (TypeError, ValueError):
+        # Non-JSON 200 body — almost always an HTML forbidden/error interstitial.
+        status = _status_from_html_body(text) or 403 if _is_html_response(text) else None
+        if status is not None:
+            print(json.dumps(normalize_http_error(status, text)), file=sys.stderr)
+        else:
+            print(
+                json.dumps({
+                    "error": "Non-JSON response body",
+                    "body_excerpt": " ".join((text or "").split())[:200],
+                }),
+                file=sys.stderr,
+            )
+        sys.exit(1)
+
+
 def _http_get(path: str, cookie_hdr: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
     """GET a browser-session API path, return parsed JSON."""
     req = urllib.request.Request(
@@ -198,7 +242,7 @@ def _http_get(path: str, cookie_hdr: str, *, side: str = "manager", vendor_id: O
     )
     try:
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
-            return json.loads(resp.read())
+            return _parse_json_body_or_exit(resp.read())
     except urllib.error.HTTPError as e:
         if e.code == 401:
             raise SessionExpired(e)
@@ -566,7 +610,10 @@ def _http_get_optional_results(path: str, cookie_hdr: str, note_label: str) -> t
     )
     try:
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
-            data = json.loads(resp.read())
+            # A non-JSON 200 body (HTML forbidden/error interstitial) would
+            # otherwise raise an uncaught JSONDecodeError here; funnel it into
+            # the standard normalize-and-exit convention instead of crashing.
+            data = _parse_json_body_or_exit(resp.read())
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="ignore")
         if e.code == 404:
