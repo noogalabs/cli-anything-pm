@@ -1169,6 +1169,32 @@ class TestCreateMeld:
             assert payload["notify_owners_string"] == "true"
             assert "notify_owner" not in payload
 
+    def test_create_meld_allows_empty_maintenance_payload(self):
+        mc_p, mch_p, mcs_p, mp_p, mgu_p, mga_p, mgt_p = self._patch_io()
+        with mc_p as mc, mch_p as mch, mcs_p as mcs, mp_p as mp, mgu_p as mgu, mga_p as mga, mgt_p as mgt:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mp.return_value = {"id": 12772803, "status": "PENDING_ASSIGNMENT", "maintenance": []}
+            mgu.return_value = _FULL_UNIT_FIXTURE
+
+            result = http_backend.create_meld(
+                brief_description="b",
+                description="d",
+                work_category="APPLIANCES",
+                work_type="TURN",
+                due_date="2026-05-16T00:00:00.000Z",
+                unit={"id": 1},
+                maintenance=[],
+                work_location="inside",
+            )
+
+            assert result["ok"] is True
+            assert result["result"]["status"] == "PENDING_ASSIGNMENT"
+            mga.assert_not_called()
+            _, payload, _, _ = mp.call_args[0]
+            assert payload["maintenance"] == []
+
     def test_create_meld_omits_project_field(self):
         mc_p, mch_p, mcs_p, mp_p, mgu_p, mga_p, mgt_p = self._patch_io()
         with mc_p as mc, mch_p as mch, mcs_p as mcs, mp_p as mp, mgu_p as mgu, mga_p as mga, mgt_p as mgt:
