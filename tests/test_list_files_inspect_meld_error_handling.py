@@ -278,6 +278,112 @@ class TestOptionalResultsDowngrade:
             )
         assert exc.value.code == 1
 
+    # ── unified status->action rule: full matrix, BOTH transports ────────────
+    #
+    # The P2 unify: _OPTIONAL_UNAVAILABLE_STATUSES = {403, 404} is the SINGLE
+    # rule applied to both catch branches. A status in the set downgrades; any
+    # other recognized status is fatal — regardless of whether the status came
+    # from a real HTTPError or was inferred from an HTML-200 interstitial body.
+
+    @pytest.mark.parametrize("code", [403, 404])
+    def test_optional_real_http_unavailable_downgrades(self, monkeypatch, code):
+        """Real HTTPError 403/404 -> ([], note). NOTE: real-403 is a BEHAVIOR
+        CHANGE (previously fatal); it now matches the HTML-200-403 case."""
+        _patch_creds(monkeypatch)
+
+        def fake_urlopen(req, **kw):
+            raise _http_error(req.full_url, code, b'{"detail": "nope"}')
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        items, note = hb._http_get_optional_results(
+            "melds/12701108/tenant-files/?limit=100", "sessionid=fake", "tenant"
+        )
+        assert items == []
+        assert note is not None
+        assert str(code) in note
+        assert "tenant" in note
+
+    @pytest.mark.parametrize("code", [500, 429])
+    def test_optional_real_http_recognized_non_unavailable_exits(self, monkeypatch, code):
+        """Real HTTPError 500/429 (recognized, not in the unavailable set) stays
+        fatal on the optional path."""
+        _patch_creds(monkeypatch)
+
+        def fake_urlopen(req, **kw):
+            raise _http_error(req.full_url, code, b'{"detail": "boom"}')
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        with pytest.raises(SystemExit) as exc:
+            hb._http_get_optional_results(
+                "melds/12701108/vendor-files/?limit=100", "sessionid=fake", "vendor"
+            )
+        assert exc.value.code == 1
+
+    @pytest.mark.parametrize("code", [404, 403])
+    def test_optional_html_200_unavailable_status_downgrades(self, monkeypatch, code):
+        """HTML-200 interstitial inferring 404/403 -> ([], note)."""
+        _patch_creds(monkeypatch)
+
+        html = (
+            f"<!DOCTYPE html><html><head><title>{code} Error</title></head>"
+            f"<body><h1>{code} Error</h1></body></html>"
+        ).encode()
+
+        def fake_urlopen(req, **kw):
+            return _FakeResp(html)
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        items, note = hb._http_get_optional_results(
+            "melds/12701108/tenant-files/?limit=100", "sessionid=fake", "tenant"
+        )
+        assert items == []
+        assert note is not None
+        assert str(code) in note
+
+    @pytest.mark.parametrize("code", [500, 503])
+    def test_optional_html_200_server_error_status_exits(self, monkeypatch, code):
+        """THE P2 CORE: an HTML-200 page carrying a 5xx (proxy/app-server error
+        page) must FAIL LOUD, not silently downgrade to an empty success."""
+        _patch_creds(monkeypatch)
+
+        html = (
+            f"<!DOCTYPE html><html><head><title>{code} Server Error</title></head>"
+            f"<body><h1>{code} Server Error</h1></body></html>"
+        ).encode()
+
+        def fake_urlopen(req, **kw):
+            return _FakeResp(html)
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        with pytest.raises(SystemExit) as exc:
+            hb._http_get_optional_results(
+                "melds/12701108/vendor-files/?limit=100", "sessionid=fake", "vendor"
+            )
+        assert exc.value.code == 1
+
+    def test_optional_html_200_no_code_in_body_downgrades(self, monkeypatch):
+        """HTML-200 interstitial with no parseable 4xx/5xx code (inferred None)
+        downgrades as a forbidden-class (403) interstitial, not fatal."""
+        _patch_creds(monkeypatch)
+
+        bare_html = b"<html><body>Access denied. Please log in.</body></html>"
+
+        def fake_urlopen(req, **kw):
+            return _FakeResp(bare_html)
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        items, note = hb._http_get_optional_results(
+            "melds/12701108/vendor-files/?limit=100", "sessionid=fake", "vendor"
+        )
+        assert items == []
+        assert note is not None
+        assert "403" in note
+
     def test_optional_200_json_returns_items(self, monkeypatch):
         """A normal 200 JSON page on the optional path returns its results."""
         _patch_creds(monkeypatch)

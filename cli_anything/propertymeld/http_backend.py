@@ -184,6 +184,18 @@ def _get_csrf_token(cookie_hdr: str) -> str:
     return _csrf_cache["token"]
 
 
+# Statuses on the OPTIONAL read path that mean "this endpoint is legitimately
+# unavailable for this session" (forbidden / not-found) and so are downgraded to
+# an empty result + note instead of being fatal. This is the SINGLE shared
+# status->action rule applied to BOTH catch branches of
+# _http_get_optional_results, so the transport (a real HTTP status vs a status
+# inferred from an HTML-200 interstitial body) no longer changes fatality.
+# Everything NOT in this set (5xx, 400, 429, ...) stays fatal — that is the
+# whole point: a proxy/app-server 5xx error page must not masquerade as an
+# empty success. Do NOT widen this set without revisiting that invariant.
+_OPTIONAL_UNAVAILABLE_STATUSES = frozenset({403, 404})
+
+
 def _status_from_html_body(text: str) -> Optional[int]:
     """Best-effort extract an HTTP status code from an HTML error/interstitial.
 
@@ -632,10 +644,25 @@ def _http_delete(path: str, cookie_hdr: str, csrf_token: str, *, side: str = "ma
 def _http_get_optional_results(path: str, cookie_hdr: str, note_label: str) -> tuple[list, Optional[str]]:
     """GET an optional list endpoint, downgrading "unavailable" to ([], note).
 
-    NON-FATAL BY DESIGN. Both a real HTTP-404 and an HTML-200 permission
-    interstitial (same forbidden/unavailable semantic) downgrade to an empty
-    list plus a note naming the inferred status — never sys.exit(1). Other
-    non-404 HTTPErrors still fail loud, matching the module convention.
+    NON-FATAL BY DESIGN for the "endpoint legitimately unavailable for this
+    session" case (forbidden / not-found), which this path exists to tolerate
+    (e.g. tenant/vendor file endpoints on a manager session).
+
+    A SINGLE shared rule (_OPTIONAL_UNAVAILABLE_STATUSES = {403, 404}) decides
+    fatality, applied identically to BOTH catch branches so the transport does
+    not change the outcome:
+      - status in {403, 404} -> downgrade to ([], note)
+      - any other recognized status (5xx, 400, 429, ...) -> fail loud
+        (normalize_http_error + stderr + sys.exit(1))
+    This holds whether the status came from a real HTTPError OR was inferred
+    from an HTML-200 permission/error interstitial body. A 5xx served as an
+    HTML-200 proxy/app-server error page is therefore NO LONGER silently
+    downgraded to an empty success — it fails loud, matching a real 5xx.
+
+    Behavior note: a real HTTP-403 now DOWNGRADES here (previously fatal). This
+    is intentional — it makes the real-403 case match both the documented
+    forbidden-interstitial purpose and the HTML-200-403 case, removing the last
+    transport asymmetry.
     """
     req = urllib.request.Request(
         f"{BASE}/api/{path}",
@@ -651,19 +678,33 @@ def _http_get_optional_results(path: str, cookie_hdr: str, note_label: str) -> t
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
             # NON-FATAL BY DESIGN: this path may legitimately hit a forbidden
             # interstitial (tenant/vendor file endpoints on a manager session).
-            # An HTML-200 interstitial carries the SAME "unavailable/forbidden"
-            # semantic as a real 404, so downgrade it to ([], note) — mirroring
-            # the HTTPError-404 branch below — instead of sys.exit(1). Do NOT
-            # use _parse_json_body_or_exit here; that is the REQUIRED path's
-            # fatal funnel and would hard-exit the optional photo lookup.
+            # An HTML-200 interstitial is routed by its INFERRED status through
+            # the SAME _OPTIONAL_UNAVAILABLE_STATUSES rule used for real
+            # HTTPErrors below — so a forbidden/not-found page downgrades while a
+            # 5xx error page fails loud. Do NOT use _parse_json_body_or_exit
+            # here; that is the REQUIRED path's fatal funnel.
             data = _parse_json_body_or_none(resp.read())
     except _NonJsonBody as nb:
-        inferred_status = nb.inferred_status or 403
-        return [], f"{note_label} endpoint unavailable ({inferred_status}): /api/{path}"
+        status = nb.inferred_status
+        if status is None:
+            # HTML interstitial on this OPTIONAL endpoint with no parseable
+            # 4xx/5xx code in the body. Preserve the documented intent that an
+            # unrecognized HTML interstitial here means "unavailable" — treat it
+            # as a forbidden-class (403) downgrade rather than guessing fatal.
+            return [], f"{note_label} endpoint unavailable (403): /api/{path}"
+        if status in _OPTIONAL_UNAVAILABLE_STATUSES:
+            return [], f"{note_label} endpoint unavailable ({status}): /api/{path}"
+        # Recognized non-unavailable code inferred from the body (e.g. a 5xx
+        # proxy/app-server error page served at HTTP 200, or 400/429). Fail loud
+        # — do not mask a server error as an empty success.
+        print(json.dumps(normalize_http_error(status, nb.text)), file=sys.stderr)
+        sys.exit(1)
     except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
         body = e.read().decode("utf-8", errors="ignore")
-        if e.code == 404:
-            return [], f"{note_label} endpoint unavailable (404): /api/{path}"
+        if e.code in _OPTIONAL_UNAVAILABLE_STATUSES:
+            return [], f"{note_label} endpoint unavailable ({e.code}): /api/{path}"
         print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
         sys.exit(1)
 
