@@ -3038,12 +3038,15 @@ def link_tenant_to_meld(meld_id: str, tenant_id) -> dict:
 
     current = _http_get(f"melds/{meld_id}/", cookie_hdr)
     existing_tenants = current.get("tenants") or []
+    # str()-normalize ids (PM may return them as strings): a str-vs-int slip
+    # here would skip the already-linked short-circuit and fall through to the
+    # merge below, duplicating an already-present tenant on the meld.
     existing_ids = {
-        t.get("id") for t in existing_tenants
+        str(t.get("id")) for t in existing_tenants
         if isinstance(t, dict) and t.get("id") is not None
     }
 
-    if tenant_id_int in existing_ids:
+    if str(tenant_id_int) in existing_ids:
         return {
             "ok": True,
             "meld_id": meld_id,
@@ -3053,7 +3056,11 @@ def link_tenant_to_meld(meld_id: str, tenant_id) -> dict:
         }
 
     new_tenant = get_tenant(tenant_id_int)
-    merged_tenants = list(existing_tenants) + [new_tenant]
+    # Dedup guard by normalized id: belt-and-suspenders so the no-dedup append
+    # can never duplicate a tenant even if the short-circuit above is bypassed.
+    merged_tenants = list(existing_tenants)
+    if str(tenant_id_int) not in existing_ids:
+        merged_tenants.append(new_tenant)
 
     csrf_token = _get_csrf_token(cookie_hdr)
     payload = {
@@ -3065,12 +3072,37 @@ def link_tenant_to_meld(meld_id: str, tenant_id) -> dict:
         "tenants": merged_tenants,
     }
     result = _http_patch(f"melds/{meld_id}/", payload, cookie_hdr, csrf_token)
+
+    # Verify-and-fail-loud: PM returns HTTP 2xx for the PATCH even when the
+    # meld's `tenants` relation is read-only/derived and silently ignores the
+    # write (operator hit this: linked:true but an immediate re-GET showed
+    # tenants=[]). Re-GET and confirm the link actually persisted server-side
+    # rather than trusting the local merge.
+    verify = _http_get(f"melds/{meld_id}/", cookie_hdr)
+    persisted_tenants = verify.get("tenants") or []
+    # Normalize both sides to str: PM may return tenant ids as strings, and a
+    # str-vs-int mismatch here would raise "did NOT persist" on a genuine
+    # success (this module already coerces string ids on input elsewhere).
+    persisted_ids = {
+        str(t.get("id")) for t in persisted_tenants
+        if isinstance(t, dict) and t.get("id") is not None
+    }
+
+    if str(tenant_id_int) not in persisted_ids:
+        raise RuntimeError(
+            f"Tenant {tenant_id_int} link did NOT persist on meld {meld_id}: "
+            f"PropertyMeld accepted the PATCH (HTTP 2xx) but the meld's tenants "
+            f"relation is unchanged (likely a read-only/derived relation). Link "
+            f"this tenant via the PropertyMeld web UI for now. CLI link-tenant "
+            f"is pending the correct write-target fix."
+        )
+
     return {
         "ok": True,
         "meld_id": meld_id,
         "tenant_id": tenant_id_int,
         "linked": True,
-        "tenant_count": len(merged_tenants),
+        "tenant_count": len(persisted_tenants),
         "result": result,
     }
 

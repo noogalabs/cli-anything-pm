@@ -1663,6 +1663,8 @@ class TestLinkTenantToMeld:
             mg.side_effect = [
                 {"id": "90000003", "tenants": [existing]},  # GET meld
                 _TENANT_FIXTURE,                              # GET tenant for hydration
+                # verify re-GET (post-PATCH persistence check): tenant now present
+                {"id": "90000003", "tenants": [existing, _TENANT_FIXTURE]},
             ]
             mp.return_value = {"id": "90000003", "tenants": [existing, _TENANT_FIXTURE]}
 
@@ -1700,6 +1702,31 @@ class TestLinkTenantToMeld:
             assert result["tenant_count"] == 1
             mp.assert_not_called()
 
+    def test_idempotent_short_circuits_on_string_tenant_id_from_pm(self):
+        """Regression: PM may return an already-linked tenant's id as a STRING.
+
+        The idempotent check must str()-normalize too; otherwise an
+        already-linked tenant fails the int-vs-str membership test, skips the
+        short-circuit, and falls through to the no-dedup merge — DUPLICATING the
+        tenant on the meld. This test puts a STRING id in the existing tenants
+        and asserts already_linked with NO PATCH. It fails against the old
+        int-only check (which would fire the PATCH).
+        """
+        with self._patches()[0] as mc, self._patches()[1] as mch, \
+             self._patches()[2] as mcs, self._patches()[3] as mg, \
+             self._patches()[4] as mp:
+            self._stub_creds(mc, mch, mcs)
+            mg.return_value = {
+                "id": "90000003", "tenants": [{"id": "9000009"}]
+            }
+
+            result = http_backend.link_tenant_to_meld("90000003", 9000009)
+
+            assert result["ok"] is True
+            assert result.get("already_linked") is True
+            assert result["tenant_count"] == 1
+            mp.assert_not_called()
+
     def test_hits_correct_paths_get_meld_then_get_tenant_then_patch(self):
         with self._patches()[0] as mc, self._patches()[1] as mch, \
              self._patches()[2] as mcs, self._patches()[3] as mg, \
@@ -1708,13 +1735,17 @@ class TestLinkTenantToMeld:
             mg.side_effect = [
                 {"id": "90000003", "tenants": []},
                 _TENANT_FIXTURE,
+                # verify re-GET (post-PATCH persistence check) re-hits the meld
+                {"id": "90000003", "tenants": [_TENANT_FIXTURE]},
             ]
             mp.return_value = {"id": "90000003", "tenants": [_TENANT_FIXTURE]}
 
             http_backend.link_tenant_to_meld("90000003", 9000009)
 
             get_paths = [c.args[0] for c in mg.call_args_list]
-            assert get_paths == ["melds/90000003/", "tenants/9000009/"]
+            assert get_paths == [
+                "melds/90000003/", "tenants/9000009/", "melds/90000003/"
+            ]
             patch_path = mp.call_args[0][0]
             assert patch_path == "melds/90000003/"
 
@@ -1726,6 +1757,8 @@ class TestLinkTenantToMeld:
             mg.side_effect = [
                 {"id": "90000003"},  # no tenants key at all
                 _TENANT_FIXTURE,
+                # verify re-GET (post-PATCH persistence check): tenant present
+                {"id": "90000003", "tenants": [_TENANT_FIXTURE]},
             ]
             mp.return_value = {"id": "90000003", "tenants": [_TENANT_FIXTURE]}
 
@@ -1735,6 +1768,33 @@ class TestLinkTenantToMeld:
             assert result["tenant_count"] == 1
             _, payload, _, _ = mp.call_args[0]
             assert payload["tenants"] == [_TENANT_FIXTURE]
+
+    def test_verify_accepts_string_tenant_id_from_pm(self):
+        """Regression: PM may return the persisted tenant id as a STRING.
+
+        The verify block must str()-normalize both sides; otherwise a genuine
+        success raises "did NOT persist" on the str-vs-int mismatch. This test
+        returns the verify-GET id as a STRING and asserts SUCCESS — it FAILS
+        against the old int-only membership check, so green here proves the
+        normalization is exercised (not illusory).
+        """
+        with self._patches()[0] as mc, self._patches()[1] as mch, \
+             self._patches()[2] as mcs, self._patches()[3] as mg, \
+             self._patches()[4] as mp:
+            self._stub_creds(mc, mch, mcs)
+            mg.side_effect = [
+                {"id": "90000003", "tenants": []},         # GET meld
+                _TENANT_FIXTURE,                            # GET tenant hydration
+                # verify re-GET: PM returns the tenant id as a STRING
+                {"id": "90000003", "tenants": [{"id": "9000009"}]},
+            ]
+            mp.return_value = {"id": "90000003", "tenants": [_TENANT_FIXTURE]}
+
+            result = http_backend.link_tenant_to_meld("90000003", 9000009)
+
+            assert result["ok"] is True
+            assert result["linked"] is True
+            assert result["tenant_id"] == 9000009
 
 
 class TestGetTenant:
