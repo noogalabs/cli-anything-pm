@@ -1396,3 +1396,148 @@ class TestTenantsEditContactCLI:
             home_phone=None,
             business_phone=None,
         )
+
+
+class TestRequiredFreeTextNonEmpty:
+    """Broad blank-bypass guard: `required=True` enforces PRESENCE only, so
+    `--field ""` (or whitespace) sails past the required check and fires a
+    blank free-text value to PM (the same 400 the field is meant to prevent).
+
+    PR #40 closed 3 sites (cancel --reason, create --work-location x2). This
+    suite proves the broad sweep that guards the remaining free-text required
+    fields. Each case asserts the _require_nonempty callback BLOCKS the call
+    before any backend request fires (BadParameter -> nonzero exit +
+    assert_not_called). Empty AND whitespace are both blocked.
+
+    Representative spread across commands + the invoice --reason proof case
+    (cancel --reason was guarded in #40 but invoice hold/decline --reason —
+    the SAME field name — was not; that inconsistency motivated this sweep).
+    """
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_invoice_hold_rejects_blank_reason(self, runner, blank):
+        # THE inconsistency proof: invoice --reason is the same field name as
+        # the cancel --reason guarded in #40, yet was left unguarded.
+        with patch("cli_anything.propertymeld.http_backend.hold_meld_invoice") as mock_fn:
+            result = runner.invoke(cli, [
+                "work-orders", "invoice-hold", "3863382",
+                "--reason", blank,
+            ])
+        assert result.exit_code != 0
+        assert "reason cannot be empty" in result.output
+        mock_fn.assert_not_called()
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_invoice_decline_rejects_blank_reason(self, runner, blank):
+        with patch("cli_anything.propertymeld.http_backend.decline_meld_invoice") as mock_fn:
+            result = runner.invoke(cli, [
+                "work-orders", "invoice-decline", "3863382",
+                "--reason", blank,
+            ])
+        assert result.exit_code != 0
+        assert "reason cannot be empty" in result.output
+        mock_fn.assert_not_called()
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_send_message_rejects_blank_text(self, runner, blank):
+        with patch("cli_anything.propertymeld.http_backend.send_message") as mock_fn:
+            result = runner.invoke(cli, [
+                "work-orders", "send-message",
+                "--meld-id", "12701108",
+                "--text", blank,
+            ])
+        assert result.exit_code != 0
+        assert "text cannot be empty" in result.output
+        mock_fn.assert_not_called()
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_assign_tech_rejects_blank_tech(self, runner, blank):
+        with patch("cli_anything.propertymeld.http_backend.assign_tech") as mock_fn:
+            result = runner.invoke(cli, [
+                "work-orders", "assign-tech",
+                "--work-order-id", "12701108",
+                "--tech", blank,
+            ])
+        assert result.exit_code != 0
+        assert "tech cannot be empty" in result.output
+        mock_fn.assert_not_called()
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_vendor_invite_rejects_blank_email(self, runner, blank):
+        with patch("cli_anything.propertymeld.http_backend.invite_vendor") as mock_fn:
+            result = runner.invoke(cli, [
+                "vendors", "invite",
+                "--email", blank,
+                "--first-name", "ZZ",
+                "--last-name", "Test",
+                "--company", "Test Co",
+                "--line1", "123 Test St",
+                "--postcode", "37421",
+                "--phone", "6784567891",
+            ])
+        assert result.exit_code != 0
+        assert "email cannot be empty" in result.output
+        mock_fn.assert_not_called()
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_tenant_invite_rejects_blank_cell(self, runner, blank):
+        with patch("cli_anything.propertymeld.http_backend.invite_tenant") as mock_fn:
+            result = runner.invoke(cli, [
+                "tenants", "invite",
+                "--unit-id", "1870266",
+                "--first-name", "ZZ",
+                "--last-name", "Test",
+                "--email", "zz@example.com",
+                "--cell", blank,
+            ])
+        assert result.exit_code != 0
+        assert "cell cannot be empty" in result.output
+        mock_fn.assert_not_called()
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_project_create_rejects_blank_name(self, runner, blank):
+        with patch("cli_anything.propertymeld.http_backend.create_project") as mock_fn:
+            result = runner.invoke(cli, [
+                "projects", "create",
+                "--name", blank,
+                "--project-type", "TURN",
+                "--due-date", "2026-05-30T04:00:00.000Z",
+                "--start-date", "2026-05-14T10:30:00Z",
+                "--coordinator", "57163",
+                "--unit-id", "1870266",
+                "--unit-label", "123 Main St",
+            ])
+        assert result.exit_code != 0
+        assert "name cannot be empty" in result.output
+        mock_fn.assert_not_called()
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_estimate_create_rejects_blank_number(self, runner, blank):
+        with patch("cli_anything.propertymeld.http_backend.create_estimate") as mock_fn:
+            result = runner.invoke(cli, [
+                "estimates", "create",
+                "--meld-id", "12701108",
+                "--estimate-number", blank,
+                "--amount", "1250.00",
+            ])
+        assert result.exit_code != 0
+        assert "estimate-number cannot be empty" in result.output
+        mock_fn.assert_not_called()
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_work_order_create_rejects_blank_brief_description(self, runner, blank):
+        with patch("cli_anything.propertymeld.http_backend.create_meld") as mock_fn:
+            result = runner.invoke(cli, [
+                "work-orders", "create",
+                "--brief-description", blank,
+                "--description", "leak under sink",
+                "--work-category", "PLUMBING",
+                "--work-type", "REPAIR",
+                "--due-date", "2026-05-16T02:52:41.393Z",
+                "--work-location", "Kitchen",
+                "--unit-id", "1870266",
+                "--maintenance-id", "57163",
+            ])
+        assert result.exit_code != 0
+        assert "brief-description cannot be empty" in result.output
+        mock_fn.assert_not_called()
