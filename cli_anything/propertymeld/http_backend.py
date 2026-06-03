@@ -262,44 +262,61 @@ def _status_from_html_body(text: str) -> Optional[int]:
       3. preceded by an "HTTP" / "Error" / "Status" label ("HTTP 503",
          "Error 404", "Status: 500").
 
-    The first/strongest match wins (reason-phrase > heading > label). When NO
-    status context is found, returns ``None`` — there is deliberately NO bare
-    ``[45]\\d{2}`` fallback. ``None`` is SAFE: the optional path treats it as a
-    forbidden-class (403) downgrade, which is the common permission
+    SELECTION is EARLIEST-POSITION-WINS across ALL THREE context sources, not
+    tier-ordered. Servers render the real status highest in the document (the
+    <title>/<h1>), so the candidate with the smallest start position is the
+    trustworthy one. A tier-ordered scan was UNSAFE: a numeric-only 5xx heading
+    ("<h1>500</h1>", no reason phrase) would be skipped while a LATER, lower-code
+    "403 Forbidden" reason phrase in footer copy returned first — silently
+    MASKING the server error as a 4xx downgrade on the optional path. Collecting
+    every (position, code) candidate and returning the earliest closes that gap.
+
+    When NO status context is found, returns ``None`` — there is deliberately NO
+    bare ``[45]\\d{2}`` fallback. ``None`` is SAFE: the optional path treats it
+    as a forbidden-class (403) downgrade, which is the common permission
     interstitial. Returning a guessed status here is the dangerous direction.
     """
     if not text:
         return None
 
-    # 1. Reason-phrase context is the strongest signal — a code sitting next to
-    #    its canonical phrase is unambiguously a status, never incidental markup.
-    #    Pick the earliest such match in the document so a real status heading
-    #    near the top wins over any stray phrase/code later in the body.
-    best_pos: Optional[int] = None
-    best_code: Optional[int] = None
+    # Collect (position, priority, code) candidates from all three context
+    # sources, then pick the EARLIEST position. ``priority`` is only a
+    # deterministic tie-breaker when two candidates share the same start
+    # position (e.g. "<title>403 Forbidden</title>" matches both reason-phrase
+    # and heading at the same spot — they yield the same code anyway, so the
+    # tie-break never changes the result). Lower priority wins the tie;
+    # reason-phrase (0) is preferred, matching the prior strongest-signal intent.
+    candidates: list[tuple[int, int, int]] = []
+
+    # Source 1 — reason-phrase context (code adjacent to its canonical phrase,
+    # either order). Strongest signal; never incidental markup.
     for code, pattern in _REASON_PHRASE_PATTERNS:
         m = pattern.search(text)
-        if m and (best_pos is None or m.start() < best_pos):
-            best_pos = m.start()
-            best_code = code
-    if best_code is not None:
-        return best_code
+        if m:
+            candidates.append((m.start(), 0, code))
 
-    # 2. A code inside a title/heading. Headings are where servers render the
-    #    status ("<title>500 Internal Server Error</title>"); incidental CSS
-    #    numbers do not live in <title>/<h1>/<h2> text.
+    # Source 2 — a [45]\d{2} code inside a <title>/<h1>/<h2> heading. Position is
+    # the code's ABSOLUTE position in the document (heading match start + the
+    # code's offset within the heading's inner text), so it compares correctly
+    # against the other sources.
     for heading_match in _HEADING_STATUS_RE.finditer(text):
-        code_match = _CODE_IN_TEXT_RE.search(heading_match.group(1))
+        inner = heading_match.group(1)
+        code_match = _CODE_IN_TEXT_RE.search(inner)
         if code_match:
-            return int(code_match.group(1))
+            abs_pos = heading_match.start(1) + code_match.start(1)
+            candidates.append((abs_pos, 1, int(code_match.group(1))))
 
-    # 3. An explicitly labeled code ("HTTP 503", "Error 404", "Status: 500").
-    labeled = _LABELED_STATUS_RE.search(text)
-    if labeled:
-        return int(labeled.group(1))
+    # Source 3 — a code preceded by an HTTP/Error/Status label.
+    for labeled in _LABELED_STATUS_RE.finditer(text):
+        candidates.append((labeled.start(), 2, int(labeled.group(1))))
 
-    # No status context found — SAFE None (optional path downgrades as 403).
-    return None
+    if not candidates:
+        # No status context found — SAFE None (optional path downgrades as 403).
+        return None
+
+    # Earliest position wins; priority breaks an exact-position tie deterministically.
+    candidates.sort(key=lambda c: (c[0], c[1]))
+    return candidates[0][2]
 
 
 class _NonJsonBody(Exception):

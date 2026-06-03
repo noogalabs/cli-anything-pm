@@ -477,6 +477,27 @@ class TestStatusFromHtmlBody:
         assert hb._status_from_html_body("") is None
         assert hb._status_from_html_body(None) is None
 
+    def test_numeric_heading_not_masked_by_later_lower_reason_phrase(self):
+        """P2 CORE: a numeric-only 5xx heading ('<h1>500</h1>', NO reason phrase)
+        followed by a LATER, lower-code '403 Forbidden' reason phrase must infer
+        the heading's 500 (earliest position), NOT the later 403. The prior
+        tier-ordered scan returned the reason-phrase 403 first and silently
+        masked the server error."""
+        html = "<h1>500</h1><footer>403 Forbidden</footer>"
+        assert hb._status_from_html_body(html) == 500
+
+    def test_numeric_title_not_masked_by_later_reason_phrase(self):
+        """Same masking guard for a numeric-only <title>: earliest position
+        (the 502 title) wins over a later '404 Not Found' phrase."""
+        html = "<title>502</title><div>404 Not Found</div>"
+        assert hb._status_from_html_body(html) == 502
+
+    def test_exact_tie_title_reason_phrase_same_code(self):
+        """An exact-position tie ('<title>403 Forbidden</title>' matches both
+        the reason-phrase and the heading at ~same spot) is deterministic and
+        does NOT change the code — both yield 403."""
+        assert hb._status_from_html_body("<title>403 Forbidden</title>") == 403
+
 
 class TestStatusContextThroughOptionalPath:
     """Verify the anchored inference end-to-end through _http_get_optional_results:
@@ -535,6 +556,25 @@ class TestStatusContextThroughOptionalPath:
             b"<title>500 Internal Server Error</title>"
             b"<footer>support code 404</footer>"
         )
+
+        def fake_urlopen(req, **kw):
+            return _FakeResp(html)
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        with pytest.raises(SystemExit) as exc:
+            hb._http_get_optional_results(
+                "melds/12701108/vendor-files/?limit=100", "sessionid=fake", "vendor"
+            )
+        assert exc.value.code == 1
+
+    def test_numeric_heading_with_later_403_exits_not_downgrade(self, monkeypatch):
+        """P2 CORE end-to-end: a numeric-only '<h1>500</h1>' heading followed by
+        a LATER '403 Forbidden' in footer copy must FAIL LOUD (SystemExit), NOT
+        silently downgrade as a 4xx. Earliest-position selection picks the 500."""
+        _patch_creds(monkeypatch)
+
+        html = b"<h1>500</h1><footer>403 Forbidden</footer>"
 
         def fake_urlopen(req, **kw):
             return _FakeResp(html)
