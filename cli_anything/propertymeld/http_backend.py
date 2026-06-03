@@ -2373,10 +2373,20 @@ def normalize_unit_label(raw: Any) -> str:
     return " ".join(text.split())
 
 
+# Fields that decisively identify a SINGLE unit. A normalized query that equals
+# one of these is treated as a confident match. Deliberately EXCLUDES grouping
+# fields (building, floor, department): those identify a GROUP of units, not one,
+# so a match there can only ever be ambiguous. Including them let a query like
+# "Unit A" false-match a unit whose building is "A" and silently return the wrong
+# PK — violating the never-guess-a-wrong-PK guarantee. Excluded fields fall to the
+# backstop path (list units, caller picks) instead of producing a confident PK.
+_DECISIVE_UNIT_LABEL_FIELDS = ("unit", "apartment", "suite", "room")
+
+
 def _unit_label_candidates(unit: dict) -> list[str]:
-    """Every comparable label form for a unit's address fields."""
+    """Comparable label forms for a unit's *decisive* (single-unit) address fields."""
     out: list[str] = []
-    for field in ("unit", "apartment", "building", "floor", "suite", "room", "department"):
+    for field in _DECISIVE_UNIT_LABEL_FIELDS:
         val = unit.get(field)
         if val is None:
             continue

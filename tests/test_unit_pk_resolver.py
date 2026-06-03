@@ -50,13 +50,28 @@ PROP_MULTI = {
     ],
 }
 
+# Multi-unit property whose units carry a *grouping* field (building) that must
+# NOT be used for decisive matching. Regression fixture for the wrong-PK P1:
+# a query of "Unit A" must not confidently resolve to a unit merely because its
+# building is "A" — no unit is actually labelled "A".
+PROP_GROUPING = {
+    "id": 5300,
+    "property_name": "789 Pine Ct",
+    "line_1": "789 Pine Ct",
+    "line_2": "",
+    "units": [
+        _unit(7301, "Unit 2", building="A", floor="A", prop_id=5300),
+        _unit(7302, "Unit 5", building="B", floor="2", prop_id=5300),
+    ],
+}
+
 
 @pytest.fixture
 def patch_backend(monkeypatch):
     monkeypatch.setattr(hb, "_load_creds", lambda: {"cookies": []})
     monkeypatch.setattr(hb, "_cookie_header", lambda creds: "sessionid=fake")
 
-    props = {"5000": PROP_SINGLE, "5100": PROP_MULTI}
+    props = {"5000": PROP_SINGLE, "5100": PROP_MULTI, "5300": PROP_GROUPING}
 
     def fake_get_no_exit(path, cookie_hdr, **kw):
         # properties/{id}/
@@ -71,7 +86,7 @@ def patch_backend(monkeypatch):
     def fake_paginate_all(path, cookie_hdr, **kw):
         # property roster for name-based resolution
         if path.startswith("properties/"):
-            return [PROP_SINGLE, PROP_MULTI]
+            return [PROP_SINGLE, PROP_MULTI, PROP_GROUPING]
         return []
 
     monkeypatch.setattr(hb, "_http_get_no_exit", fake_get_no_exit)
@@ -267,3 +282,36 @@ def test_list_units_by_property_recaptures_on_session_expiry(patch_backend, monk
     assert res["count"] == 3
     assert calls["recapture"] == 1
     assert calls["resolve"] == 2
+
+
+# ── P1 regression: grouping fields (building/floor/department) are NOT decisive ──
+# A query must never confidently resolve to a unit just because a GROUP-level
+# field (building "A", floor "A", ...) normalizes to the query. Such fields
+# identify a group of units, not one, so they fall to the backstop path.
+
+def test_grouping_field_does_not_yield_confident_wrong_pk(patch_backend):
+    # "Unit A" -> normalizes to "a"; unit 7301 has building="A"/floor="A" -> "a".
+    # OLD behaviour matched on building and returned 7301 (a WRONG, confident PK).
+    # Correct behaviour: no unit is *labelled* "A", so backstop, never a guess.
+    res = hb.resolve_unit_pk(5300, "Unit A")
+    assert "unit_id" not in res, f"must not confidently match a grouping field: {res}"
+    assert res["not_found"] == "Unit A"
+    assert res["property_id"] == 5300
+    assert sorted(u["id"] for u in res["units"]) == [7301, 7302]
+
+
+def test_real_unit_label_still_resolves_despite_grouping_fields(patch_backend):
+    # Positive control: a true unit-label match resolves even when the unit also
+    # carries building/floor values — grouping fields neither block nor false-match.
+    res = hb.resolve_unit_pk(5300, "Unit 2")
+    assert res["unit_id"] == 7301
+    assert res["matched_on"] == "Unit 2"
+
+
+def test_backstop_display_still_surfaces_building_for_disambiguation(patch_backend):
+    # Building is excluded from *matching* but must remain VISIBLE in the backstop
+    # so a human can disambiguate by it.
+    res = hb.resolve_unit_pk(5300, "Unit A")
+    by_id = {u["id"]: u for u in res["units"]}
+    assert by_id[7301]["building"] == "A"
+    assert by_id[7302]["building"] == "B"
