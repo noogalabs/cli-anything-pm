@@ -1445,6 +1445,23 @@ def cancel_meld(meld_id: str, reason: Optional[str] = None) -> dict:
     return {"ok": True, "meld_id": meld_id, "reason": reason, "result": result}
 
 
+def _compute_dtend(dtstart: str, duration_hours: float) -> str:
+    """Return ISO 8601 dtend = dtstart + duration_hours.
+
+    PM's management availability event takes (dtstart, dtend), NOT
+    (dtstart, duration). We compute dtend client-side, mirroring the
+    schedule_vendor flow. Falls back to dtstart if the input can't be
+    parsed (PM then rejects the shape with a 400 instead of us guessing).
+    """
+    from datetime import datetime, timedelta
+    try:
+        # Python's fromisoformat handles "+04:00" since 3.11; pad "Z" to "+00:00".
+        start_dt = datetime.fromisoformat(dtstart.replace("Z", "+00:00"))
+        return (start_dt + timedelta(hours=duration_hours)).isoformat()
+    except Exception:
+        return dtstart
+
+
 @with_recapture_retry
 def schedule_appointment(meld_id: str, dtstart: str, duration_hours: float = 2.0) -> dict:
     """Schedule an in-house tech appointment window on a meld.
@@ -1454,39 +1471,69 @@ def schedule_appointment(meld_id: str, dtstart: str, duration_hours: float = 2.0
         dtstart: ISO 8601 datetime string, e.g. '2026-04-27T14:00:00-04:00'.
         duration_hours: Appointment duration in hours (default 2).
 
-    The meld must have an in-house tech assigned — PM creates the managementappointment
-    object at assignment time. This sets the availability_segment (the actual time window).
+    The meld must have an in-house tech assigned — PM creates the
+    managementappointment object at assignment time, and the meld sits at
+    status PENDING_MORE_MANAGEMENT_AVAILABILITY with an empty
+    management_availability_segments list.
+
+    Root cause of the prior HTTP 500 (diagnosed live 2026-06-03, demo
+    fixture meld 12937555): the old flow PUT an `availability_segment`
+    payload to `management-appointments/{appt_id}/schedule/`. That endpoint
+    is a SELECT-from-existing action — it has no availability segment to
+    bind and the server-side handler 500s (null deref) for EVERY payload
+    shape that passes serializer validation. The PM management-app frontend
+    never calls that endpoint for an unstarted in-house meld; it calls the
+    meld-level `accept` action, supplying the availability window as a NEW
+    management availability segment:
+
+        PATCH melds/{meld_id}/accept/
+        {
+          "mark_scheduled": true,
+          "segments_to_keep": [],
+          "management_availability_segments": [{"event": {"dtstart", "dtend"}}]
+        }
+
+    Verified live: this 200s, creates the availability segment, populates
+    the appointment's availability_segment, and flips the meld to
+    PENDING_COMPLETION. The event takes (dtstart, dtend) — NOT duration —
+    so we compute dtend = dtstart + duration_hours.
     """
     meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
 
-    # Get the management appointment ID from the meld
+    # Get the management appointment from the meld. Its presence is the
+    # proof an in-house tech is assigned (PM creates it at assignment time).
     meld = _http_get(f"melds/{meld_id}/", cookie_hdr)
     appts = meld.get("managementappointment", [])
     if not appts:
         return {"ok": False, "error": "No in-house tech assignment found on this meld"}
     appt_id = appts[0]["id"]
 
-    duration_seconds = int(duration_hours * 3600)
+    dtend = _compute_dtend(dtstart, duration_hours)
     payload = {
-        "availability_segment": {
-            "event": {
-                "dtstart": dtstart,
-                "duration": duration_seconds,
-            },
-            "meld": meld_id,
-        }
+        "mark_scheduled": True,
+        "segments_to_keep": [],
+        "management_availability_segments": [
+            {"event": {"dtstart": dtstart, "dtend": dtend}}
+        ],
     }
-    result = _http_put(f"management-appointments/{appt_id}/schedule/", payload, cookie_hdr, csrf_token)
-    appt_seg = result.get("availability_segment") or {}
-    event = (appt_seg.get("event") or {}) if isinstance(appt_seg, dict) else {}
+    result = _http_patch(f"melds/{meld_id}/accept/", payload, cookie_hdr, csrf_token)
+
+    # Pull the booked dtstart back out of the response for the contract.
+    # accept/ returns the meld shape with management_availability_segments[].
+    booked_start = dtstart
+    segs = result.get("management_availability_segments") if isinstance(result, dict) else None
+    if segs and isinstance(segs[0], dict):
+        event = segs[0].get("event") or {}
+        booked_start = event.get("dtstart", dtstart)
+
     return {
         "ok": True,
         "meld_id": meld_id,
         "appointment_id": appt_id,
-        "dtstart": event.get("dtstart", dtstart),
+        "dtstart": booked_start,
         "duration_hours": duration_hours,
         "result": result,
     }
