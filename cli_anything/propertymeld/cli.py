@@ -924,9 +924,9 @@ def inspect_work_order(meld_id, as_json):
 @click.option("--unit-json", default=None,
               help="Full JSON unit object (power-user path). Use this OR --unit-id.")
 @click.option("--maintenance-id", "maintenance_ids", type=int, multiple=True,
-              help="ManagementAgent PK — auto-hydrated via GET /agents/{id}/. Repeat for multiple. Use this OR --maintenance-json.")
+              help="Optional ManagementAgent PK — auto-hydrated via GET /agents/{id}/. Repeat for multiple. Use this OR --maintenance-json.")
 @click.option("--maintenance-json", default=None,
-              help="Full JSON list of ManagementAgent objects (power-user path). Use this OR --maintenance-id.")
+              help="Optional full JSON list of ManagementAgent objects (power-user path). Use this OR --maintenance-id.")
 @click.option("--tenant-id", "tenant_ids", type=int, multiple=True,
               help="Tenant PK — auto-hydrated via GET /tenants/{id}/. Repeat for multiple. Use this OR --tenants-json.")
 @click.option("--tenants-json", default=None,
@@ -952,8 +952,8 @@ def create_work_order_cmd(
 
     if (unit_id is None) == (unit_json is None):
         raise click.UsageError("Exactly one of --unit-id or --unit-json is required.")
-    if bool(maintenance_ids) == bool(maintenance_json):
-        raise click.UsageError("Exactly one of --maintenance-id (repeatable) or --maintenance-json is required.")
+    if maintenance_ids and maintenance_json is not None:
+        raise click.UsageError("Use either --maintenance-id (repeatable) or --maintenance-json, not both.")
     if tenant_ids and tenants_json is not None:
         raise click.UsageError("Use either --tenant-id (repeatable) or --tenants-json, not both.")
 
@@ -964,8 +964,10 @@ def create_work_order_cmd(
 
     if maintenance_ids:
         maintenance = [{"id": mid} for mid in maintenance_ids]
-    else:
+    elif maintenance_json is not None:
         maintenance = _json.loads(maintenance_json)
+    else:
+        maintenance = []
     if tenant_ids:
         tenants = [{"id": tid} for tid in tenant_ids]
     elif tenants_json is not None:

@@ -1096,6 +1096,28 @@ class TestWorkOrdersCreateCLI:
         assert kwargs["maintenance"] == [{"id": 57163}]
         assert kwargs["tenants"] == [{"id": 4010708}]
 
+    def test_work_orders_create_allows_unassigned_pending_assignment(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.create_meld",
+                   return_value={
+                       "ok": True,
+                       "meld_id": 12772803,
+                       "result": {
+                           "id": 12772803,
+                           "status": "PENDING_ASSIGNMENT",
+                           "maintenance": [],
+                       },
+                   }) as mock_fn:
+            result = runner.invoke(cli, self._COMMON_ARGS + [
+                "--unit-id", "1870266",
+            ])
+        assert result.exit_code == 0, result.output
+        kwargs = mock_fn.call_args.kwargs
+        assert kwargs["unit"] == {"id": 1870266}
+        assert kwargs["maintenance"] == []
+        data = json.loads(result.output)
+        assert data["result"]["status"] == "PENDING_ASSIGNMENT"
+        assert data["result"]["maintenance"] == []
+
     def test_work_orders_create_emits_meld_id(self, runner):
         with patch("cli_anything.propertymeld.http_backend.create_meld",
                    return_value={"ok": True, "meld_id": 12772803, "result": {"id": 12772803}}):
