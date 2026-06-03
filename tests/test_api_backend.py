@@ -555,14 +555,17 @@ class TestScheduleVendorAppointment:
              patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
              patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
              patch("cli_anything.propertymeld.http_backend._http_get") as mg, \
-             patch("cli_anything.propertymeld.http_backend._http_patch") as mp, \
-             patch.object(http_backend, "_emit_meld_state_change", create=True) as me:
+             patch("cli_anything.propertymeld.http_backend._http_patch") as mp:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
             mg.return_value = self.HAPPY_MELD
             mp.return_value = {"appointments_required": None}
 
+            # No _emit_meld_state_change patch here: that name was a dead call
+            # that raised NameError AFTER the booking PATCH, masking success and
+            # driving a re-run double-book. Running the real path (no mock for it)
+            # guards against the NameError regressing.
             result = http_backend.schedule_vendor_appointment(
                 "12701108", "42", "2026-05-20T14:00:00-04:00", duration_hours=2.0
             )
@@ -584,7 +587,48 @@ class TestScheduleVendorAppointment:
             ev = payload["multiple_segments_to_book"][0]["event"]
             assert ev["dtstart"] == "2026-05-20T14:00:00-04:00"
             assert ev["dtend"].startswith("2026-05-20T16:00:00")
-            me.assert_called_once()
+
+    def test_no_double_book_and_no_nameerror_on_emit_removal(self):
+        """Regression: the dead `_emit_meld_state_change` call ran AFTER the
+        booking PATCH and raised NameError (the @with_recapture_retry decorator
+        only catches SessionExpired, so it propagated and crashed the CLI). The
+        booking was already created server-side, so the operator re-ran the
+        command -> a SECOND booking. This test runs the real code path with NO
+        mock for the emit symbol and asserts:
+          (a) no NameError (or any exception) escapes,
+          (b) the booking endpoint is PATCHed EXACTLY ONCE (no double-book),
+          (c) the success return is intact.
+        Pre-fix, this test fails with NameError raised from the function.
+        """
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mg, \
+             patch("cli_anything.propertymeld.http_backend._http_patch") as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mg.return_value = self.HAPPY_MELD
+            mp.return_value = {"appointments_required": None}
+
+            # Must not raise NameError (or anything). Symbol intentionally NOT mocked.
+            try:
+                result = http_backend.schedule_vendor_appointment(
+                    "12701108", "42", "2026-05-20T14:00:00-04:00", duration_hours=2.0
+                )
+            except NameError as exc:  # pragma: no cover - explicit failure path
+                raise AssertionError(
+                    f"schedule_vendor_appointment raised NameError (dead _emit call): {exc}"
+                )
+
+            # Exactly ONE booking PATCH — proves no re-POST / double-book.
+            mp.assert_called_once()
+            assert mp.call_args[0][0] == "assignments/8000/segments/"
+
+            # Success return intact.
+            assert result["ok"] is True
+            assert result["assignment_request_id"] == 8000
+            assert result["appointment_id"] == 7000
 
     def test_returns_error_when_no_vendor_appointment(self):
         meld = {
@@ -625,8 +669,7 @@ class TestScheduleVendorAppointment:
              patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
              patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
              patch("cli_anything.propertymeld.http_backend._http_get") as mg, \
-             patch("cli_anything.propertymeld.http_backend._http_patch") as mp, \
-             patch.object(http_backend, "_emit_meld_state_change", create=True):
+             patch("cli_anything.propertymeld.http_backend._http_patch") as mp:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
@@ -659,8 +702,7 @@ class TestScheduleVendorAppointment:
              patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
              patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
              patch("cli_anything.propertymeld.http_backend._http_get") as mg, \
-             patch("cli_anything.propertymeld.http_backend._http_patch") as mp, \
-             patch.object(http_backend, "_emit_meld_state_change", create=True):
+             patch("cli_anything.propertymeld.http_backend._http_patch") as mp:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"

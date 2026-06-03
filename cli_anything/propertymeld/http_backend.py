@@ -2107,12 +2107,6 @@ def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, dura
     # Get the vendor appointment from the meld (live API uses `vendorappointment`,
     # NOT the legacy `vendorassignment` field that earlier mocks referenced).
     meld = _http_get(f"melds/{meld_id}/", cookie_hdr)
-    # added 2026-04-29 by collie via dane dispatch — Wave 1.5 meld_state_change instrumentation per UU TODO
-    # Reuse the existing meld fetch above to capture prior_state — no extra GET needed.
-    prior_state = "unknown"
-    if isinstance(meld, dict):
-        prior_state = str(meld.get("status") or meld.get("state") or "unknown")
-
     appointments = meld.get("vendorappointment", []) or []
     requests_list = meld.get("vendor_assignment_requests", []) or []
     if not appointments:
@@ -2183,12 +2177,6 @@ def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, dura
         ],
     }
     result = _http_patch(f"assignments/{request_id}/segments/", payload, cookie_hdr, csrf_token)
-    # added 2026-04-29 by collie via dane dispatch — Wave 1.5 meld_state_change instrumentation per UU TODO
-    _emit_meld_state_change(
-        meld_id, prior_state, "scheduled", "scheduled_vendor_appointment",
-        vendor_id=int(vendor_id), assignment_id=request_id,
-        dtstart=dtstart, triggered_by="manager",
-    )
     return {
         "ok": True,
         "meld_id": meld_id,
