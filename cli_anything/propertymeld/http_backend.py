@@ -2796,12 +2796,34 @@ def link_tenant_to_meld(meld_id: str, tenant_id) -> dict:
         "tenants": merged_tenants,
     }
     result = _http_patch(f"melds/{meld_id}/", payload, cookie_hdr, csrf_token)
+
+    # Verify-and-fail-loud: PM returns HTTP 2xx for the PATCH even when the
+    # meld's `tenants` relation is read-only/derived and silently ignores the
+    # write (operator hit this: linked:true but an immediate re-GET showed
+    # tenants=[]). Re-GET and confirm the link actually persisted server-side
+    # rather than trusting the local merge.
+    verify = _http_get(f"melds/{meld_id}/", cookie_hdr)
+    persisted_tenants = verify.get("tenants") or []
+    persisted_ids = {
+        t.get("id") for t in persisted_tenants
+        if isinstance(t, dict) and t.get("id") is not None
+    }
+
+    if tenant_id_int not in persisted_ids:
+        raise RuntimeError(
+            f"Tenant {tenant_id_int} link did NOT persist on meld {meld_id}: "
+            f"PropertyMeld accepted the PATCH (HTTP 2xx) but the meld's tenants "
+            f"relation is unchanged (likely a read-only/derived relation). Link "
+            f"this tenant via the PropertyMeld web UI for now. CLI link-tenant "
+            f"is pending the correct write-target fix."
+        )
+
     return {
         "ok": True,
         "meld_id": meld_id,
         "tenant_id": tenant_id_int,
         "linked": True,
-        "tenant_count": len(merged_tenants),
+        "tenant_count": len(persisted_tenants),
         "result": result,
     }
 
