@@ -1445,23 +1445,6 @@ def cancel_meld(meld_id: str, reason: Optional[str] = None) -> dict:
     return {"ok": True, "meld_id": meld_id, "reason": reason, "result": result}
 
 
-def _compute_dtend(dtstart: str, duration_hours: float) -> str:
-    """Return ISO 8601 dtend = dtstart + duration_hours.
-
-    PM's management availability event takes (dtstart, dtend), NOT
-    (dtstart, duration). We compute dtend client-side, mirroring the
-    schedule_vendor flow. Falls back to dtstart if the input can't be
-    parsed (PM then rejects the shape with a 400 instead of us guessing).
-    """
-    from datetime import datetime, timedelta
-    try:
-        # Python's fromisoformat handles "+04:00" since 3.11; pad "Z" to "+00:00".
-        start_dt = datetime.fromisoformat(dtstart.replace("Z", "+00:00"))
-        return (start_dt + timedelta(hours=duration_hours)).isoformat()
-    except Exception:
-        return dtstart
-
-
 @with_recapture_retry
 def schedule_appointment(meld_id: str, dtstart: str, duration_hours: float = 2.0) -> dict:
     """Schedule an in-house tech appointment window on a meld.
@@ -1471,90 +1454,39 @@ def schedule_appointment(meld_id: str, dtstart: str, duration_hours: float = 2.0
         dtstart: ISO 8601 datetime string, e.g. '2026-04-27T14:00:00-04:00'.
         duration_hours: Appointment duration in hours (default 2).
 
-    The meld must have an in-house tech assigned — PM creates the
-    managementappointment object at assignment time, and the meld sits at
-    status PENDING_MORE_MANAGEMENT_AVAILABILITY with an empty
-    management_availability_segments list.
-
-    Root cause of the prior HTTP 500 (diagnosed live 2026-06-03, demo
-    fixture meld 12937555): the old flow PUT an `availability_segment`
-    payload to `management-appointments/{appt_id}/schedule/`. That endpoint
-    is a SELECT-from-existing action — it has no availability segment to
-    bind and the server-side handler 500s (null deref) for EVERY payload
-    shape that passes serializer validation. The PM management-app frontend
-    never calls that endpoint for an unstarted in-house meld; it calls the
-    meld-level `accept` action, supplying the availability window as a NEW
-    management availability segment:
-
-        PATCH melds/{meld_id}/accept/
-        {
-          "mark_scheduled": true,
-          "segments_to_keep": [],
-          "management_availability_segments": [{"event": {"dtstart", "dtend"}}]
-        }
-
-    Verified live: this 200s, creates the availability segment, populates
-    the appointment's availability_segment, and flips the meld to
-    PENDING_COMPLETION. The event takes (dtstart, dtend) — NOT duration —
-    so we compute dtend = dtstart + duration_hours.
+    The meld must have an in-house tech assigned — PM creates the managementappointment
+    object at assignment time. This sets the availability_segment (the actual time window).
     """
     meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
 
-    # Get the management appointment from the meld. Its presence is the
-    # proof an in-house tech is assigned (PM creates it at assignment time).
+    # Get the management appointment ID from the meld
     meld = _http_get(f"melds/{meld_id}/", cookie_hdr)
     appts = meld.get("managementappointment", [])
     if not appts:
         return {"ok": False, "error": "No in-house tech assignment found on this meld"}
-    appt = appts[0]
-    appt_id = appt["id"]
+    appt_id = appts[0]["id"]
 
-    # Fail loud rather than silently destroy existing availability data. The
-    # accept/ PATCH below sends segments_to_keep:[] — correct for the first-
-    # schedule case this fixes (an unstarted meld with no segments). But if the
-    # appointment is ALREADY scheduled (a booked availability_segment) or the
-    # meld already carries proposed management availability windows, that empty
-    # keep-list would WIPE them. Refuse the destructive case and point the
-    # caller at the reschedule flow instead of silently dropping real windows.
-    if (
-        appt.get("availability_segment")
-        or appt.get("management_availability_segments")
-        or meld.get("management_availability_segments")
-    ):
-        return {
-            "ok": False,
-            "error": (
-                "Meld already has scheduled or proposed availability segments; "
-                "`schedule` would replace them. Use the reschedule flow instead."
-            ),
-        }
-
-    dtend = _compute_dtend(dtstart, duration_hours)
+    duration_seconds = int(duration_hours * 3600)
     payload = {
-        "mark_scheduled": True,
-        "segments_to_keep": [],
-        "management_availability_segments": [
-            {"event": {"dtstart": dtstart, "dtend": dtend}}
-        ],
+        "availability_segment": {
+            "event": {
+                "dtstart": dtstart,
+                "duration": duration_seconds,
+            },
+            "meld": meld_id,
+        }
     }
-    result = _http_patch(f"melds/{meld_id}/accept/", payload, cookie_hdr, csrf_token)
-
-    # Pull the booked dtstart back out of the response for the contract.
-    # accept/ returns the meld shape with management_availability_segments[].
-    booked_start = dtstart
-    segs = result.get("management_availability_segments") if isinstance(result, dict) else None
-    if segs and isinstance(segs[0], dict):
-        event = segs[0].get("event") or {}
-        booked_start = event.get("dtstart", dtstart)
-
+    result = _http_put(f"management-appointments/{appt_id}/schedule/", payload, cookie_hdr, csrf_token)
+    appt_seg = result.get("availability_segment") or {}
+    event = (appt_seg.get("event") or {}) if isinstance(appt_seg, dict) else {}
     return {
         "ok": True,
         "meld_id": meld_id,
         "appointment_id": appt_id,
-        "dtstart": booked_start,
+        "dtstart": event.get("dtstart", dtstart),
         "duration_hours": duration_hours,
         "result": result,
     }
@@ -2395,275 +2327,6 @@ def get_unit(unit_id) -> dict:
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     return _http_get(f"units/{unit_id}/", cookie_hdr)
-
-
-# ── unit-PK resolver ─────────────────────────────────────────────────────────
-# A property's units carry an integer PK (`units[].id`) but are addressed by a
-# human-typed label (`units[].unit`, e.g. "Unit A", "Apt 12", or a bare street
-# address for single-unit properties). Callers (tenant invite, work-order
-# create) need the integer PK. These helpers resolve a messy label to that PK
-# WITHOUT ever silently committing the wrong unit: an inexact match returns a
-# disambiguation list, never a guess.
-#
-# Shape verified live 2026-06-02 on the cookie/manager auth path:
-#   GET /api/properties/{id}/            -> property object, EMBEDS units[]
-#   GET /api/properties/?limit=N         -> {count,next,previous,results[]}, each
-#                                           property EMBEDS units[]
-#   unit PK field:    units[].id  (int, e.g. 1754320)
-#   unit label field: units[].unit (str) + apartment/building/floor/suite/room
-# The list endpoints do NOT honour server-side filters (prop=, search=,
-# property_name= are all ignored — count is unchanged), so property-by-name
-# resolution and unit-label matching are both CLIENT-SIDE. This mirrors the
-# list_tenants client-filter note above.
-
-_UNIT_LABEL_PREFIXES = ("apartment", "apt", "unit", "suite", "ste", "room", "rm", "no", "number")
-
-
-def normalize_unit_label(raw: Any) -> str:
-    """Normalize a messy unit label for comparison.
-
-    "Apt 12", "Unit 12", "#12", "no. 12", "  12 " all normalize to "12";
-    "Unit A" -> "a". Lowercases, strips a leading unit-designator word and any
-    leading '#', and collapses internal whitespace. Pure function — unit-tested
-    without the network. Used to match a human-typed address against the
-    `unit` / apartment / suite / etc. fields on a property's units.
-    """
-    text = str(raw or "").strip().lower()
-    text = text.lstrip("#").strip()
-    # Strip a single leading designator word ("apt 12" -> "12"), but only when
-    # something follows it — so a bare "unit" stays "unit".
-    parts = text.split()
-    if len(parts) >= 2:
-        head = parts[0].rstrip(".")
-        if head in _UNIT_LABEL_PREFIXES:
-            text = " ".join(parts[1:])
-    # The designator word can mask a leading '#': "Unit #12" becomes "#12" after
-    # the prefix strip. Re-strip so "Unit #12" / "Apt #12" normalize to "12" —
-    # the contract this function's docstring advertises.
-    text = text.lstrip("#").strip()
-    # Collapse internal whitespace.
-    return " ".join(text.split())
-
-
-# Fields that decisively identify a SINGLE unit. A normalized query that equals
-# one of these is treated as a confident match. Deliberately EXCLUDES grouping
-# fields (building, floor, department): those identify a GROUP of units, not one,
-# so a match there can only ever be ambiguous. Including them let a query like
-# "Unit A" false-match a unit whose building is "A" and silently return the wrong
-# PK — violating the never-guess-a-wrong-PK guarantee. Excluded fields fall to the
-# backstop path (list units, caller picks) instead of producing a confident PK.
-_DECISIVE_UNIT_LABEL_FIELDS = ("unit", "apartment", "suite", "room")
-
-
-def _unit_label_candidates(unit: dict) -> list[str]:
-    """Comparable label forms for a unit's *decisive* (single-unit) address fields."""
-    out: list[str] = []
-    for field in _DECISIVE_UNIT_LABEL_FIELDS:
-        val = unit.get(field)
-        if val is None:
-            continue
-        norm = normalize_unit_label(val)
-        if norm:
-            out.append(norm)
-    return out
-
-
-def _summarize_unit(unit: dict) -> dict:
-    """Compact unit descriptor for disambiguation / backstop output."""
-    return {
-        "id": unit.get("id"),
-        "unit": unit.get("unit"),
-        "apartment": unit.get("apartment") or None,
-        "building": unit.get("building") or None,
-        "suite": unit.get("suite") or None,
-    }
-
-
-@with_recapture_retry
-def get_property_with_units(property_id) -> dict:
-    """GET /api/properties/{property_id}/ — property object with embedded units[].
-
-    The detail endpoint embeds the full units[] array (each with its integer
-    `id` PK), so a single call yields every unit for the property. No separate
-    units-by-property route exists; the list endpoints ignore server-side
-    filters, so this detail fetch is the canonical "units for this property"
-    primitive.
-    """
-    creds = _load_creds()
-    cookie_hdr = _cookie_header(creds)
-    return _http_get(f"properties/{property_id}/", cookie_hdr)
-
-
-def _resolve_property(property_ref: str, cookie_hdr: str) -> dict:
-    """Resolve a property ref (int id or name/address substring) to its object.
-
-    Numeric ref -> direct detail fetch (cheap, exact). Non-numeric -> paginate
-    the full property roster (server-side filtering is unavailable) and match
-    `property_name` / `line_1` by case-insensitive substring.
-
-    Returns a dict with one of:
-      {"property": {...}}                      single match
-      {"ambiguous_properties": [ {...}, ... ]} >1 substring match
-      {"not_found": "<ref>"}                   0 matches
-    """
-    raw = str(property_ref).strip()
-    if raw.isdigit():
-        prop = _http_get_no_exit(f"properties/{raw}/", cookie_hdr)
-        if isinstance(prop, dict) and prop.get("id") is not None:
-            return {"property": prop}
-        return {"not_found": raw}
-
-    needle = raw.lower()
-    matches: list[dict] = []
-    for prop in _paginate_all("properties/?limit=100", cookie_hdr):
-        if not isinstance(prop, dict):
-            continue
-        hay = " ".join(
-            str(prop.get(f) or "") for f in ("property_name", "line_1", "line_2")
-        ).lower()
-        if needle in hay:
-            matches.append(prop)
-    if len(matches) == 1:
-        return {"property": matches[0]}
-    if len(matches) > 1:
-        return {
-            "ambiguous_properties": [
-                {"id": p.get("id"), "property_name": p.get("property_name"), "line_1": p.get("line_1")}
-                for p in matches
-            ]
-        }
-    return {"not_found": raw}
-
-
-@with_recapture_retry
-def resolve_unit_pk(property_ref, unit_address: str) -> dict:
-    """Resolve (property, unit-address) -> integer unit PK, or a clear non-commit.
-
-    Resolution order, never guessing:
-      1. Resolve the property (int id -> detail fetch; name -> client-side
-         substring match over the full roster).
-      2. Pull the property's embedded units[].
-      3. Match unit_address against each unit's normalized label candidates
-         (unit / apartment / building / floor / suite / room). Exact normalized
-         match wins; if exactly one unit on the property, it is returned as a
-         confident single match regardless of label.
-      4. On 0 or >1 matches, return a disambiguation/backstop payload listing
-         every unit (id + label) — the caller picks, we never auto-commit.
-
-    Returns one of:
-      {"unit_id": <int>, "property_id": <int>, "matched_on": "<label>"}
-      {"ambiguous": [ {id,unit,...}, ... ], "property_id": <int>, "query": "<addr>"}
-      {"not_found": "<addr>", "property_id": <int>, "units": [ ... backstop ... ]}
-      {"ambiguous_properties": [...]} | {"error": "property not found ..."}
-    """
-    creds = _load_creds()
-    cookie_hdr = _cookie_header(creds)
-
-    resolved = _resolve_property(property_ref, cookie_hdr)
-    if "property" not in resolved:
-        if "ambiguous_properties" in resolved:
-            return resolved
-        return {
-            "error": f"property '{resolved.get('not_found', property_ref)}' not found",
-            "hint": "pass an integer property id, or run `pm units list-by-property <id>`",
-        }
-
-    prop = resolved["property"]
-    property_id = prop.get("id")
-    units = prop.get("units")
-    if not isinstance(units, list):
-        units = []
-
-    backstop = [_summarize_unit(u) for u in units if isinstance(u, dict)]
-
-    # A single-unit property: the lone unit IS the answer, label or not.
-    real_units = [u for u in units if isinstance(u, dict) and u.get("id") is not None]
-    if len(real_units) == 1:
-        only = real_units[0]
-        return {
-            "unit_id": only["id"],
-            "property_id": property_id,
-            "matched_on": only.get("unit"),
-            "note": "single-unit property",
-        }
-
-    target = normalize_unit_label(unit_address)
-    exact: list[dict] = []
-    for u in real_units:
-        if target and target in _unit_label_candidates(u):
-            exact.append(u)
-
-    if len(exact) == 1:
-        return {
-            "unit_id": exact[0]["id"],
-            "property_id": property_id,
-            "matched_on": exact[0].get("unit"),
-        }
-    if len(exact) > 1:
-        return {
-            "ambiguous": [_summarize_unit(u) for u in exact],
-            "property_id": property_id,
-            "query": unit_address,
-        }
-
-    return {
-        "not_found": unit_address,
-        "property_id": property_id,
-        "units": backstop,
-        "hint": "no unit matched; pick an id from `units` above or run "
-                "`pm units list-by-property <property_id>`",
-    }
-
-
-@with_recapture_retry
-def list_units_by_property(property_ref) -> dict:
-    """List every unit (with its integer PK) for a property — disambiguation backstop.
-
-    Resolves the property the same way as resolve_unit_pk, then returns the
-    embedded units[] with their PKs. The result reports the unit count so a
-    caller can never be misled by a silently-truncated list (the units are
-    embedded in the property object, so there is no pagination to truncate).
-    """
-    creds = _load_creds()
-    cookie_hdr = _cookie_header(creds)
-
-    resolved = _resolve_property(property_ref, cookie_hdr)
-    if "property" not in resolved:
-        if "ambiguous_properties" in resolved:
-            return resolved
-        return {
-            "error": f"property '{resolved.get('not_found', property_ref)}' not found",
-        }
-
-    prop = resolved["property"]
-    units = prop.get("units")
-    if not isinstance(units, list):
-        units = []
-    real = [u for u in units if isinstance(u, dict)]
-    return {
-        "property_id": prop.get("id"),
-        "property_name": prop.get("property_name"),
-        "count": len(real),
-        "units": [_summarize_unit(u) for u in real],
-    }
-
-
-@with_recapture_retry
-def get_unit_by_address(property_ref, unit_address: str) -> dict:
-    """Convenience lookup: resolve (property, address) and, on a confident single
-    match, return the FULL unit object via GET /api/units/{id}/.
-
-    On anything other than a confident single match, returns the same
-    disambiguation/not-found payload as resolve_unit_pk so the caller still
-    never gets a silently-wrong unit.
-    """
-    res = resolve_unit_pk(property_ref, unit_address)
-    if "unit_id" in res:
-        full = get_unit(res["unit_id"])
-        if isinstance(full, dict):
-            full.setdefault("_resolved", {"matched_on": res.get("matched_on"), "note": res.get("note")})
-        return full
-    return res
 
 
 @with_recapture_retry

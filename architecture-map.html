@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=4" />
+<title>PM CLI — Architecture Map</title>
+<style>
+  :root{
+    --bg:#0F0F0F; --panel:#161616; --panel-2:#1c1c1c; --border:#2a2a2a;
+    --text:#e8e8e8; --muted:#8a8a8a;
+    --client:#4ea1ff; --route:#7bd389; --service:#c792ea; --db:#ffb86b;
+    --external:#ff6b9d; --critical:#ff3860; --accent:#f5b942; --accent-2:#ff7a45;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  #app{display:grid;grid-template-columns:1fr 360px;grid-template-rows:auto 1fr;height:100vh;width:100vw}
+  header{grid-column:1 / -1;background:var(--panel);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  header h1{font-size:15px;margin:0;font-weight:650;letter-spacing:.2px}
+  header .sub{color:var(--muted);font-size:12px;margin-left:2px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-left:auto}
+  .chip{background:var(--panel-2);border:1px solid var(--border);color:var(--muted);
+    padding:4px 10px;border-radius:14px;cursor:pointer;font-size:12px;user-select:none;white-space:nowrap}
+  .chip:hover{color:var(--text);border-color:#3a3a3a}
+  .chip.active{background:var(--accent);color:#1a1a1a;border-color:var(--accent);font-weight:600}
+  .canvas-wrap{position:relative;overflow:hidden;background:
+    radial-gradient(circle at 20% 10%, #141414 0%, var(--bg) 60%);min-height:0}
+  svg{width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+  svg.grabbing{cursor:grabbing}
+  .cluster-box{fill-opacity:.10;stroke-opacity:.5;stroke-width:1}
+  .cluster-label{fill:var(--muted);font-size:12px;font-weight:600;letter-spacing:.4px;text-transform:uppercase}
+  .node-rect{cursor:pointer;transition:opacity .15s}
+  .node-label{font-size:12px;font-weight:600;pointer-events:none;fill:var(--text)}
+  .node-sub{font-size:10px;pointer-events:none;fill:var(--muted)}
+  .edge-path{fill:none;stroke-width:1.4;opacity:.55;transition:opacity .15s}
+  .edge-label{font-size:9.5px;fill:var(--muted);pointer-events:none;opacity:.9}
+  .dim{opacity:.12 !important}
+  .edge-dim{opacity:.05 !important}
+  .badge-circle{stroke:#0f0f0f;stroke-width:1}
+  .badge-text{font-size:9px;font-weight:700;fill:#0f0f0f;pointer-events:none;text-anchor:middle}
+  aside{grid-row:2;grid-column:2;background:var(--panel);border-left:1px solid var(--border);
+    padding:16px;overflow-y:auto}
+  aside h2{font-size:14px;margin:0 0 4px}
+  aside .tag{display:inline-block;font-size:10px;color:var(--muted);border:1px solid var(--border);
+    border-radius:4px;padding:1px 6px;margin:2px 4px 2px 0}
+  aside .role{color:var(--text);margin:8px 0 2px;font-size:13px}
+  aside .plain{color:#c9c9c9;background:var(--panel-2);border-radius:8px;padding:10px 12px;margin:8px 0;font-size:13px;border:1px solid var(--border)}
+  aside .path{color:var(--accent);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;word-break:break-all;margin:6px 0}
+  aside h3{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:16px 0 6px}
+  aside ul{margin:4px 0;padding-left:16px}
+  aside li{margin:3px 0;font-size:12.5px;color:#cfcfcf}
+  aside .edge-in{color:var(--route)} aside .edge-out{color:var(--accent-2)}
+  .legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;font-size:11px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:5px}
+  .legend i{width:16px;height:3px;border-radius:2px;display:inline-block}
+  .ctrls{position:absolute;right:12px;bottom:12px;display:flex;flex-direction:column;gap:6px;z-index:5}
+  .ctrls button{width:34px;height:34px;border-radius:8px;background:var(--panel-2);
+    border:1px solid var(--border);color:var(--text);font-size:16px;cursor:pointer}
+  .ctrls button:hover{border-color:#3a3a3a}
+  .ctrls button.fit{font-size:11px}
+  .findings li{margin:6px 0}
+  .sev-high{color:#ff6b6b} .sev-med{color:var(--db)} .sev-low{color:var(--muted)}
+  @media (max-width:900px){
+    #app{grid-template-columns:1fr;grid-template-rows:auto minmax(320px,52vh) auto}
+    header{grid-column:1}
+    .canvas-wrap{grid-column:1;grid-row:2;min-height:320px}
+    aside{grid-column:1;grid-row:3;border-left:none;border-top:1px solid var(--border);max-height:48vh}
+    .chips{width:100%;margin-left:0}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div>
+      <h1>Property Meld CLI — Architecture Map</h1>
+      <div class="sub">cli-anything-pm · dual-auth HTTP adapter for the Property Meld work-order system</div>
+    </div>
+    <div class="chips" id="chips"></div>
+  </header>
+
+  <div class="canvas-wrap">
+    <svg id="svg">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#6a6a6a"/>
+        </marker>
+        <marker id="arrow-crit" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--critical)"/>
+        </marker>
+        <marker id="arrow-api" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--accent-2)"/>
+        </marker>
+      </defs>
+      <g id="viewport">
+        <g id="clusters"></g>
+        <g id="edges"></g>
+        <g id="edgelabels"></g>
+        <g id="nodes"></g>
+      </g>
+    </svg>
+    <div class="ctrls">
+      <button class="fit" id="fit" title="Fit to view">Fit</button>
+      <button id="zin" title="Zoom in">+</button>
+      <button id="zout" title="Zoom out">&minus;</button>
+    </div>
+  </div>
+
+  <aside id="sidebar"></aside>
+</div>
+
+<script>
+/* ── clusters: one column box per cluster ───────────────────────────────── */
+const clusters = [
+  { id:'entry',    label:'Entry · command tree',     x:40,   y:70,  w:300, h:980 },
+  { id:'commands', label:'Commands · pm subcommands', x:380,  y:70,  w:320, h:1120 },
+  { id:'core',     label:'Core · dual-auth backends',  x:740,  y:70,  w:360, h:1120 },
+  { id:'shared',   label:'Shared · token, errors, IO', x:1140, y:70,  w:300, h:520 },
+  { id:'external', label:'External · PM + snapcli',     x:1480, y:70,  w:300, h:880 },
+];
+
+const N = (id, cluster, label, sub, x, y, w, h, color, opts = {}) =>
+  ({ id, cluster, label, sub, x, y, w, h, color, ...opts });
+
+/* ── nodes ──────────────────────────────────────────────────────────────── */
+const nodes = [
+  /* ENTRY */
+  N('cli-group','entry','cli.py','pm root command group',70,120,240,64,'client',{
+    critical:true,
+    role:'Click root group that defines the `pm` command and all sub-groups; routes reads to the Nexus backend and writes/rich-reads to the cookie backend.',
+    plain:'The front door. When you type a "pm" command in the terminal, this file decides which command you meant and which engine should handle it.',
+    path:'cli_anything/propertymeld/cli.py:24',
+    notes:['line:20, imports BOTH backends (api_backend + http_backend) and picks per-command','line:9 docstring: reads → Nexus API, writes → cookie backend','Installed as console script `pm` (setup.py:9)'],
+    tag:['overview','reads','writes','all'],
+  }),
+  N('wo-group','entry','work-orders','sub-group (most commands)',70,210,240,52,'client',{
+    role:'`pm work-orders` sub-group — the largest command family (list/get/comments/create/merge/complete/schedule/files/upload, etc).',
+    plain:'The biggest menu of commands, all about maintenance work orders ("melds"): list them, read them, create them, merge duplicates, mark them done, attach photos.',
+    path:'cli_anything/propertymeld/cli.py:33',
+    notes:['line:131 work-entries is a NESTED sub-group with a back-compat shim','line:677 inspect = one-call aggregate of a work order'],
+    tag:['overview','reads','writes','all'],
+  }),
+  N('we-group','entry','work-entries','nested group + legacy shim',70,272,240,52,'client',{
+    role:'Custom click.Group subclass that falls through to `list` when the first arg is not a known subcommand, preserving the old positional invocation.',
+    plain:'A small menu inside the work-orders menu, for logging each on-site visit. It has a safety net so an older command shape ("work-entries 12701108") still works instead of erroring.',
+    path:'cli_anything/propertymeld/cli.py:112',
+    notes:['line:122 resolve_command override = back-compat (Codex PR #7 catch)','Subcommands: list/create/update/delete'],
+    tag:['overview','writes','all'],
+  }),
+  N('other-groups','entry','properties · units · tenants','vendors · agents · projects · estimates · receipts',70,334,240,64,'client',{
+    role:'The remaining top-level command groups, each a thin set of read/write subcommands for a PM resource type.',
+    plain:'The rest of the menus: properties, units, residents, vendors, in-house techs, projects, cost estimates and receipts. Each lets you list, read, or edit that kind of record.',
+    path:'cli_anything/propertymeld/cli.py:408',
+    notes:['properties+vendors list → Nexus backend','tenants/agents/projects/estimates/receipts → cookie backend','units edit-notes / tenants edit-notes = per-record note fields'],
+    tag:['overview','reads','writes','all'],
+  }),
+  N('topcmds','entry','assign-tech · assign-vendor','probe · api-keys (top-level)',70,408,240,64,'client',{
+    critical:true,
+    role:'Top-level commands not under a group: assign-tech, assign-vendor, probe (health), and the api-keys rotate/list pair.',
+    plain:'A few commands that sit at the top by themselves: assign a tech or vendor to a job, a health check, and tools to rotate the API login keys.',
+    path:'cli_anything/propertymeld/cli.py:579',
+    notes:['line:579 assign-tech is on the critical write spine','line:656 probe → api_backend.probe (token check only)','line:610 api-keys rotate can push creds to Railway'],
+    tag:['overview','writes','all'],
+  }),
+
+  /* COMMANDS — representative command handlers */
+  N('cmd-list','commands','list_work_orders','work-orders list',410,120,260,58,'route',{
+    critical:true,
+    role:'Handler for `pm work-orders list`; passes status/assignment/stuck filters to the Nexus read backend.',
+    plain:'Runs when you ask for a list of work orders. It collects your filters (open, stuck for N hours, assigned to a tech) and asks the read engine for matching jobs.',
+    path:'cli_anything/propertymeld/cli.py:57',
+    notes:['--status slugs (open/pending/completed/canceled) mapped to PM enum inside the backend','--no-tenant-linked secretly reroutes to the cookie backend (rich shape)'],
+    tag:['overview','reads','all'],
+  }),
+  N('cmd-get','commands','get_work_order','work-orders get / inspect',410,188,260,58,'route',{
+    role:'Handlers for single-meld reads: `get` (Nexus detail) and `inspect` (cookie aggregate of detail+photos+notes+entries+comments).',
+    plain:'Looks up one work order. "get" returns the basic record; "inspect" gathers everything — photos, notes, visit logs and comments — in a single command.',
+    path:'cli_anything/propertymeld/cli.py:82',
+    notes:['get → api_backend (Nexus, shallow)','inspect → http_backend.inspect_meld (cookie, fans out to 6 sources)'],
+    tag:['overview','reads','all'],
+  }),
+  N('cmd-create','commands','create_work_order','work-orders create',410,256,260,58,'route',{
+    role:'Handler for `pm work-orders create`; validates the unit/maintenance/tenant inputs then calls the cookie create_meld.',
+    plain:'Creates a brand-new work order. You give it a unit, a tech, and the residents; it checks the inputs make sense before sending them to Property Meld.',
+    path:'cli_anything/propertymeld/cli.py:714',
+    notes:['Either --unit-id (auto-hydrated) OR --unit-json (power user)','Mutually-exclusive validation raises UsageError before any POST'],
+    tag:['overview','writes','all'],
+  }),
+  N('cmd-merge','commands','merge_meld','work-orders merge',410,324,260,58,'route',{
+    role:'Handler for `pm work-orders merge`; normalizes new --destination/--source flags plus deprecated --meld-id/--into shims.',
+    plain:'Merges duplicate work orders into one. It accepts both the new flag names and the old ones so older scripts keep working.',
+    path:'cli_anything/propertymeld/cli.py:345',
+    notes:['Payload shape fixed 2026-05-19 after HTTP 400 across every state combo','Legacy --meld-id/--into mapped to source/destination'],
+    tag:['overview','writes','all'],
+  }),
+  N('cmd-writeflow','commands','complete · cancel · schedule','send-message · clone · update-notes',410,392,260,64,'route',{
+    role:'Family of meld write handlers that each delegate to a matching cookie-backend function.',
+    plain:'The action commands for a work order: mark it complete, cancel it, book a time, post a message to the resident or vendor, copy it, or edit its notes.',
+    path:'cli_anything/propertymeld/cli.py:266',
+    notes:['send-message has --hide-tenant/--hide-vendor/--hide-owner visibility flags','complete requires meld in PENDING_COMPLETION state'],
+    tag:['overview','writes','all'],
+  }),
+  N('cmd-files','commands','upload-file · files · delete-file','file commands',410,466,260,58,'route',{
+    role:'Handlers for listing, uploading, and deleting meld file attachments; upload routes by --as manager/tenant/vendor.',
+    plain:'Commands for photos and documents on a job: list them, upload a new one, or delete a manager upload.',
+    path:'cli_anything/propertymeld/cli.py:243',
+    notes:['upload-file --as picks the target endpoint (manager default)','tenant/vendor commit endpoints currently 500 from a manager session'],
+    tag:['overview','writes','reads','files','all'],
+  }),
+  N('cmd-we','commands','work-entries CRUD','list/create/update/delete',410,534,260,58,'route',{
+    role:'Handlers for per-visit work-entries; delete refuses to run without --force in a non-TTY context.',
+    plain:'Commands for logging each visit a tech makes (when they checked in, hours, notes). Deleting one is irreversible, so it asks for confirmation.',
+    path:'cli_anything/propertymeld/cli.py:137',
+    notes:['line:228 delete aborts (exit 2) in non-interactive context without --force','update fails fast (exit 2) if no fields supplied'],
+    tag:['overview','writes','all'],
+  }),
+  N('cmd-assign','commands','assign_tech (handler)','assign-tech command',410,602,260,58,'route',{
+    critical:true,
+    role:'Handler for `pm assign-tech`; normalizes the meld id then calls http_backend.assign_tech by partial name.',
+    plain:'Assigns an in-house technician to a job by typing part of their name. This is one of the most-used write actions.',
+    path:'cli_anything/propertymeld/cli.py:583',
+    notes:['Partial name match resolved inside the backend','On the critical write spine'],
+    tag:['overview','writes','all'],
+  }),
+  N('cmd-tenants','commands','tenants · units · agents','list/get/search/edit-notes',410,670,260,58,'route',{
+    role:'Read + note-edit handlers for tenants, units, and the in-house tech roster (agents).',
+    plain:'Commands to look up residents, units, and techs, and to edit the per-record notes that follow each one across jobs.',
+    path:'cli_anything/propertymeld/cli.py:453',
+    notes:['Three distinct note fields: tenant.notes, unit.maintenance_notes, meld.maintenance_notes','agents get exposes the contact-FK phone-data gap (cli.py:560)'],
+    tag:['overview','reads','writes','all'],
+  }),
+  N('cmd-projects','commands','projects CRUD','create/edit/add-melds/delete',410,738,260,58,'route',{
+    role:'Handlers for the project lifecycle: create, edit (full-payload echo), attach/detach melds, delete.',
+    plain:'Commands for grouping multiple work orders into a project (like a unit turnover) and managing that group.',
+    path:'cli_anything/propertymeld/cli.py:770',
+    notes:['edit overlays only changed fields onto current state (PM needs full echo)','create-meld-in attaches a new meld to a project at creation'],
+    tag:['overview','writes','all'],
+  }),
+  N('cmd-est','commands','estimates · receipts','list/get/create/upload/link',410,806,260,64,'route',{
+    role:'Handlers for estimates and receipts; both list commands require --meld-id because PM has no unscoped list endpoint.',
+    plain:'Commands for cost estimates and receipts on a job. You must say which job — Property Meld will not list them all at once.',
+    path:'cli_anything/propertymeld/cli.py:1063',
+    notes:['--meld-id required: unscoped list silently 404d until 2026-05-19 smoke','receipt upload uses the same S3 presign flow as files'],
+    tag:['overview','writes','reads','files','all'],
+  }),
+  N('cmd-apikeys','commands','api-keys handler','rotate / list',410,880,260,58,'route',{
+    role:'Handler for `pm api-keys rotate|list`; rotate can optionally push new creds to Railway via subprocess.',
+    plain:'Commands to make a new API login key for Property Meld and (optionally) save it to the cloud host automatically.',
+    path:'cli_anything/propertymeld/cli.py:604',
+    notes:['line:634 writes PM_CLIENT_ID/SECRET (the names utils.get_token reads)','Older versions wrote the wrong names — silent no-op rotation'],
+    tag:['overview','writes','auth','all'],
+  }),
+  N('cmd-vendor-act','commands','vendor-side actions','accept/segments/invoice — NOT WIRED',410,954,260,64,'route',{
+    role:'Vendor-side operator flows (accept assignment, set schedule segments, create/submit invoice) exist in the backend but have NO CLI command exposing them.',
+    plain:'Property Meld can do vendor-side actions on behalf of a vendor, and the code for them is written — but there is no "pm" command that actually runs them. Built, not connected.',
+    path:'cli_anything/propertymeld/http_backend.py:876',
+    notes:['DEAD: zero CLI wiring, only referenced by tests','vendor_accept_assignment / vendor_set_schedule / vendor_create_invoice / vendor_submit_invoice','Captured + tested 2026-05-16; never surfaced as commands'],
+    tag:['overview','dead','writes','all'],
+  }),
+
+  /* CORE */
+  N('api-backend','core','api_backend.py','Nexus OAuth read path',770,120,320,72,'service',{
+    critical:true,
+    role:'Nexus API v2 backend over OAuth2 client-credentials; serves all standard reads (work orders, properties, vendors) with a 43-field shallow shape.',
+    plain:'The "read engine." It logs in with an API key and pulls lists of work orders, properties and vendors. Fast and official, but it returns a slimmed-down version of each record.',
+    path:'cli_anything/propertymeld/api_backend.py:1',
+    notes:['line:171 GET /meld/ (singular path, not /melds/)','line:122 --no-tenant-linked DELEGATES to the cookie path (rich shape)','Returns 43-field SHALLOW shape — omits tenants[], in_house_servicers[]'],
+    tag:['overview','reads','schema','all'],
+  }),
+  N('api-status','core','status slug → enum map','open → 3 PENDING_* states',770,204,320,58,'service',{
+    role:'Maps friendly CLI slugs to PM UPPER_CASE_SNAKE_CASE status enums; "open" expands to three PENDING_* states OR-d via repeated params.',
+    plain:'Translates the easy words you type ("open") into the exact codes Property Meld expects. "Open" actually means three different waiting states.',
+    path:'cli_anything/propertymeld/api_backend.py:147',
+    notes:['Wrong-case slug → HTTP 400 "Select a valid choice" (fixed 901d1f4)','open = PENDING_ASSIGNMENT + PENDING_VENDOR + PENDING_MORE_MANAGEMENT_AVAILABILITY'],
+    tag:['overview','reads','all'],
+  }),
+  N('api-paginate','core','_paginate_until','Nexus DRF next-link walker',770,274,320,52,'service',{
+    role:'Walks the Nexus `next` link chain until `limit` items are collected; fixes the prior first-page-only truncation.',
+    plain:'When a list is longer than one page, this keeps fetching the next page until it has as many results as you asked for.',
+    path:'cli_anything/propertymeld/api_backend.py:198',
+    notes:['Previously returned only page 1 — "list all" silently lied','Used by list_properties + list_vendors'],
+    tag:['overview','reads','all'],
+  }),
+  N('http-backend','core','http_backend.py','cookie-session write path',770,344,320,72,'service',{
+    critical:true,
+    role:'Cookie-session HTTP backend (no Playwright at runtime); serves every write plus rich reads, using a stored sessionid cookie + scraped CSRF token. 2704 lines, the largest module.',
+    plain:'The "action engine." It uses a saved browser login (a cookie) to do everything the read engine cannot: create, assign, complete, upload, and to pull the full detailed version of records.',
+    path:'cli_anything/propertymeld/http_backend.py:1',
+    notes:['line:161 CSRF token scraped from page HTML (window.PM.csrf_token), cached','line:116 with_recapture_retry refreshes the cookie once on a 401','Two URL contexts: management /m/ and Nexus partner /n/'],
+    tag:['overview','writes','reads','schema','auth','all'],
+  }),
+  N('http-recapture','core','with_recapture_retry','401 → recapture → retry',770,428,320,58,'service',{
+    role:'Decorator that catches SessionExpired (HTTP 401), spawns the Playwright recapture script once to refresh the cookie, then retries the call.',
+    plain:'When the saved login expires, this automatically opens a hidden browser to log in again, then re-runs your command — so you rarely notice the session died.',
+    path:'cli_anything/propertymeld/http_backend.py:116',
+    notes:['line:71 spawns scripts/pm-recapture-session-playwright.py via subprocess','Playwright is recapture-only — NOT used for normal API calls','Still-401-after-recapture → exit 1'],
+    tag:['overview','writes','auth','all'],
+  }),
+  N('http-assign','core','assign_tech','PATCH assign-maintenance',770,498,320,64,'service',{
+    critical:true,
+    role:'Resolves a tech by partial name across the full paginated roster, then PATCHes melds/{id}/assign-maintenance with a composite_id of "2-{id}".',
+    plain:'Finds the technician whose name matches what you typed, then tells Property Meld to put them on the job. On the main action path.',
+    path:'cli_anything/propertymeld/http_backend.py:593',
+    notes:['line:608 paginates full roster (was first-100-only false-negative)','composite_id "2-{id}" + type ManagementAgent required by PM'],
+    tag:['overview','writes','all'],
+  }),
+  N('http-rich','core','list_work_orders_rich','cookie 68-field rich list',770,574,320,64,'db',{
+    role:'GET /api/melds/ via cookie auth returning the 68-field rich shape with tenants[], in_house_servicers[], vendor_assignment_requests, appointments.',
+    plain:'A fuller list of work orders pulled through the action engine. It includes the residents and assignments that the slim read engine leaves out.',
+    path:'cli_anything/propertymeld/http_backend.py:1962',
+    notes:['68-field RICH vs Nexus 43-field SHALLOW — the load-bearing schema split','Only caller is the --no-tenant-linked delegation; remove when PM fixes filter','Single page, capped at 100 (no pagination yet)'],
+    tag:['overview','reads','schema','all'],
+  }),
+  N('http-all-maint','core','list_all_maintenance','26-key roster shape',770,650,320,58,'db',{
+    role:'GET /api/all-maintenance/ returning a 26-key roster with composite_id+type, the exact shape that POST /melds/ create expects.',
+    plain:'A list of techs in the precise format Property Meld needs when creating a new job. A second tech-list shape that differs from the per-tech lookup.',
+    path:'cli_anything/propertymeld/http_backend.py:2012',
+    notes:['26-key (has composite_id+type) vs /agents/{id}/ 25-key (has role)','Used internally by the create-meld hydration path'],
+    tag:['overview','schema','writes','all'],
+  }),
+  N('http-inspect','core','inspect_meld','6-source aggregator',770,718,320,64,'service',{
+    role:'Aggregates one meld plus manager/tenant/vendor photos, completion+maintenance notes, work-entries, and comments into one response.',
+    plain:'Pulls together everything about a job in one shot — the record, all photo sources, both note fields, the visit logs, and the comment thread.',
+    path:'cli_anything/propertymeld/http_backend.py:1487',
+    notes:['Photos come from 3 separate endpoints (manager/tenant/vendor)','tenant/vendor photo endpoints may 403 (handled as optional)','Each source paginated via _paginate_all (no 100-item truncation)'],
+    tag:['overview','reads','files','all'],
+  }),
+  N('http-upload','core','upload_meld_file','presign → S3 → commit',770,794,320,64,'service',{
+    role:'3-step file upload: GET presign policy from PM, POST bytes to S3, then POST a JSON commit referencing the S3 key.',
+    plain:'Uploading a photo now happens in three steps: get a permission slip from Property Meld, send the file to Amazon storage, then tell Property Meld where it landed.',
+    path:'cli_anything/propertymeld/http_backend.py:2598',
+    notes:['PM migrated off multipart binary (regression 2026-05-24: 400 errors)','Manager path verified end-to-end; tenant/vendor commit 500 from manager session','_pm_presign_upload + _s3_post_file are the helper steps'],
+    tag:['overview','writes','files','all'],
+  }),
+  N('http-helpers','core','_http_get/post/put/patch/delete','+ Nexus-context variants',770,870,320,72,'service',{
+    role:'Low-level request helpers (manager + Nexus contexts) that attach the cookie, CSRF, and headers, raise SessionExpired on 401, and normalize error bodies.',
+    plain:'The plumbing every action runs through. Each one attaches the login cookie and security token, and turns Property Meld errors into readable messages.',
+    path:'cli_anything/propertymeld/http_backend.py:187',
+    notes:['line:43 _build_url switches manager /m/ vs vendor /v/ surface','401 always raises SessionExpired so the retry wrapper can fire','Nexus variants (_http_get_nexus / _http_post_nexus) handle api-keys'],
+    tag:['overview','writes','reads','auth','all'],
+  }),
+
+  /* SHARED */
+  N('get-token','shared','utils.get_token','OAuth2 token cache',1170,120,240,72,'db',{
+    critical:true,
+    role:'Fetches and caches the Nexus OAuth2 bearer token keyed on the client_id+secret pair, expiring 60s early so a request never starts with a near-dead token.',
+    plain:'Logs into the read engine and remembers the pass for next time. If you swap API keys it notices and gets a fresh pass automatically.',
+    path:'cli_anything/propertymeld/utils.py:21',
+    notes:['line:39 cache key is (client_id, client_secret) — rotation auto-invalidates','60s safety window before server-stated expiry','Missing creds → exit 2'],
+    tag:['overview','reads','auth','all'],
+  }),
+  N('resolve-id','shared','utils.resolve_meld_id','ref_id → internal int id',1170,204,240,64,'db',{
+    role:'Turns a human ref_id (e.g. "T1UCML3") into the internal integer meld id by querying Nexus across ref_id/reference_id/search then paginating.',
+    plain:'You can type the short human code for a job; this looks up the real internal number Property Meld uses behind the scenes.',
+    path:'cli_anything/propertymeld/utils.py:163',
+    notes:['Digit input short-circuits (already an int id)','Falls back to full pagination scan if the indexed queries miss','Not-found → exit 2'],
+    tag:['overview','reads','all'],
+  }),
+  N('norm-error','shared','utils.normalize_http_error','HTML-vs-JSON error shaping',1170,280,240,64,'db',{
+    role:'Normalizes PM error bodies: detects HTML error pages vs JSON, always returns a dict with error+status_code so DRF validation messages reach the operator.',
+    plain:'Property Meld sometimes returns a web page instead of a clean error. This makes every failure readable so you see the real reason, not "Bad Request".',
+    path:'cli_anything/propertymeld/utils.py:93',
+    notes:['line:88 _is_html_response distinguishes a dead route from an id mismatch','Surfaces DRF "Select a valid choice" enum errors verbatim'],
+    tag:['overview','reads','writes','all'],
+  }),
+  N('output-json','shared','utils.output_json','stdout JSON writer',1170,360,240,58,'db',{
+    role:'Single stdout serializer used by every command; json.dumps with indent and default=str.',
+    plain:'The one place that prints results to your screen as clean, readable data.',
+    path:'cli_anything/propertymeld/utils.py:78',
+    notes:['Every command ends in output_json(result)','default=str so dates never crash serialization'],
+    tag:['overview','reads','writes','all'],
+  }),
+  N('validate-id','shared','_validate_meld_id','numeric-id guard',1170,438,240,58,'db',{
+    role:'Lightweight guard in http_backend that validates a meld id is numeric before it hits a write path.',
+    plain:'A quick check that the job number looks valid before doing anything that changes data.',
+    path:'cli_anything/propertymeld/http_backend.py:1598',
+    notes:['Imported back into api_backend (api_backend.py:18)','Belt-and-suspenders with resolve_meld_id in cli.py'],
+    tag:['overview','writes','all'],
+  }),
+
+  /* EXTERNAL */
+  N('ext-nexus','external','PM Nexus API','OAuth2 · /api/v2 · 43-field',1510,120,240,80,'external',{
+    critical:true,
+    role:'Property Meld Nexus partner API over OAuth2 client-credentials; serves shallow reads at app.propertymeld.com/api/v2 with X-Multitenant-Id.',
+    plain:'Property Meld\'s official read-only API. Logs in with a key and returns slimmed-down lists. This is where every standard list and lookup ends up.',
+    path:'(external — app.propertymeld.com/api/v2)',
+    notes:['Token: POST /api/v2/oauth/token/','43-field shallow shape; omits nested relations','AscendOps convention: <=7 calls/day'],
+    tag:['overview','reads','schema','external','all'],
+  }),
+  N('ext-cookie','external','PM Cookie API','sessionid + CSRF · rich + writes',1510,212,240,88,'external',{
+    critical:true,
+    role:'Property Meld\'s internal web API reached with a browser sessionid cookie + CSRF token; serves the 68-field rich shape and every write the OAuth API cannot do.',
+    plain:'The same Property Meld site, reached the way the website itself does — with a saved login. It can change data and return the full detailed records the official API hides.',
+    path:'(external — app.propertymeld.com/{tenant}/m/ and /n/)',
+    notes:['68-field rich shape; the write surface','CSRF scraped from window.PM.csrf_token in page HTML','Cookie refreshed by the Playwright recapture script on 401'],
+    tag:['overview','writes','reads','schema','auth','external','all'],
+  }),
+  N('ext-s3','external','Amazon S3','presigned POST file store',1510,312,240,72,'external',{
+    role:'S3 bucket that receives file bytes via a presigned POST policy issued by PM; the file is then committed back to the meld by key.',
+    plain:'Amazon\'s file storage. Photos and documents go here first, using a one-time permission slip from Property Meld, before being linked to the job.',
+    path:'(external — S3 presigned POST)',
+    notes:['Policy comes from PM /files/generate-policy/','Raises on any non-2xx S3 response'],
+    tag:['overview','writes','files','external','all'],
+  }),
+  N('ext-snapcli','external','snapcli','external harness · registers pm',1510,396,240,80,'external',{
+    role:'External snapcli harness (separate repo, not vendored here); this CLI registers itself as a snapcli platform plugin via the `snapcli.platforms` entry point so snapcli can dispatch `pm`.',
+    plain:'A separate tool the agents use to run many CLIs through one front-end. This project plugs itself in so snapcli can call "pm" commands without knowing the internals.',
+    path:'(external — registered via setup.py:10 snapcli.platforms = pm)',
+    notes:['NOT cloned locally — single external node by design','entry_points snapcli.platforms = pm → cli:cli (setup.py:10)','pm-dev is the SAME source, a separate pipx install variant'],
+    tag:['overview','external','all'],
+  }),
+  N('ext-railway','external','Railway','cred sync target',1510,492,240,64,'external',{
+    role:'Cloud host whose env vars are updated by `pm api-keys rotate --update-railway` via a `railway variables --set` subprocess.',
+    plain:'The cloud server where the agents run. After making a new API key, the rotate command can push it straight to this host so nothing breaks.',
+    path:'(external — railway CLI subprocess, cli.py:635)',
+    notes:['Writes PM_CLIENT_ID + PM_CLIENT_SECRET','Optional — only with --update-railway flag'],
+    tag:['overview','writes','auth','external','all'],
+  }),
+];
+
+/* ── edges ──────────────────────────────────────────────────────────────── */
+const edges = [
+  /* entry tree */
+  { from:'cli-group', to:'wo-group',    kind:'mount', label:'group', tag:['overview','all'] },
+  { from:'cli-group', to:'we-group',    kind:'mount', label:'group', tag:['all'] },
+  { from:'cli-group', to:'other-groups',kind:'mount', label:'groups', tag:['all'] },
+  { from:'cli-group', to:'topcmds',     kind:'mount', label:'cmds', tag:['overview','all'] },
+
+  /* entry → command handlers */
+  { from:'wo-group',     to:'cmd-list',     kind:'normal', label:'list', tag:['overview','reads','all'] },
+  { from:'wo-group',     to:'cmd-get',      kind:'normal', label:'get/inspect', tag:['reads','all'] },
+  { from:'wo-group',     to:'cmd-create',   kind:'normal', label:'create', tag:['writes','all'] },
+  { from:'wo-group',     to:'cmd-merge',    kind:'normal', label:'merge', tag:['writes','all'] },
+  { from:'wo-group',     to:'cmd-writeflow',kind:'normal', label:'complete/cancel/…', tag:['writes','all'] },
+  { from:'wo-group',     to:'cmd-files',    kind:'normal', label:'files', tag:['files','all'] },
+  { from:'we-group',     to:'cmd-we',       kind:'normal', label:'work-entries', tag:['writes','all'] },
+  { from:'topcmds',      to:'cmd-assign',   kind:'critical', label:'assign-tech', tag:['overview','writes','all'] },
+  { from:'topcmds',      to:'cmd-apikeys',  kind:'normal', label:'api-keys', tag:['auth','all'] },
+  { from:'other-groups', to:'cmd-tenants',  kind:'normal', label:'tenants/units/agents', tag:['reads','all'] },
+  { from:'other-groups', to:'cmd-projects', kind:'normal', label:'projects', tag:['writes','all'] },
+  { from:'other-groups', to:'cmd-est',      kind:'normal', label:'estimates/receipts', tag:['files','all'] },
+
+  /* command → core */
+  { from:'cmd-list',     to:'api-backend', kind:'critical', label:'1 · list_work_orders', tag:['overview','reads','all'] },
+  { from:'cmd-get',      to:'api-backend', kind:'normal', label:'get_work_order', tag:['reads','all'] },
+  { from:'cmd-list',     to:'http-rich',   kind:'normal', label:'--no-tenant-linked', tag:['schema','reads','all'] },
+  { from:'cmd-get',      to:'http-inspect',kind:'normal', label:'inspect_meld', tag:['reads','files','all'] },
+  { from:'cmd-create',   to:'http-backend',kind:'normal', label:'create_meld', tag:['writes','all'] },
+  { from:'cmd-merge',    to:'http-backend',kind:'normal', label:'merge_meld', tag:['writes','all'] },
+  { from:'cmd-writeflow',to:'http-backend',kind:'normal', label:'complete/cancel/…', tag:['writes','all'] },
+  { from:'cmd-files',    to:'http-upload', kind:'normal', label:'upload_meld_file', tag:['files','writes','all'] },
+  { from:'cmd-est',      to:'http-upload', kind:'normal', label:'upload_receipt', tag:['files','writes','all'] },
+  { from:'cmd-we',       to:'http-backend',kind:'normal', label:'work_entry CRUD', tag:['writes','all'] },
+  { from:'cmd-assign',   to:'http-assign', kind:'critical', label:'2 · assign_tech', tag:['overview','writes','all'] },
+  { from:'cmd-tenants',  to:'http-backend',kind:'normal', label:'tenants/units/agents', tag:['reads','writes','all'] },
+  { from:'cmd-projects', to:'http-backend',kind:'normal', label:'projects CRUD', tag:['writes','all'] },
+  { from:'cmd-apikeys',  to:'http-backend',kind:'normal', label:'rotate/list', tag:['auth','all'] },
+
+  /* core internal */
+  { from:'api-backend', to:'api-status',  kind:'normal', label:'slug→enum', tag:['reads','all'] },
+  { from:'api-backend', to:'api-paginate',kind:'normal', label:'list paging', tag:['reads','all'] },
+  { from:'api-backend', to:'http-rich',   kind:'normal', label:'delegate (rich)', tag:['schema','reads','all'] },
+  { from:'http-backend',to:'http-assign', kind:'normal', label:'contains', tag:['writes','all'] },
+  { from:'http-backend',to:'http-rich',   kind:'normal', label:'contains', tag:['schema','all'] },
+  { from:'http-backend',to:'http-all-maint',kind:'normal', label:'contains', tag:['schema','all'] },
+  { from:'http-backend',to:'http-inspect',kind:'normal', label:'contains', tag:['reads','all'] },
+  { from:'http-backend',to:'http-upload', kind:'normal', label:'contains', tag:['files','all'] },
+  { from:'http-backend',to:'http-recapture',kind:'normal', label:'wraps writes', tag:['auth','writes','all'] },
+  { from:'http-backend',to:'http-helpers',kind:'normal', label:'request plumbing', tag:['writes','reads','auth','all'] },
+  { from:'http-inspect',to:'http-helpers',kind:'normal', label:'6× GET', tag:['reads','all'] },
+  { from:'http-assign', to:'http-helpers',kind:'normal', label:'PATCH', tag:['writes','all'] },
+  { from:'cmd-create',  to:'http-all-maint',kind:'normal', label:'hydrate roster', tag:['schema','writes','all'] },
+
+  /* core → shared */
+  { from:'api-backend', to:'get-token',  kind:'critical', label:'3 · bearer token', tag:['overview','reads','auth','all'] },
+  { from:'cli-group',   to:'resolve-id', kind:'normal', label:'ref_id→id', tag:['reads','all'] },
+  { from:'api-backend', to:'norm-error', kind:'normal', label:'error shaping', tag:['reads','all'] },
+  { from:'http-helpers',to:'norm-error', kind:'normal', label:'error shaping', tag:['writes','reads','all'] },
+  { from:'http-assign', to:'validate-id',kind:'normal', label:'guard', tag:['writes','all'] },
+  { from:'api-backend', to:'output-json',kind:'normal', label:'(via cli)', tag:['reads','all'] },
+
+  /* core/shared → external */
+  { from:'get-token',   to:'ext-nexus',  kind:'critical', label:'4 · OAuth token + GET', tag:['overview','reads','auth','all'] },
+  { from:'api-backend', to:'ext-nexus',  kind:'api', label:'GET /meld/ (43-field)', tag:['overview','reads','schema','all'] },
+  { from:'http-helpers',to:'ext-cookie', kind:'api', label:'cookie + CSRF', tag:['writes','reads','auth','all'] },
+  { from:'http-assign', to:'ext-cookie', kind:'critical', label:'5 · PATCH assign-maintenance', tag:['overview','writes','all'] },
+  { from:'http-rich',   to:'ext-cookie', kind:'api', label:'GET /melds/ (68-field)', tag:['schema','reads','all'] },
+  { from:'http-recapture',to:'ext-cookie',kind:'api', label:'recapture cookie', tag:['auth','writes','all'] },
+  { from:'http-upload', to:'ext-cookie', kind:'api', label:'presign + commit', tag:['files','writes','all'] },
+  { from:'http-upload', to:'ext-s3',     kind:'api', label:'POST bytes', tag:['files','writes','all'] },
+  { from:'cmd-apikeys', to:'ext-railway',kind:'api', label:'variables --set', tag:['auth','writes','all'] },
+  { from:'cli-group',   to:'ext-snapcli',kind:'mount', label:'registers pm plugin', tag:['overview','external','all'] },
+
+  /* dead code (shown only in dead view) */
+  { from:'cmd-vendor-act', to:'http-helpers', kind:'normal', label:'DEAD: tests only', tag:['dead','all'] },
+];
+
+/* ── optional registries ────────────────────────────────────────────────── */
+const FIXES = {};
+const KNOWN_BUGS = {
+  'cmd-vendor-act':[{sev:'med',ref:'http_backend.py:876',t:'Vendor-side flows (accept/segments/invoice) have no CLI command — built but unreachable.'}],
+  'http-upload':[{sev:'med',ref:'http_backend.py:2617',t:'tenant/vendor file commit returns HTTP 500 from a manager cookie session; only the manager path is verified end-to-end.'}],
+  'http-rich':[{sev:'low',ref:'http_backend.py:1983',t:'Single-page fetch capped at 100 — no pagination yet; a >100 rich-list caller would silently truncate.'}],
+  'api-backend':[{sev:'low',ref:'api_backend.py:114',t:'--no-tenant-linked over-fetch heuristic max(limit*4,100) can truncate atypical workloads without surfacing "incomplete".'}],
+};
+
+/* ── filter chips ───────────────────────────────────────────────────────── */
+const CHIPS = [
+  { id:'overview', label:'Overview' },
+  { id:'reads',    label:'Read path' },
+  { id:'writes',   label:'Write path' },
+  { id:'auth',     label:'Auth & session' },
+  { id:'schema',   label:'Schema split (43 vs 68)' },
+  { id:'files',    label:'File uploads' },
+  { id:'dead',     label:'Dead code' },
+  { id:'all',      label:'Show all wires' },
+];
+
+/* ── render ─────────────────────────────────────────────────────────────── */
+const NS='http://www.w3.org/2000/svg';
+const svg=document.getElementById('svg');
+const vp=document.getElementById('viewport');
+const gC=document.getElementById('clusters');
+const gE=document.getElementById('edges');
+const gL=document.getElementById('edgelabels');
+const gN=document.getElementById('nodes');
+const sidebar=document.getElementById('sidebar');
+const nodeById=Object.fromEntries(nodes.map(n=>[n.id,n]));
+const colorVar=c=>`var(--${c})`;
+const edgeColor={critical:'var(--critical)',api:'var(--accent-2)',db:'var(--db)',mount:'var(--client)',normal:'#6a6a6a'};
+const edgeMarker={critical:'arrow-crit',api:'arrow-api',db:'arrow',mount:'arrow',normal:'arrow'};
+let activeFilter='overview';
+let selected=null;
+
+function mk(tag,attrs){const e=document.createElementNS(NS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);return e;}
+
+/* clusters */
+clusters.forEach(c=>{
+  const colorMap={entry:'client',commands:'route',core:'service',shared:'db',external:'external'};
+  const col=colorVar(colorMap[c.id]||'service');
+  gC.appendChild(mk('rect',{x:c.x,y:c.y,width:c.w,height:c.h,rx:14,class:'cluster-box',fill:col,stroke:col}));
+  gC.appendChild(mk('text',{x:c.x+14,y:c.y+24,class:'cluster-label'})).textContent=c.label;
+});
+
+/* edges */
+function edgePath(a,b){
+  const x1=a.x+a.w, y1=a.y+a.h/2, x2=b.x, y2=b.y+b.h/2;
+  if(b.x < a.x+a.w){ // back/internal edge — exit bottom, enter top-ish
+    const sx=a.x+a.w/2, sy=a.y+a.h, ex=b.x+b.w/2, ey=b.y;
+    const mid=(sy+ey)/2;
+    return {d:`M ${sx} ${sy} C ${sx} ${mid}, ${ex} ${mid}, ${ex} ${ey}`, lx:(sx+ex)/2, ly:mid};
+  }
+  const dx=Math.max(60,(x2-x1)*0.5);
+  return {d:`M ${x1} ${y1} C ${x1+dx} ${y1}, ${x2-dx} ${y2}, ${x2} ${y2}`, lx:(x1+x2)/2, ly:(y1+y2)/2-6};
+}
+const edgeEls=[];
+edges.forEach((e,i)=>{
+  const a=nodeById[e.from], b=nodeById[e.to];
+  if(!a||!b)return;
+  const {d,lx,ly}=edgePath(a,b);
+  const p=mk('path',{d,class:'edge-path',stroke:edgeColor[e.kind]||'#6a6a6a','marker-end':`url(#${edgeMarker[e.kind]||'arrow'})`});
+  if(e.kind==='critical')p.style.strokeWidth='2.4';
+  gE.appendChild(p);
+  const stagger=(i%3-1)*10;
+  const t=mk('text',{x:lx,y:ly+stagger,class:'edge-label','text-anchor':'middle'});
+  t.textContent=e.label;
+  gL.appendChild(t);
+  edgeEls.push({e,p,t});
+});
+
+/* nodes */
+const nodeEls=[];
+nodes.forEach(n=>{
+  const g=mk('g',{});
+  const rect=mk('rect',{x:n.x,y:n.y,width:n.w,height:n.h,rx:10,class:'node-rect',
+    fill:'var(--panel-2)',stroke:colorVar(n.color),'stroke-width':n.critical?2.2:1.2});
+  g.appendChild(rect);
+  const lbl=mk('text',{x:n.x+14,y:n.y+24,class:'node-label'});lbl.textContent=n.label;g.appendChild(lbl);
+  if(n.sub){const s=mk('text',{x:n.x+14,y:n.y+40,class:'node-sub'});s.textContent=n.sub;g.appendChild(s);}
+  // badges
+  const bugs=(KNOWN_BUGS[n.id]||[]).length, fixes=(FIXES[n.id]||[]).length;
+  let bx=n.x+n.w-14;
+  if(bugs){g.appendChild(mk('circle',{cx:bx,cy:n.y+14,r:8,class:'badge-circle',fill:'var(--critical)'}));
+    const bt=mk('text',{x:bx,y:n.y+17.5,class:'badge-text'});bt.textContent=bugs;g.appendChild(bt);bx-=20;}
+  if(fixes){g.appendChild(mk('circle',{cx:bx,cy:n.y+14,r:8,class:'badge-circle',fill:'var(--route)'}));
+    const ft=mk('text',{x:bx,y:n.y+17.5,class:'badge-text'});ft.textContent=fixes;g.appendChild(ft);}
+  g.style.cursor='pointer';
+  g.addEventListener('click',ev=>{ev.stopPropagation();select(n.id);});
+  g.addEventListener('mouseenter',()=>{if(!selected)highlight(n.id);});
+  g.addEventListener('mouseleave',()=>{if(!selected)clearHighlight();});
+  gN.appendChild(g);
+  nodeEls.push({n,g,rect});
+});
+
+/* filtering */
+function applyFilter(){
+  nodeEls.forEach(({n,g})=>{
+    const vis=n.tag.includes(activeFilter)||activeFilter==='all';
+    g.classList.toggle('dim',!vis);
+  });
+  edgeEls.forEach(({e,p,t})=>{
+    const vis=e.tag.includes(activeFilter)||activeFilter==='all';
+    p.classList.toggle('edge-dim',!vis);
+    t.style.opacity=vis?0.9:0.05;
+  });
+}
+function highlight(id){
+  const conn=new Set([id]);
+  edges.forEach(e=>{if(e.from===id)conn.add(e.to);if(e.to===id)conn.add(e.from);});
+  nodeEls.forEach(({n,g})=>g.classList.toggle('dim',!conn.has(n.id)));
+  edgeEls.forEach(({e,p,t})=>{const on=e.from===id||e.to===id;p.classList.toggle('edge-dim',!on);t.style.opacity=on?1:0.05;});
+}
+function clearHighlight(){applyFilter();}
+
+function select(id){selected=id;highlight(id);renderSidebar(id);}
+svg.addEventListener('click',()=>{selected=null;applyFilter();renderSidebar(null);});
+
+/* sidebar */
+function renderSidebar(id){
+  if(!id){
+    sidebar.innerHTML=`
+      <h2>Property Meld CLI at a glance</h2>
+      <div class="plain">One command-line tool, two ways into Property Meld. The official key-based API handles every list and lookup but returns a slimmed record. A saved browser login handles every change (assign, create, complete, upload) and returns the full record. Click any box to see what it does.</div>
+      <div class="legend">
+        <span><i style="background:var(--critical)"></i>critical spine</span>
+        <span><i style="background:var(--accent-2)"></i>external call</span>
+        <span><i style="background:var(--client)"></i>plumbing/mount</span>
+        <span><i style="background:#6a6a6a"></i>internal</span>
+      </div>
+      <h3>Critical spine (the headline path)</h3>
+      <ul>
+        <li><b>Read:</b> cli.py → list_work_orders → get_token → PM Nexus API (43-field shallow)</li>
+        <li><b>Write:</b> cli.py assign-tech → assign_tech → PM Cookie API (PATCH assign-maintenance)</li>
+      </ul>
+      <h3>Notable findings from this map</h3>
+      <ul class="findings">
+        <li class="sev-med"><b>Dead code:</b> the four vendor-side flows (vendor_accept_assignment, vendor_set_schedule, vendor_create_invoice, vendor_submit_invoice — http_backend.py:876+) have NO CLI command and only appear in tests. Built and captured, never wired.</li>
+        <li class="sev-high"><b>Schema split (load-bearing):</b> the SAME work order returns a 43-field shallow shape via the Nexus API and a 68-field rich shape via the cookie API. The cookie one carries tenants[]/in_house_servicers[] that Nexus drops — so list_work_orders secretly delegates to the cookie path for --no-tenant-linked.</li>
+        <li class="sev-med"><b>Third tech-list shape:</b> /all-maintenance/ returns a 26-key roster, /agents/{id}/ a 25-key one. The create-meld path needs the 26-key shape specifically.</li>
+        <li class="sev-low"><b>Playwright is recapture-only:</b> despite the README mentioning a "browser backend", there is no browser_backend.py — runtime is plain HTTP. Playwright is spawned only to refresh an expired login cookie.</li>
+        <li class="sev-low"><b>pm-dev is not a separate codebase:</b> it is the same source installed as a second pipx variant. snapcli is the only truly external dependency, and it is plugged in via an entry point, not imported.</li>
+      </ul>`;
+    return;
+  }
+  const n=nodeById[id];
+  const ins=edges.filter(e=>e.to===id), outs=edges.filter(e=>e.from===id);
+  const bugs=KNOWN_BUGS[id]||[], fixes=FIXES[id]||[];
+  sidebar.innerHTML=`
+    <h2>${n.label}</h2>
+    <div>${n.sub?`<span class="tag">${n.sub}</span>`:''}${n.critical?'<span class="tag" style="border-color:var(--critical);color:var(--critical)">critical spine</span>':''}${n.tag.includes('dead')?'<span class="tag" style="border-color:var(--critical);color:var(--critical)">dead code</span>':''}</div>
+    <div class="role">${n.role}</div>
+    <div class="plain">${n.plain}</div>
+    <div class="path">${n.path}</div>
+    ${n.notes?`<h3>Notes</h3><ul>${n.notes.map(x=>`<li>${x}</li>`).join('')}</ul>`:''}
+    ${bugs.length?`<h3>Known issues</h3><ul>${bugs.map(b=>`<li class="sev-${b.sev}"><b>[${b.sev}]</b> ${b.t} ${b.ref?`<span style="color:var(--muted)">(${b.ref})</span>`:''}</li>`).join('')}</ul>`:''}
+    ${fixes.length?`<h3>Fixes</h3><ul>${fixes.map(f=>`<li>${f.t}</li>`).join('')}</ul>`:''}
+    <h3>Incoming</h3><ul>${ins.length?ins.map(e=>`<li class="edge-in">${nodeById[e.from].label} — ${e.label}</li>`).join(''):'<li style="color:var(--muted)">none</li>'}</ul>
+    <h3>Outgoing</h3><ul>${outs.length?outs.map(e=>`<li class="edge-out">${e.label} → ${nodeById[e.to].label}</li>`).join(''):'<li style="color:var(--muted)">none</li>'}</ul>`;
+}
+
+/* chips */
+const chipWrap=document.getElementById('chips');
+CHIPS.forEach(c=>{
+  const el=document.createElement('div');
+  el.className='chip'+(c.id===activeFilter?' active':'');
+  el.textContent=c.label;
+  el.addEventListener('click',()=>{
+    activeFilter=c.id;selected=null;
+    [...chipWrap.children].forEach(x=>x.classList.remove('active'));
+    el.classList.add('active');
+    applyFilter();renderSidebar(null);
+  });
+  chipWrap.appendChild(el);
+});
+
+/* pan + zoom */
+let tx=0,ty=0,scale=1;
+function applyTransform(){vp.setAttribute('transform',`translate(${tx},${ty}) scale(${scale})`);}
+function fit(){
+  const pad=60;
+  const minX=Math.min(...clusters.map(c=>c.x))-pad;
+  const minY=Math.min(...clusters.map(c=>c.y))-pad;
+  const maxX=Math.max(...clusters.map(c=>c.x+c.w))+pad;
+  const maxY=Math.max(...clusters.map(c=>c.y+c.h))+pad;
+  const bw=maxX-minX, bh=maxY-minY;
+  const r=svg.getBoundingClientRect();
+  const w=r.width||window.innerWidth, h=r.height||600;
+  scale=Math.min(w/bw,h/bh);
+  tx=(w-bw*scale)/2-minX*scale;
+  ty=(h-bh*scale)/2-minY*scale;
+  applyTransform();
+}
+document.getElementById('fit').addEventListener('click',fit);
+document.getElementById('zin').addEventListener('click',()=>{scale*=1.2;applyTransform();});
+document.getElementById('zout').addEventListener('click',()=>{scale/=1.2;applyTransform();});
+let dragging=false,sx=0,sy=0;
+svg.addEventListener('mousedown',e=>{dragging=true;sx=e.clientX-tx;sy=e.clientY-ty;svg.classList.add('grabbing');});
+window.addEventListener('mousemove',e=>{if(dragging){tx=e.clientX-sx;ty=e.clientY-sy;applyTransform();}});
+window.addEventListener('mouseup',()=>{dragging=false;svg.classList.remove('grabbing');});
+svg.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const r=svg.getBoundingClientRect();
+  const mx=e.clientX-r.left, my=e.clientY-r.top;
+  const f=e.deltaY<0?1.12:1/1.12;
+  const ns=scale*f;
+  tx=mx-(mx-tx)*f; ty=my-(my-ty)*f; scale=ns;
+  applyTransform();
+},{passive:false});
+// touch pan
+let tStart=null;
+svg.addEventListener('touchstart',e=>{if(e.touches.length===1){tStart={x:e.touches[0].clientX-tx,y:e.touches[0].clientY-ty};}},{passive:true});
+svg.addEventListener('touchmove',e=>{if(e.touches.length===1&&tStart){tx=e.touches[0].clientX-tStart.x;ty=e.touches[0].clientY-tStart.y;applyTransform();}},{passive:true});
+
+applyFilter();
+renderSidebar(null);
+window.addEventListener('resize',fit);
+// fit after layout settles (mobile grid needs a tick)
+requestAnimationFrame(()=>requestAnimationFrame(fit));
+setTimeout(fit,150);
+</script>
+</body>
+</html>
