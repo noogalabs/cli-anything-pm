@@ -106,6 +106,9 @@ def patch_backend(monkeypatch):
     ("Number 7", "7"),
     ("Unit A", "a"),
     ("Suite 200", "200"),
+    ("Unit #12", "12"),         # designator + '#' both stripped
+    ("Apt #12", "12"),
+    ("# 12", "12"),
     ("unit", "unit"),            # bare designator stays
     ("", ""),
     (None, ""),
@@ -130,8 +133,8 @@ def test_exact_label_match_returns_pk(patch_backend):
 
 
 def test_messy_apt_label_normalizes_to_match(patch_backend):
-    # "Apt 12" / "Unit 12" / "#12" / "12" all hit the apartment="12" unit.
-    for q in ("Apt 12", "unit 12", "#12", "12"):
+    # "Apt 12" / "Unit 12" / "#12" / "12" / "Unit #12" all hit apartment="12".
+    for q in ("Apt 12", "unit 12", "#12", "12", "Unit #12", "apt #12"):
         res = hb.resolve_unit_pk(5100, q)
         assert res["unit_id"] == 7103, q
 
