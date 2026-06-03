@@ -196,18 +196,109 @@ def _get_csrf_token(cookie_hdr: str) -> str:
 _OPTIONAL_UNAVAILABLE_STATUSES = frozenset({403, 404})
 
 
+# Known HTTP reason phrases keyed by status code. A bare 4xx/5xx-looking
+# number in an HTML body is only honored as a status when it sits in a real
+# status CONTEXT — adjacent to its reason phrase, inside a title/heading, or
+# preceded by an HTTP/Error/Status label. This prevents incidental markup
+# (`font-weight: 500`, `width="500"`, a footer support code "403") from being
+# mis-read as the response status.
+_HTTP_REASON_PHRASES = {
+    400: "Bad Request",
+    401: "Unauthorized",
+    403: "Forbidden",
+    404: "Not Found",
+    429: "Too Many Requests",
+    500: "Internal Server Error",
+    502: "Bad Gateway",
+    503: "Service Unavailable",
+    504: "Gateway Timeout",
+}
+
+# code-then-phrase ("403 Forbidden") OR phrase-then-code ("Forbidden 403").
+_REASON_PHRASE_PATTERNS = [
+    (
+        code,
+        re.compile(
+            r"\b" + str(code) + r"\b\s*[:\-–]?\s*" + re.escape(phrase)
+            + r"|" + re.escape(phrase) + r"\s*[:\-–]?\s*\b" + str(code) + r"\b",
+            re.IGNORECASE,
+        ),
+    )
+    for code, phrase in _HTTP_REASON_PHRASES.items()
+]
+
+# A 4xx/5xx code inside a <title>, <h1>, or <h2> heading.
+_HEADING_STATUS_RE = re.compile(
+    r"<(?:title|h1|h2)\b[^>]*>(.*?)</(?:title|h1|h2)>",
+    re.IGNORECASE | re.DOTALL,
+)
+_CODE_IN_TEXT_RE = re.compile(r"\b([45]\d{2})\b")
+
+# A code preceded by an explicit HTTP/Error/Status label ("HTTP 503",
+# "Error 404", "Status: 500").
+_LABELED_STATUS_RE = re.compile(
+    r"\b(?:HTTP|Error|Status)\b\s*[:\-–]?\s*\b([45]\d{2})\b",
+    re.IGNORECASE,
+)
+
+
 def _status_from_html_body(text: str) -> Optional[int]:
     """Best-effort extract an HTTP status code from an HTML error/interstitial.
 
     PM sometimes serves a permission-denied / not-found interstitial as an
     HTTP **200** with an HTML body (e.g. "<h1>403 Forbidden</h1>"). The status
-    line in the body is the only signal of the real condition. Returns the
-    first 4xx/5xx code found in the title/heading, or None when no recognizable
-    code is present.
+    line in the body is the only trustworthy signal of the real condition.
+
+    A naked ``[45]\\d{2}`` scan of the whole document is UNSAFE: incidental
+    markup numbers (``font-weight: 500``, ``width="500"``, a support code in
+    footer copy) get mis-read as the status. Worse, on a real 5xx error page a
+    stray "403"/"404" elsewhere in the body would be mis-inferred as a 4xx and
+    then SILENTLY DOWNGRADED on the optional path, masking a server error.
+
+    So a 4xx/5xx code is only honored when it appears in a real status CONTEXT:
+      1. adjacent to its known HTTP reason phrase, in either order
+         ("403 Forbidden" / "Forbidden 403", "500 Internal Server Error"); OR
+      2. inside a ``<title>`` / ``<h1>`` / ``<h2>`` heading; OR
+      3. preceded by an "HTTP" / "Error" / "Status" label ("HTTP 503",
+         "Error 404", "Status: 500").
+
+    The first/strongest match wins (reason-phrase > heading > label). When NO
+    status context is found, returns ``None`` — there is deliberately NO bare
+    ``[45]\\d{2}`` fallback. ``None`` is SAFE: the optional path treats it as a
+    forbidden-class (403) downgrade, which is the common permission
+    interstitial. Returning a guessed status here is the dangerous direction.
     """
-    m = re.search(r"\b([45]\d{2})\b", text or "")
-    if m:
-        return int(m.group(1))
+    if not text:
+        return None
+
+    # 1. Reason-phrase context is the strongest signal — a code sitting next to
+    #    its canonical phrase is unambiguously a status, never incidental markup.
+    #    Pick the earliest such match in the document so a real status heading
+    #    near the top wins over any stray phrase/code later in the body.
+    best_pos: Optional[int] = None
+    best_code: Optional[int] = None
+    for code, pattern in _REASON_PHRASE_PATTERNS:
+        m = pattern.search(text)
+        if m and (best_pos is None or m.start() < best_pos):
+            best_pos = m.start()
+            best_code = code
+    if best_code is not None:
+        return best_code
+
+    # 2. A code inside a title/heading. Headings are where servers render the
+    #    status ("<title>500 Internal Server Error</title>"); incidental CSS
+    #    numbers do not live in <title>/<h1>/<h2> text.
+    for heading_match in _HEADING_STATUS_RE.finditer(text):
+        code_match = _CODE_IN_TEXT_RE.search(heading_match.group(1))
+        if code_match:
+            return int(code_match.group(1))
+
+    # 3. An explicitly labeled code ("HTTP 503", "Error 404", "Status: 500").
+    labeled = _LABELED_STATUS_RE.search(text)
+    if labeled:
+        return int(labeled.group(1))
+
+    # No status context found — SAFE None (optional path downgrades as 403).
     return None
 
 

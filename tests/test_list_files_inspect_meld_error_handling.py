@@ -400,6 +400,169 @@ class TestOptionalResultsDowngrade:
         assert any(f.get("filename") == "before.jpg" for f in items)
 
 
+class TestStatusFromHtmlBody:
+    """Unit tests for _status_from_html_body status-context anchoring (Codex P2).
+
+    The prior naked `\\b([45]\\d{2})\\b` scan honored ANY standalone 4xx/5xx
+    number — incidental CSS/markup (`font-weight: 500`, `width="500"`, a footer
+    support code). With inferred-5xx now FATAL on the optional path, that caused
+    BOTH wrongful exits on benign interstitials AND, worse, silent downgrades of
+    a real 5xx that happened to contain a stray "403"/"404". A code is now only
+    honored when it sits in a real status context (reason phrase / heading /
+    HTTP|Error|Status label); otherwise None (safe downgrade)."""
+
+    def test_css_number_plus_real_heading_picks_heading(self):
+        """`font-weight:500` noise + `<h1>403 Forbidden</h1>` -> 403, not 500."""
+        html = (
+            "<style>h1{font-weight:500}</style>"
+            "<h1>403 Forbidden</h1>"
+        )
+        assert hb._status_from_html_body(html) == 403
+
+    def test_incidental_number_no_status_context_returns_none(self):
+        """`width="500"` only on a login interstitial with NO status heading or
+        reason phrase -> None (the P2 core: no bare fallback scan)."""
+        html = (
+            '<html><body><img width="500">'
+            "<form>Please log in to continue</form></body></html>"
+        )
+        assert hb._status_from_html_body(html) is None
+
+    def test_title_server_error_returns_500(self):
+        """A real `<title>500 Internal Server Error</title>` -> 500."""
+        assert (
+            hb._status_from_html_body("<title>500 Internal Server Error</title>")
+            == 500
+        )
+
+    def test_worst_case_real_5xx_with_stray_403_infers_5xx(self):
+        """WORST CASE (Aussie): a real 5xx page whose body ALSO contains a stray
+        '403'/'404' (footer copy / CSS) must infer the 5xx from the heading, NOT
+        the stray lower code — otherwise a server error is silently downgraded."""
+        html_title = (
+            '<style>.box{width:403px}</style>'
+            "<title>500 Internal Server Error</title>"
+            "<footer>support code 404</footer>"
+        )
+        assert hb._status_from_html_body(html_title) == 500
+
+        html_heading = (
+            "<h1>500 Internal Server Error</h1>"
+            '<div style="margin:404px">contact support: 403</div>'
+        )
+        assert hb._status_from_html_body(html_heading) == 500
+
+    def test_reason_phrase_503_returns_503(self):
+        assert (
+            hb._status_from_html_body("<p>503 Service Unavailable</p>") == 503
+        )
+
+    def test_http_label_502_returns_502(self):
+        assert hb._status_from_html_body("<p>HTTP 502 Bad Gateway</p>") == 502
+
+    def test_title_404_returns_404(self):
+        assert hb._status_from_html_body("<title>404 Not Found</title>") == 404
+
+    def test_error_label_returns_404(self):
+        assert hb._status_from_html_body("Error 404") == 404
+
+    def test_status_label_returns_500(self):
+        assert hb._status_from_html_body("Status: 500") == 500
+
+    def test_phrase_then_code_order(self):
+        """Phrase-then-code order ('Forbidden 403') is honored too."""
+        assert hb._status_from_html_body("Forbidden 403") == 403
+
+    def test_empty_and_none_safe(self):
+        assert hb._status_from_html_body("") is None
+        assert hb._status_from_html_body(None) is None
+
+
+class TestStatusContextThroughOptionalPath:
+    """Verify the anchored inference end-to-end through _http_get_optional_results:
+    None/{403,404} downgrade; recognized 5xx/4xx-other fail loud."""
+
+    def test_incidental_500_login_interstitial_downgrades(self, monkeypatch):
+        """`width="500"` login interstitial, no status heading -> None inferred
+        -> DOWNGRADE (NOT a wrongful sys.exit on a benign page). The P2 core."""
+        _patch_creds(monkeypatch)
+
+        html = (
+            b'<html><body><img width="500">'
+            b"<form>Please log in to continue</form></body></html>"
+        )
+
+        def fake_urlopen(req, **kw):
+            return _FakeResp(html)
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        items, note = hb._http_get_optional_results(
+            "melds/12701108/tenant-files/?limit=100", "sessionid=fake", "tenant"
+        )
+        assert items == []
+        assert note is not None
+        assert "403" in note  # None -> forbidden-class downgrade
+
+    def test_css_noise_plus_403_heading_downgrades(self, monkeypatch):
+        """`font-weight:500` + `<h1>403 Forbidden</h1>` -> 403 -> DOWNGRADE."""
+        _patch_creds(monkeypatch)
+
+        html = (
+            b"<style>h1{font-weight:500}</style>"
+            b"<h1>403 Forbidden</h1>"
+        )
+
+        def fake_urlopen(req, **kw):
+            return _FakeResp(html)
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        items, note = hb._http_get_optional_results(
+            "melds/12701108/tenant-files/?limit=100", "sessionid=fake", "tenant"
+        )
+        assert items == []
+        assert note is not None
+        assert "403" in note
+
+    def test_worst_case_real_5xx_with_stray_403_exits(self, monkeypatch):
+        """WORST CASE end-to-end: a real 5xx page with a stray '403' in footer
+        copy must FAIL LOUD (SystemExit), NOT silently downgrade as a 4xx."""
+        _patch_creds(monkeypatch)
+
+        html = (
+            b'<style>.box{width:403px}</style>'
+            b"<title>500 Internal Server Error</title>"
+            b"<footer>support code 404</footer>"
+        )
+
+        def fake_urlopen(req, **kw):
+            return _FakeResp(html)
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        with pytest.raises(SystemExit) as exc:
+            hb._http_get_optional_results(
+                "melds/12701108/vendor-files/?limit=100", "sessionid=fake", "vendor"
+            )
+        assert exc.value.code == 1
+
+    def test_real_title_5xx_exits(self, monkeypatch):
+        """A real `<title>500 Internal Server Error</title>` -> 500 -> FATAL."""
+        _patch_creds(monkeypatch)
+
+        def fake_urlopen(req, **kw):
+            return _FakeResp(b"<title>500 Internal Server Error</title>")
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        with pytest.raises(SystemExit) as exc:
+            hb._http_get_optional_results(
+                "melds/12701108/vendor-files/?limit=100", "sessionid=fake", "vendor"
+            )
+        assert exc.value.code == 1
+
+
 class TestRequiredVsOptionalSplit:
     """The load-bearing asymmetry: same HTML-200 interstitial, two outcomes."""
 
