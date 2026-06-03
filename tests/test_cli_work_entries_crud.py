@@ -164,13 +164,17 @@ class TestWorkEntriesUpdateCLI:
         )
 
     def test_update_no_fields_errors_with_envelope(self, runner):
-        """CLI guard: zero update fields → exit 2 + ok:false envelope,
-        no backend call (avoid burning a CSRF round-trip on a no-op)."""
+        """CLI guard: zero update fields → exit 1 + ok:false envelope,
+        no backend call (avoid burning a CSRF round-trip on a no-op).
+
+        Exit code is 1 (the unified ok:false failure code from output_json),
+        not the former bespoke 2 — both non-zero; click's own arg-parse
+        UsageErrors remain at exit 2."""
         with patch("cli_anything.propertymeld.http_backend.update_work_entry") as mock_fn:
             result = runner.invoke(cli, [
                 "work-orders", "work-entries", "update", str(ENTRY_ID),
             ])
-        assert result.exit_code == 2
+        assert result.exit_code == 1
         data = json.loads(result.output)
         assert data["ok"] is False
         assert "no fields" in data["error"].lower()

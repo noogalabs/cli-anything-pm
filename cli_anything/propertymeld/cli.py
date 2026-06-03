@@ -219,7 +219,6 @@ def update_work_entry_cmd(entry_id, description, long_description,
     if all(v is None for v in (description, long_description, checkin,
                                checkout, hours, agent)):
         output_json({"ok": False, "error": "no fields to update"})
-        sys.exit(2)
     result = http_backend.update_work_entry(
         entry_id,
         description=description,
@@ -251,7 +250,6 @@ def delete_work_entry_cmd(entry_id, force, as_json):
                 "error": "delete requires --force in non-interactive context",
                 "entry_id": entry_id,
             })
-            sys.exit(2)
         click.confirm(
             f"Delete work-entry {entry_id}? This is irreversible.",
             abort=True,
