@@ -25,7 +25,7 @@ import urllib.request
 import uuid
 from typing import Any, Callable, Optional
 
-from .utils import normalize_http_error
+from .utils import _is_html_response, normalize_http_error
 
 CREDS_PATH = os.environ.get(
     "PM_CREDS_PATH", os.path.expanduser("~/.claude/credentials/property-meld.json")
@@ -184,6 +184,203 @@ def _get_csrf_token(cookie_hdr: str) -> str:
     return _csrf_cache["token"]
 
 
+# Statuses on the OPTIONAL read path that mean "this endpoint is legitimately
+# unavailable for this session" (forbidden / not-found) and so are downgraded to
+# an empty result + note instead of being fatal. This is the SINGLE shared
+# status->action rule applied to BOTH catch branches of
+# _http_get_optional_results, so the transport (a real HTTP status vs a status
+# inferred from an HTML-200 interstitial body) no longer changes fatality.
+# Everything NOT in this set (5xx, 400, 429, ...) stays fatal — that is the
+# whole point: a proxy/app-server 5xx error page must not masquerade as an
+# empty success. Do NOT widen this set without revisiting that invariant.
+_OPTIONAL_UNAVAILABLE_STATUSES = frozenset({403, 404})
+
+
+# Known HTTP reason phrases keyed by status code. A bare 4xx/5xx-looking
+# number in an HTML body is only honored as a status when it sits in a real
+# status CONTEXT — adjacent to its reason phrase, inside a title/heading, or
+# preceded by an HTTP/Error/Status label. This prevents incidental markup
+# (`font-weight: 500`, `width="500"`, a footer support code "403") from being
+# mis-read as the response status.
+_HTTP_REASON_PHRASES = {
+    400: "Bad Request",
+    401: "Unauthorized",
+    403: "Forbidden",
+    404: "Not Found",
+    429: "Too Many Requests",
+    500: "Internal Server Error",
+    502: "Bad Gateway",
+    503: "Service Unavailable",
+    504: "Gateway Timeout",
+}
+
+# code-then-phrase ("403 Forbidden") OR phrase-then-code ("Forbidden 403").
+_REASON_PHRASE_PATTERNS = [
+    (
+        code,
+        re.compile(
+            r"\b" + str(code) + r"\b\s*[:\-–]?\s*" + re.escape(phrase)
+            + r"|" + re.escape(phrase) + r"\s*[:\-–]?\s*\b" + str(code) + r"\b",
+            re.IGNORECASE,
+        ),
+    )
+    for code, phrase in _HTTP_REASON_PHRASES.items()
+]
+
+# A 4xx/5xx code inside a <title>, <h1>, or <h2> heading.
+_HEADING_STATUS_RE = re.compile(
+    r"<(?:title|h1|h2)\b[^>]*>(.*?)</(?:title|h1|h2)>",
+    re.IGNORECASE | re.DOTALL,
+)
+_CODE_IN_TEXT_RE = re.compile(r"\b([45]\d{2})\b")
+
+# A code preceded by an explicit HTTP/Error/Status label ("HTTP 503",
+# "Error 404", "Status: 500").
+_LABELED_STATUS_RE = re.compile(
+    r"\b(?:HTTP|Error|Status)\b\s*[:\-–]?\s*\b([45]\d{2})\b",
+    re.IGNORECASE,
+)
+
+
+def _status_from_html_body(text: str) -> Optional[int]:
+    """Best-effort extract an HTTP status code from an HTML error/interstitial.
+
+    PM sometimes serves a permission-denied / not-found interstitial as an
+    HTTP **200** with an HTML body (e.g. "<h1>403 Forbidden</h1>"). The status
+    line in the body is the only trustworthy signal of the real condition.
+
+    A naked ``[45]\\d{2}`` scan of the whole document is UNSAFE: incidental
+    markup numbers (``font-weight: 500``, ``width="500"``, a support code in
+    footer copy) get mis-read as the status. Worse, on a real 5xx error page a
+    stray "403"/"404" elsewhere in the body would be mis-inferred as a 4xx and
+    then SILENTLY DOWNGRADED on the optional path, masking a server error.
+
+    So a 4xx/5xx code is only honored when it appears in a real status CONTEXT:
+      1. adjacent to its known HTTP reason phrase, in either order
+         ("403 Forbidden" / "Forbidden 403", "500 Internal Server Error"); OR
+      2. inside a ``<title>`` / ``<h1>`` / ``<h2>`` heading; OR
+      3. preceded by an "HTTP" / "Error" / "Status" label ("HTTP 503",
+         "Error 404", "Status: 500").
+
+    SELECTION is EARLIEST-POSITION-WINS across ALL THREE context sources, not
+    tier-ordered. Servers render the real status highest in the document (the
+    <title>/<h1>), so the candidate with the smallest start position is the
+    trustworthy one. A tier-ordered scan was UNSAFE: a numeric-only 5xx heading
+    ("<h1>500</h1>", no reason phrase) would be skipped while a LATER, lower-code
+    "403 Forbidden" reason phrase in footer copy returned first — silently
+    MASKING the server error as a 4xx downgrade on the optional path. Collecting
+    every (position, code) candidate and returning the earliest closes that gap.
+
+    When NO status context is found, returns ``None`` — there is deliberately NO
+    bare ``[45]\\d{2}`` fallback. ``None`` is SAFE: the optional path treats it
+    as a forbidden-class (403) downgrade, which is the common permission
+    interstitial. Returning a guessed status here is the dangerous direction.
+    """
+    if not text:
+        return None
+
+    # Collect (position, priority, code) candidates from all three context
+    # sources, then pick the EARLIEST position. ``priority`` is only a
+    # deterministic tie-breaker when two candidates share the same start
+    # position (e.g. "<title>403 Forbidden</title>" matches both reason-phrase
+    # and heading at the same spot — they yield the same code anyway, so the
+    # tie-break never changes the result). Lower priority wins the tie;
+    # reason-phrase (0) is preferred, matching the prior strongest-signal intent.
+    candidates: list[tuple[int, int, int]] = []
+
+    # Source 1 — reason-phrase context (code adjacent to its canonical phrase,
+    # either order). Strongest signal; never incidental markup.
+    for code, pattern in _REASON_PHRASE_PATTERNS:
+        m = pattern.search(text)
+        if m:
+            candidates.append((m.start(), 0, code))
+
+    # Source 2 — a [45]\d{2} code inside a <title>/<h1>/<h2> heading. Position is
+    # the code's ABSOLUTE position in the document (heading match start + the
+    # code's offset within the heading's inner text), so it compares correctly
+    # against the other sources.
+    for heading_match in _HEADING_STATUS_RE.finditer(text):
+        inner = heading_match.group(1)
+        code_match = _CODE_IN_TEXT_RE.search(inner)
+        if code_match:
+            abs_pos = heading_match.start(1) + code_match.start(1)
+            candidates.append((abs_pos, 1, int(code_match.group(1))))
+
+    # Source 3 — a code preceded by an HTTP/Error/Status label.
+    for labeled in _LABELED_STATUS_RE.finditer(text):
+        candidates.append((labeled.start(), 2, int(labeled.group(1))))
+
+    if not candidates:
+        # No status context found — SAFE None (optional path downgrades as 403).
+        return None
+
+    # Earliest position wins; priority breaks an exact-position tie deterministically.
+    candidates.sort(key=lambda c: (c[0], c[1]))
+    return candidates[0][2]
+
+
+class _NonJsonBody(Exception):
+    """Raised when a 2xx body is not JSON (typically an HTML interstitial).
+
+    Carries the inferred HTTP status (when the body is recognizably an HTML
+    error page) so callers can either fail loud (REQUIRED path) or downgrade
+    to an empty result + note (OPTIONAL path) — both reusing the same
+    status-inference logic instead of duplicating it.
+    """
+
+    def __init__(self, text: str, inferred_status: Optional[int]):
+        super().__init__("Non-JSON response body")
+        self.text = text
+        self.inferred_status = inferred_status
+
+
+def _parse_json_body_or_none(raw: bytes) -> Any:
+    """Decode a 2xx body as JSON, or raise _NonJsonBody (non-fatal).
+
+    Shared core for both the REQUIRED and OPTIONAL read paths. On a non-JSON
+    body (almost always an HTML forbidden/error interstitial served at HTTP
+    200) it raises _NonJsonBody carrying the inferred status (403 default when
+    the body is recognizably HTML, else None). Callers decide fatality:
+      - REQUIRED (_http_get -> _parse_json_body_or_exit): sys.exit(1)
+      - OPTIONAL (_http_get_optional_results): downgrade to ([], note)
+    """
+    text = raw.decode("utf-8", errors="ignore") if isinstance(raw, (bytes, bytearray)) else str(raw)
+    try:
+        return json.loads(text)
+    except (TypeError, ValueError):
+        inferred = (_status_from_html_body(text) or 403) if _is_html_response(text) else None
+        raise _NonJsonBody(text, inferred)
+
+
+def _parse_json_body_or_exit(raw: bytes) -> Any:
+    """Decode a 2xx body as JSON, or fail loud via the standard error convention.
+
+    PM occasionally returns a forbidden / not-found interstitial as an HTTP 200
+    with an HTML (non-JSON) body. The naked `json.loads()` on that body raised
+    an uncaught json.JSONDecodeError -> bare traceback crash. This funnels that
+    case into the SAME normalize_http_error + stderr + sys.exit(1) convention
+    already used for non-401 HTTPErrors, so callers surface a clean, actionable
+    error instead of crashing — and never mask the failure as an empty success.
+
+    REQUIRED-path behavior: any non-JSON 200 body is fatal (sys.exit(1)). The
+    OPTIONAL path uses _parse_json_body_or_none directly to downgrade instead.
+    """
+    try:
+        return _parse_json_body_or_none(raw)
+    except _NonJsonBody as nb:
+        if nb.inferred_status is not None:
+            print(json.dumps(normalize_http_error(nb.inferred_status, nb.text)), file=sys.stderr)
+        else:
+            print(
+                json.dumps({
+                    "error": "Non-JSON response body",
+                    "body_excerpt": " ".join((nb.text or "").split())[:200],
+                }),
+                file=sys.stderr,
+            )
+        sys.exit(1)
+
+
 def _http_get(path: str, cookie_hdr: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
     """GET a browser-session API path, return parsed JSON."""
     req = urllib.request.Request(
@@ -198,7 +395,7 @@ def _http_get(path: str, cookie_hdr: str, *, side: str = "manager", vendor_id: O
     )
     try:
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
-            return json.loads(resp.read())
+            return _parse_json_body_or_exit(resp.read())
     except urllib.error.HTTPError as e:
         if e.code == 401:
             raise SessionExpired(e)
@@ -553,7 +750,28 @@ def _http_delete(path: str, cookie_hdr: str, csrf_token: str, *, side: str = "ma
 
 
 def _http_get_optional_results(path: str, cookie_hdr: str, note_label: str) -> tuple[list, Optional[str]]:
-    """GET an optional list endpoint and downgrade 404s to an empty list + note."""
+    """GET an optional list endpoint, downgrading "unavailable" to ([], note).
+
+    NON-FATAL BY DESIGN for the "endpoint legitimately unavailable for this
+    session" case (forbidden / not-found), which this path exists to tolerate
+    (e.g. tenant/vendor file endpoints on a manager session).
+
+    A SINGLE shared rule (_OPTIONAL_UNAVAILABLE_STATUSES = {403, 404}) decides
+    fatality, applied identically to BOTH catch branches so the transport does
+    not change the outcome:
+      - status in {403, 404} -> downgrade to ([], note)
+      - any other recognized status (5xx, 400, 429, ...) -> fail loud
+        (normalize_http_error + stderr + sys.exit(1))
+    This holds whether the status came from a real HTTPError OR was inferred
+    from an HTML-200 permission/error interstitial body. A 5xx served as an
+    HTML-200 proxy/app-server error page is therefore NO LONGER silently
+    downgraded to an empty success — it fails loud, matching a real 5xx.
+
+    Behavior note: a real HTTP-403 now DOWNGRADES here (previously fatal). This
+    is intentional — it makes the real-403 case match both the documented
+    forbidden-interstitial purpose and the HTML-200-403 case, removing the last
+    transport asymmetry.
+    """
     req = urllib.request.Request(
         f"{BASE}/api/{path}",
         headers={
@@ -566,11 +784,35 @@ def _http_get_optional_results(path: str, cookie_hdr: str, note_label: str) -> t
     )
     try:
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
-            data = json.loads(resp.read())
+            # NON-FATAL BY DESIGN: this path may legitimately hit a forbidden
+            # interstitial (tenant/vendor file endpoints on a manager session).
+            # An HTML-200 interstitial is routed by its INFERRED status through
+            # the SAME _OPTIONAL_UNAVAILABLE_STATUSES rule used for real
+            # HTTPErrors below — so a forbidden/not-found page downgrades while a
+            # 5xx error page fails loud. Do NOT use _parse_json_body_or_exit
+            # here; that is the REQUIRED path's fatal funnel.
+            data = _parse_json_body_or_none(resp.read())
+    except _NonJsonBody as nb:
+        status = nb.inferred_status
+        if status is None:
+            # HTML interstitial on this OPTIONAL endpoint with no parseable
+            # 4xx/5xx code in the body. Preserve the documented intent that an
+            # unrecognized HTML interstitial here means "unavailable" — treat it
+            # as a forbidden-class (403) downgrade rather than guessing fatal.
+            return [], f"{note_label} endpoint unavailable (403): /api/{path}"
+        if status in _OPTIONAL_UNAVAILABLE_STATUSES:
+            return [], f"{note_label} endpoint unavailable ({status}): /api/{path}"
+        # Recognized non-unavailable code inferred from the body (e.g. a 5xx
+        # proxy/app-server error page served at HTTP 200, or 400/429). Fail loud
+        # — do not mask a server error as an empty success.
+        print(json.dumps(normalize_http_error(status, nb.text)), file=sys.stderr)
+        sys.exit(1)
     except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
         body = e.read().decode("utf-8", errors="ignore")
-        if e.code == 404:
-            return [], f"{note_label} endpoint unavailable (404): /api/{path}"
+        if e.code in _OPTIONAL_UNAVAILABLE_STATUSES:
+            return [], f"{note_label} endpoint unavailable ({e.code}): /api/{path}"
         print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
         sys.exit(1)
 
