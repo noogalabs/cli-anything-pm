@@ -2804,12 +2804,15 @@ def link_tenant_to_meld(meld_id: str, tenant_id) -> dict:
     # rather than trusting the local merge.
     verify = _http_get(f"melds/{meld_id}/", cookie_hdr)
     persisted_tenants = verify.get("tenants") or []
+    # Normalize both sides to str: PM may return tenant ids as strings, and a
+    # str-vs-int mismatch here would raise "did NOT persist" on a genuine
+    # success (this module already coerces string ids on input elsewhere).
     persisted_ids = {
-        t.get("id") for t in persisted_tenants
+        str(t.get("id")) for t in persisted_tenants
         if isinstance(t, dict) and t.get("id") is not None
     }
 
-    if tenant_id_int not in persisted_ids:
+    if str(tenant_id_int) not in persisted_ids:
         raise RuntimeError(
             f"Tenant {tenant_id_int} link did NOT persist on meld {meld_id}: "
             f"PropertyMeld accepted the PATCH (HTTP 2xx) but the meld's tenants "

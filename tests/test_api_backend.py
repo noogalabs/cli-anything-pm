@@ -1663,6 +1663,8 @@ class TestLinkTenantToMeld:
             mg.side_effect = [
                 {"id": "12791190", "tenants": [existing]},  # GET meld
                 _TENANT_FIXTURE,                              # GET tenant for hydration
+                # verify re-GET (post-PATCH persistence check): tenant now present
+                {"id": "12791190", "tenants": [existing, _TENANT_FIXTURE]},
             ]
             mp.return_value = {"id": "12791190", "tenants": [existing, _TENANT_FIXTURE]}
 
@@ -1708,13 +1710,17 @@ class TestLinkTenantToMeld:
             mg.side_effect = [
                 {"id": "12791190", "tenants": []},
                 _TENANT_FIXTURE,
+                # verify re-GET (post-PATCH persistence check) re-hits the meld
+                {"id": "12791190", "tenants": [_TENANT_FIXTURE]},
             ]
             mp.return_value = {"id": "12791190", "tenants": [_TENANT_FIXTURE]}
 
             http_backend.link_tenant_to_meld("12791190", 4010708)
 
             get_paths = [c.args[0] for c in mg.call_args_list]
-            assert get_paths == ["melds/12791190/", "tenants/4010708/"]
+            assert get_paths == [
+                "melds/12791190/", "tenants/4010708/", "melds/12791190/"
+            ]
             patch_path = mp.call_args[0][0]
             assert patch_path == "melds/12791190/"
 
@@ -1726,6 +1732,8 @@ class TestLinkTenantToMeld:
             mg.side_effect = [
                 {"id": "12791190"},  # no tenants key at all
                 _TENANT_FIXTURE,
+                # verify re-GET (post-PATCH persistence check): tenant present
+                {"id": "12791190", "tenants": [_TENANT_FIXTURE]},
             ]
             mp.return_value = {"id": "12791190", "tenants": [_TENANT_FIXTURE]}
 
@@ -1735,6 +1743,33 @@ class TestLinkTenantToMeld:
             assert result["tenant_count"] == 1
             _, payload, _, _ = mp.call_args[0]
             assert payload["tenants"] == [_TENANT_FIXTURE]
+
+    def test_verify_accepts_string_tenant_id_from_pm(self):
+        """Regression: PM may return the persisted tenant id as a STRING.
+
+        The verify block must str()-normalize both sides; otherwise a genuine
+        success raises "did NOT persist" on the str-vs-int mismatch. This test
+        returns the verify-GET id as a STRING and asserts SUCCESS — it FAILS
+        against the old int-only membership check, so green here proves the
+        normalization is exercised (not illusory).
+        """
+        with self._patches()[0] as mc, self._patches()[1] as mch, \
+             self._patches()[2] as mcs, self._patches()[3] as mg, \
+             self._patches()[4] as mp:
+            self._stub_creds(mc, mch, mcs)
+            mg.side_effect = [
+                {"id": "12791190", "tenants": []},         # GET meld
+                _TENANT_FIXTURE,                            # GET tenant hydration
+                # verify re-GET: PM returns the tenant id as a STRING
+                {"id": "12791190", "tenants": [{"id": "4010708"}]},
+            ]
+            mp.return_value = {"id": "12791190", "tenants": [_TENANT_FIXTURE]}
+
+            result = http_backend.link_tenant_to_meld("12791190", 4010708)
+
+            assert result["ok"] is True
+            assert result["linked"] is True
+            assert result["tenant_id"] == 4010708
 
 
 class TestGetTenant:
