@@ -199,6 +199,39 @@ def _status_from_html_body(text: str) -> Optional[int]:
     return None
 
 
+class _NonJsonBody(Exception):
+    """Raised when a 2xx body is not JSON (typically an HTML interstitial).
+
+    Carries the inferred HTTP status (when the body is recognizably an HTML
+    error page) so callers can either fail loud (REQUIRED path) or downgrade
+    to an empty result + note (OPTIONAL path) — both reusing the same
+    status-inference logic instead of duplicating it.
+    """
+
+    def __init__(self, text: str, inferred_status: Optional[int]):
+        super().__init__("Non-JSON response body")
+        self.text = text
+        self.inferred_status = inferred_status
+
+
+def _parse_json_body_or_none(raw: bytes) -> Any:
+    """Decode a 2xx body as JSON, or raise _NonJsonBody (non-fatal).
+
+    Shared core for both the REQUIRED and OPTIONAL read paths. On a non-JSON
+    body (almost always an HTML forbidden/error interstitial served at HTTP
+    200) it raises _NonJsonBody carrying the inferred status (403 default when
+    the body is recognizably HTML, else None). Callers decide fatality:
+      - REQUIRED (_http_get -> _parse_json_body_or_exit): sys.exit(1)
+      - OPTIONAL (_http_get_optional_results): downgrade to ([], note)
+    """
+    text = raw.decode("utf-8", errors="ignore") if isinstance(raw, (bytes, bytearray)) else str(raw)
+    try:
+        return json.loads(text)
+    except (TypeError, ValueError):
+        inferred = (_status_from_html_body(text) or 403) if _is_html_response(text) else None
+        raise _NonJsonBody(text, inferred)
+
+
 def _parse_json_body_or_exit(raw: bytes) -> Any:
     """Decode a 2xx body as JSON, or fail loud via the standard error convention.
 
@@ -208,20 +241,20 @@ def _parse_json_body_or_exit(raw: bytes) -> Any:
     case into the SAME normalize_http_error + stderr + sys.exit(1) convention
     already used for non-401 HTTPErrors, so callers surface a clean, actionable
     error instead of crashing — and never mask the failure as an empty success.
+
+    REQUIRED-path behavior: any non-JSON 200 body is fatal (sys.exit(1)). The
+    OPTIONAL path uses _parse_json_body_or_none directly to downgrade instead.
     """
-    text = raw.decode("utf-8", errors="ignore") if isinstance(raw, (bytes, bytearray)) else str(raw)
     try:
-        return json.loads(text)
-    except (TypeError, ValueError):
-        # Non-JSON 200 body — almost always an HTML forbidden/error interstitial.
-        status = _status_from_html_body(text) or 403 if _is_html_response(text) else None
-        if status is not None:
-            print(json.dumps(normalize_http_error(status, text)), file=sys.stderr)
+        return _parse_json_body_or_none(raw)
+    except _NonJsonBody as nb:
+        if nb.inferred_status is not None:
+            print(json.dumps(normalize_http_error(nb.inferred_status, nb.text)), file=sys.stderr)
         else:
             print(
                 json.dumps({
                     "error": "Non-JSON response body",
-                    "body_excerpt": " ".join((text or "").split())[:200],
+                    "body_excerpt": " ".join((nb.text or "").split())[:200],
                 }),
                 file=sys.stderr,
             )
@@ -597,7 +630,13 @@ def _http_delete(path: str, cookie_hdr: str, csrf_token: str, *, side: str = "ma
 
 
 def _http_get_optional_results(path: str, cookie_hdr: str, note_label: str) -> tuple[list, Optional[str]]:
-    """GET an optional list endpoint and downgrade 404s to an empty list + note."""
+    """GET an optional list endpoint, downgrading "unavailable" to ([], note).
+
+    NON-FATAL BY DESIGN. Both a real HTTP-404 and an HTML-200 permission
+    interstitial (same forbidden/unavailable semantic) downgrade to an empty
+    list plus a note naming the inferred status — never sys.exit(1). Other
+    non-404 HTTPErrors still fail loud, matching the module convention.
+    """
     req = urllib.request.Request(
         f"{BASE}/api/{path}",
         headers={
@@ -610,10 +649,17 @@ def _http_get_optional_results(path: str, cookie_hdr: str, note_label: str) -> t
     )
     try:
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
-            # A non-JSON 200 body (HTML forbidden/error interstitial) would
-            # otherwise raise an uncaught JSONDecodeError here; funnel it into
-            # the standard normalize-and-exit convention instead of crashing.
-            data = _parse_json_body_or_exit(resp.read())
+            # NON-FATAL BY DESIGN: this path may legitimately hit a forbidden
+            # interstitial (tenant/vendor file endpoints on a manager session).
+            # An HTML-200 interstitial carries the SAME "unavailable/forbidden"
+            # semantic as a real 404, so downgrade it to ([], note) — mirroring
+            # the HTTPError-404 branch below — instead of sys.exit(1). Do NOT
+            # use _parse_json_body_or_exit here; that is the REQUIRED path's
+            # fatal funnel and would hard-exit the optional photo lookup.
+            data = _parse_json_body_or_none(resp.read())
+    except _NonJsonBody as nb:
+        inferred_status = nb.inferred_status or 403
+        return [], f"{note_label} endpoint unavailable ({inferred_status}): /api/{path}"
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="ignore")
         if e.code == 404:

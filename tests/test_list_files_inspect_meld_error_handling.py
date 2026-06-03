@@ -193,3 +193,145 @@ class TestInspectMeldErrorHandling:
         assert result["meld"]["id"] == 12701108
         assert result["notes"]["completion_notes"] == "done"
         assert result["photos"]["manager"] == []
+
+
+# ── OPTIONAL path (_http_get_optional_results) ───────────────────────────────
+#
+# The OPTIONAL read path is NON-FATAL BY DESIGN: tenant/vendor file endpoints
+# may legitimately be forbidden on a manager session. PM serves that as either
+# a real HTTP-404 OR an HTML-200 permission interstitial. Both carry the SAME
+# "unavailable" semantic and MUST downgrade to ([], note) — never sys.exit(1).
+# This is the REQUIRED-vs-OPTIONAL split: _http_get (required) exits on an
+# HTML-200; _http_get_optional_results (optional) downgrades.
+
+
+class TestOptionalResultsDowngrade:
+    def test_optional_html_200_interstitial_downgrades_not_exit(self, monkeypatch):
+        """HTML-200 forbidden interstitial on the OPTIONAL path -> ([], note)
+        with the inferred status, NOT a SystemExit. This is the P2 regression:
+        the prior fix routed this through the fatal _parse_json_body_or_exit."""
+        _patch_creds(monkeypatch)
+
+        def fake_urlopen(req, **kw):
+            return _FakeResp(FORBIDDEN_HTML)
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        items, note = hb._http_get_optional_results(
+            "melds/12701108/tenant-files/?limit=100", "sessionid=fake", "tenant"
+        )
+        assert items == []
+        assert note is not None
+        # status inferred from the HTML body (403 named in FORBIDDEN_HTML)
+        assert "403" in note
+        assert "tenant" in note
+
+    def test_optional_html_200_no_status_in_body_defaults_403(self, monkeypatch):
+        """HTML-200 interstitial with no parseable 4xx/5xx code in the body
+        still downgrades (default 403), not sys.exit."""
+        _patch_creds(monkeypatch)
+
+        bare_html = b"<html><body>Access denied. Please log in.</body></html>"
+
+        def fake_urlopen(req, **kw):
+            return _FakeResp(bare_html)
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        items, note = hb._http_get_optional_results(
+            "melds/12701108/vendor-files/?limit=100", "sessionid=fake", "vendor"
+        )
+        assert items == []
+        assert note is not None
+        assert "403" in note
+
+    def test_optional_real_http_404_still_downgrades(self, monkeypatch):
+        """REGRESSION GUARD: the original HTTP-404 downgrade must still work."""
+        _patch_creds(monkeypatch)
+
+        def fake_urlopen(req, **kw):
+            raise _http_error(req.full_url, 404, b'{"detail": "Not found"}')
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        items, note = hb._http_get_optional_results(
+            "melds/12701108/tenant-files/?limit=100", "sessionid=fake", "tenant"
+        )
+        assert items == []
+        assert note is not None
+        assert "404" in note
+
+    def test_optional_non_404_http_error_still_exits(self, monkeypatch):
+        """A non-404 transport HTTPError (e.g. 500) is still fatal on the
+        optional path — only the 'unavailable' semantics (404 / HTML-200
+        interstitial) downgrade."""
+        _patch_creds(monkeypatch)
+
+        def fake_urlopen(req, **kw):
+            raise _http_error(req.full_url, 500, b"<html>500 boom</html>")
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        with pytest.raises(SystemExit) as exc:
+            hb._http_get_optional_results(
+                "melds/12701108/vendor-files/?limit=100", "sessionid=fake", "vendor"
+            )
+        assert exc.value.code == 1
+
+    def test_optional_200_json_returns_items(self, monkeypatch):
+        """A normal 200 JSON page on the optional path returns its results."""
+        _patch_creds(monkeypatch)
+
+        def fake_urlopen(req, **kw):
+            return _FakeResp(json.dumps(FILES_PAGE).encode())
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        items, note = hb._http_get_optional_results(
+            "melds/12701108/tenant-files/?limit=100", "sessionid=fake", "tenant"
+        )
+        assert note is None
+        assert any(f.get("filename") == "before.jpg" for f in items)
+
+
+class TestRequiredVsOptionalSplit:
+    """The load-bearing asymmetry: same HTML-200 interstitial, two outcomes."""
+
+    def test_inspect_meld_optional_photo_html_200_degrades_to_no_photos(self, monkeypatch):
+        """inspect_meld: meld detail + manager files are valid JSON, but the
+        OPTIONAL tenant/vendor photo endpoints return an HTML-200 interstitial.
+        inspect_meld must SUCCEED with empty tenant/vendor photos + notes, NOT
+        sys.exit(1). This is the end-to-end proof of the P2 fix."""
+        _patch_creds(monkeypatch)
+
+        def fake_urlopen(req, **kw):
+            url = req.full_url
+            if url.endswith("/melds/12701108/") or "/melds/12701108/?" in url:
+                return _FakeResp(json.dumps(MELD_DETAIL).encode())
+            if "tenant-files" in url or "vendor-files" in url:
+                # OPTIONAL path: forbidden interstitial served as HTTP 200.
+                return _FakeResp(FORBIDDEN_HTML)
+            # manager files + work-entries + comments: empty pages.
+            return _FakeResp(json.dumps({"count": 0, "next": None, "results": []}).encode())
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        result = hb.inspect_meld("12701108")
+        assert result["meld"]["id"] == 12701108
+        assert result["photos"]["tenant"] == []
+        assert result["photos"]["vendor"] == []
+
+    def test_required_path_html_200_still_exits(self, monkeypatch):
+        """The REQUIRED path (_http_get, exercised via list_files' manager
+        files fetch) on an HTML-200 interstitial STILL sys.exit(1) — its
+        fatality is unchanged by this fix."""
+        _patch_creds(monkeypatch)
+
+        def fake_urlopen(req, **kw):
+            return _FakeResp(FORBIDDEN_HTML)
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        with pytest.raises(SystemExit) as exc:
+            hb.list_files("12701108")
+        assert exc.value.code == 1
