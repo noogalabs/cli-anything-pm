@@ -40,6 +40,19 @@ def _normalize_meld_id(meld_id):
     return resolve_meld_id(meld_id) if meld_id is not None else None
 
 
+def _require_nonempty(ctx, param, value):
+    """Reject empty/whitespace-only values for required fields.
+
+    `required=True` only enforces PRESENCE, not non-emptiness, so a caller
+    can still pass `--reason ""` and fire a blank required field to PM (the
+    exact 400 these options are meant to prevent). Use as an option callback.
+    """
+    if value is None or not str(value).strip():
+        name = param.opts[0] if param.opts else param.name
+        raise click.BadParameter(f"{name} cannot be empty")
+    return value
+
+
 @work_orders.command("list")
 @click.option("--status", default=None,
               type=click.Choice(["open", "pending", "completed", "canceled"], case_sensitive=False),
@@ -413,7 +426,8 @@ def complete_meld(meld_id, notes, as_json):
 
 @work_orders.command("cancel")
 @click.option("--meld-id", required=True, help="Meld ID to cancel")
-@click.option("--reason", required=True, help="Cancellation reason (PM requires it: 400 'Cancellation reason must be provided')")
+@click.option("--reason", required=True, callback=_require_nonempty,
+              help="Cancellation reason (PM requires it: 400 'Cancellation reason must be provided')")
 @click.option("--json", "as_json", is_flag=True, default=True)
 def cancel_meld(meld_id, reason, as_json):
     """Cancel a meld from the manager side."""
@@ -862,7 +876,8 @@ def inspect_work_order(meld_id, as_json):
               help="Tenant PK — auto-hydrated via GET /tenants/{id}/. Repeat for multiple. Use this OR --tenants-json.")
 @click.option("--tenants-json", default=None,
               help="JSON list of tenant objects (power-user path). Use this OR --tenant-id.")
-@click.option("--work-location", required=True, help="Work location (PM requires it: 400 'Work Location is required.')")
+@click.option("--work-location", required=True, callback=_require_nonempty,
+              help="Work location (PM requires it: 400 'Work Location is required.')")
 @click.option("--priority", default="LOW")
 @click.option("--permission-to-enter/--no-permission-to-enter", default=True)
 @click.option("--tenant-presence-required/--no-tenant-presence-required", default=False)
@@ -985,7 +1000,8 @@ def add_melds_to_project_cmd(project_id, meld_ids, as_json):
               help="Tenant PK — auto-hydrated via GET /tenants/{id}/. Repeat for multiple. Use this OR --tenants-json.")
 @click.option("--tenants-json", default=None,
               help="JSON list of tenant objects (power-user path). Use this OR --tenant-id.")
-@click.option("--work-location", required=True, help="Work location (PM requires it: 400 'Work Location is required.')")
+@click.option("--work-location", required=True, callback=_require_nonempty,
+              help="Work location (PM requires it: 400 'Work Location is required.')")
 @click.option("--priority", default="LOW")
 @click.option("--permission-to-enter/--no-permission-to-enter", default=True)
 @click.option("--tenant-presence-required/--no-tenant-presence-required", default=False)

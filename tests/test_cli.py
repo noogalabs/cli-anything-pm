@@ -526,6 +526,27 @@ class TestWorkOrdersLifecycleCLI:
         assert "--reason" in result.output
         mock_fn.assert_not_called()
 
+    def test_cancel_rejects_empty_reason(self, runner):
+        # required=True enforces PRESENCE, not non-emptiness: --reason ""
+        # would otherwise fire a blank reason and hit the same 400.
+        # The _require_nonempty callback must block it before any request.
+        with patch("cli_anything.propertymeld.http_backend.cancel_meld") as mock_fn:
+            result = runner.invoke(cli, ["work-orders", "cancel",
+                                         "--meld-id", "12701108",
+                                         "--reason", ""])
+        assert result.exit_code != 0
+        assert "reason cannot be empty" in result.output
+        mock_fn.assert_not_called()
+
+    def test_cancel_rejects_whitespace_reason(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.cancel_meld") as mock_fn:
+            result = runner.invoke(cli, ["work-orders", "cancel",
+                                         "--meld-id", "12701108",
+                                         "--reason", "   "])
+        assert result.exit_code != 0
+        assert "reason cannot be empty" in result.output
+        mock_fn.assert_not_called()
+
 
 class TestTenantsCLI:
     def test_list_with_search(self, runner):
@@ -1023,6 +1044,30 @@ class TestProjectsCreateMeldInCLI:
         assert "--work-location" in result.output
         mock_fn.assert_not_called()
 
+    def test_rejects_empty_work_location(self, runner):
+        # required=True allows --work-location "" through; the _require_nonempty
+        # callback must block the blank value before the backend call fires.
+        args = [a if a != "Kitchen" else "" for a in self._COMMON_ARGS]
+        with patch("cli_anything.propertymeld.http_backend.create_meld_in_project") as mock_fn:
+            result = runner.invoke(cli, args + [
+                "--unit-id", "1870266",
+                "--maintenance-id", "57163",
+            ])
+        assert result.exit_code != 0
+        assert "work-location cannot be empty" in result.output
+        mock_fn.assert_not_called()
+
+    def test_rejects_whitespace_work_location(self, runner):
+        args = [a if a != "Kitchen" else "   " for a in self._COMMON_ARGS]
+        with patch("cli_anything.propertymeld.http_backend.create_meld_in_project") as mock_fn:
+            result = runner.invoke(cli, args + [
+                "--unit-id", "1870266",
+                "--maintenance-id", "57163",
+            ])
+        assert result.exit_code != 0
+        assert "work-location cannot be empty" in result.output
+        mock_fn.assert_not_called()
+
 
 class TestWorkOrdersCreateCLI:
     """pm work-orders create — standalone meld creation."""
@@ -1073,6 +1118,30 @@ class TestWorkOrdersCreateCLI:
             ])
         assert result.exit_code != 0
         assert "--work-location" in result.output
+        mock_fn.assert_not_called()
+
+    def test_rejects_empty_work_location(self, runner):
+        # required=True allows --work-location "" through; the _require_nonempty
+        # callback must block the blank value before create_meld fires.
+        args = [a if a != "Kitchen" else "" for a in self._COMMON_ARGS]
+        with patch("cli_anything.propertymeld.http_backend.create_meld") as mock_fn:
+            result = runner.invoke(cli, args + [
+                "--unit-id", "1870266",
+                "--maintenance-id", "57163",
+            ])
+        assert result.exit_code != 0
+        assert "work-location cannot be empty" in result.output
+        mock_fn.assert_not_called()
+
+    def test_rejects_whitespace_work_location(self, runner):
+        args = [a if a != "Kitchen" else "   " for a in self._COMMON_ARGS]
+        with patch("cli_anything.propertymeld.http_backend.create_meld") as mock_fn:
+            result = runner.invoke(cli, args + [
+                "--unit-id", "1870266",
+                "--maintenance-id", "57163",
+            ])
+        assert result.exit_code != 0
+        assert "work-location cannot be empty" in result.output
         mock_fn.assert_not_called()
 
 
