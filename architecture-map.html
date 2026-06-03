@@ -293,7 +293,7 @@ const nodes = [
     role:'Decorator that catches SessionExpired (HTTP 401), spawns the Playwright recapture script once to refresh the cookie, then retries the call.',
     plain:'When the saved login expires, this automatically opens a hidden browser to log in again, then re-runs your command — so you rarely notice the session died.',
     path:'cli_anything/propertymeld/http_backend.py:116',
-    notes:['line:71 spawns scripts/pm-recapture-session-playwright.py via subprocess','Playwright is recapture-only — NOT used for normal API calls','Still-401-after-recapture → exit 1'],
+    notes:['line:71 spawns cli_anything/propertymeld/recapture/pm-recapture-session-playwright.py via subprocess (shipped inside the package so packaged installs find it)','Playwright is recapture-only — NOT used for normal API calls','Still-401-after-recapture → exit 1'],
     tag:['overview','writes','auth','all'],
   }),
   N('http-assign','core','assign_tech','PATCH assign-maintenance',770,498,320,64,'service',{

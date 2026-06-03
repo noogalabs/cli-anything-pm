@@ -69,8 +69,8 @@ class SessionExpired(Exception):
 
 
 _RECAPTURE_SCRIPT = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "scripts",
+    os.path.dirname(os.path.abspath(__file__)),
+    "recapture",
     "pm-recapture-session-playwright.py",
 )
 
