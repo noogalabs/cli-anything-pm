@@ -165,6 +165,31 @@ class TestScheduleAppointmentFlow:
         }
         assert not any(c["url"].endswith("/accept/") for c in calls)
 
+    def test_existing_segments_block_not_wipe(self, monkeypatch):
+        """A meld that already has a booked availability_segment must NOT be
+        silently replaced. The accept/ payload sends segments_to_keep:[], which
+        would wipe existing windows, so the guard returns a clear error and
+        never fires the accept PATCH (no silent data loss). First-schedule
+        success is covered by test_uses_accept_endpoint_not_dead_schedule_put."""
+        _patch_creds_csrf(monkeypatch)
+        scheduled = json.dumps(
+            {"managementappointment": [
+                {"id": 4255991, "availability_segment": {"id": 2878830}}
+            ]}
+        ).encode()
+        calls = _wire(monkeypatch, meld_body=scheduled)
+
+        result = hb.schedule_appointment(
+            "12937555", "2026-06-10T14:00:00-04:00", duration_hours=2.0
+        )
+
+        assert result["ok"] is False
+        assert "reschedule" in result["error"].lower()
+        # Same {ok, error} contract shape as the no-assignment guard.
+        assert set(result.keys()) == {"ok", "error"}
+        # Crucially: NO accept/ PATCH was sent — existing windows untouched.
+        assert not any(c["url"].endswith("/accept/") for c in calls)
+
     def test_dead_schedule_put_sys_exits_on_500(self, monkeypatch):
         """The dead endpoint, if ever called via _http_put, sys.exit(1)s on the
         500 — which is exactly why the old schedule_appointment killed callers.

@@ -1509,7 +1509,28 @@ def schedule_appointment(meld_id: str, dtstart: str, duration_hours: float = 2.0
     appts = meld.get("managementappointment", [])
     if not appts:
         return {"ok": False, "error": "No in-house tech assignment found on this meld"}
-    appt_id = appts[0]["id"]
+    appt = appts[0]
+    appt_id = appt["id"]
+
+    # Fail loud rather than silently destroy existing availability data. The
+    # accept/ PATCH below sends segments_to_keep:[] — correct for the first-
+    # schedule case this fixes (an unstarted meld with no segments). But if the
+    # appointment is ALREADY scheduled (a booked availability_segment) or the
+    # meld already carries proposed management availability windows, that empty
+    # keep-list would WIPE them. Refuse the destructive case and point the
+    # caller at the reschedule flow instead of silently dropping real windows.
+    if (
+        appt.get("availability_segment")
+        or appt.get("management_availability_segments")
+        or meld.get("management_availability_segments")
+    ):
+        return {
+            "ok": False,
+            "error": (
+                "Meld already has scheduled or proposed availability segments; "
+                "`schedule` would replace them. Use the reschedule flow instead."
+            ),
+        }
 
     dtend = _compute_dtend(dtstart, duration_hours)
     payload = {
