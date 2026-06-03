@@ -2769,12 +2769,15 @@ def link_tenant_to_meld(meld_id: str, tenant_id) -> dict:
 
     current = _http_get(f"melds/{meld_id}/", cookie_hdr)
     existing_tenants = current.get("tenants") or []
+    # str()-normalize ids (PM may return them as strings): a str-vs-int slip
+    # here would skip the already-linked short-circuit and fall through to the
+    # merge below, duplicating an already-present tenant on the meld.
     existing_ids = {
-        t.get("id") for t in existing_tenants
+        str(t.get("id")) for t in existing_tenants
         if isinstance(t, dict) and t.get("id") is not None
     }
 
-    if tenant_id_int in existing_ids:
+    if str(tenant_id_int) in existing_ids:
         return {
             "ok": True,
             "meld_id": meld_id,
@@ -2784,7 +2787,11 @@ def link_tenant_to_meld(meld_id: str, tenant_id) -> dict:
         }
 
     new_tenant = get_tenant(tenant_id_int)
-    merged_tenants = list(existing_tenants) + [new_tenant]
+    # Dedup guard by normalized id: belt-and-suspenders so the no-dedup append
+    # can never duplicate a tenant even if the short-circuit above is bypassed.
+    merged_tenants = list(existing_tenants)
+    if str(tenant_id_int) not in existing_ids:
+        merged_tenants.append(new_tenant)
 
     csrf_token = _get_csrf_token(cookie_hdr)
     payload = {

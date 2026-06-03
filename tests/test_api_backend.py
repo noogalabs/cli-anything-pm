@@ -1702,6 +1702,31 @@ class TestLinkTenantToMeld:
             assert result["tenant_count"] == 1
             mp.assert_not_called()
 
+    def test_idempotent_short_circuits_on_string_tenant_id_from_pm(self):
+        """Regression: PM may return an already-linked tenant's id as a STRING.
+
+        The idempotent check must str()-normalize too; otherwise an
+        already-linked tenant fails the int-vs-str membership test, skips the
+        short-circuit, and falls through to the no-dedup merge — DUPLICATING the
+        tenant on the meld. This test puts a STRING id in the existing tenants
+        and asserts already_linked with NO PATCH. It fails against the old
+        int-only check (which would fire the PATCH).
+        """
+        with self._patches()[0] as mc, self._patches()[1] as mch, \
+             self._patches()[2] as mcs, self._patches()[3] as mg, \
+             self._patches()[4] as mp:
+            self._stub_creds(mc, mch, mcs)
+            mg.return_value = {
+                "id": "12791190", "tenants": [{"id": "4010708"}]
+            }
+
+            result = http_backend.link_tenant_to_meld("12791190", 4010708)
+
+            assert result["ok"] is True
+            assert result.get("already_linked") is True
+            assert result["tenant_count"] == 1
+            mp.assert_not_called()
+
     def test_hits_correct_paths_get_meld_then_get_tenant_then_patch(self):
         with self._patches()[0] as mc, self._patches()[1] as mch, \
              self._patches()[2] as mcs, self._patches()[3] as mg, \
