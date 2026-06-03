@@ -413,7 +413,7 @@ def complete_meld(meld_id, notes, as_json):
 
 @work_orders.command("cancel")
 @click.option("--meld-id", required=True, help="Meld ID to cancel")
-@click.option("--reason", default=None, help="Cancellation reason")
+@click.option("--reason", required=True, help="Cancellation reason (PM requires it: 400 'Cancellation reason must be provided')")
 @click.option("--json", "as_json", is_flag=True, default=True)
 def cancel_meld(meld_id, reason, as_json):
     """Cancel a meld from the manager side."""
@@ -862,7 +862,7 @@ def inspect_work_order(meld_id, as_json):
               help="Tenant PK — auto-hydrated via GET /tenants/{id}/. Repeat for multiple. Use this OR --tenants-json.")
 @click.option("--tenants-json", default=None,
               help="JSON list of tenant objects (power-user path). Use this OR --tenant-id.")
-@click.option("--work-location", default="")
+@click.option("--work-location", required=True, help="Work location (PM requires it: 400 'Work Location is required.')")
 @click.option("--priority", default="LOW")
 @click.option("--permission-to-enter/--no-permission-to-enter", default=True)
 @click.option("--tenant-presence-required/--no-tenant-presence-required", default=False)
@@ -985,7 +985,7 @@ def add_melds_to_project_cmd(project_id, meld_ids, as_json):
               help="Tenant PK — auto-hydrated via GET /tenants/{id}/. Repeat for multiple. Use this OR --tenants-json.")
 @click.option("--tenants-json", default=None,
               help="JSON list of tenant objects (power-user path). Use this OR --tenant-id.")
-@click.option("--work-location", default="")
+@click.option("--work-location", required=True, help="Work location (PM requires it: 400 'Work Location is required.')")
 @click.option("--priority", default="LOW")
 @click.option("--permission-to-enter/--no-permission-to-enter", default=True)
 @click.option("--tenant-presence-required/--no-tenant-presence-required", default=False)

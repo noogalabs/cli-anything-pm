@@ -515,6 +515,17 @@ class TestWorkOrdersLifecycleCLI:
         assert data["status"] == "CANCELLED"
         mock_fn.assert_called_once_with("12701108", reason="Duplicate")
 
+    def test_cancel_requires_reason(self, runner):
+        # PM rejects a reasonless cancel with HTTP 400
+        # ("Cancellation reason must be provided"), verified live 2026-06-02.
+        # The CLI must enforce --reason and never fire the no-reason request.
+        with patch("cli_anything.propertymeld.http_backend.cancel_meld") as mock_fn:
+            result = runner.invoke(cli, ["work-orders", "cancel",
+                                         "--meld-id", "12701108"])
+        assert result.exit_code != 0
+        assert "--reason" in result.output
+        mock_fn.assert_not_called()
+
 
 class TestTenantsCLI:
     def test_list_with_search(self, runner):
@@ -900,6 +911,7 @@ class TestProjectsCreateMeldInCLI:
         "--work-category", "APPLIANCES",
         "--work-type", "TURN",
         "--due-date", "2026-05-16T00:00:00.000Z",
+        "--work-location", "Kitchen",
     ]
 
     def test_id_flags_pass_stripped_objects(self, runner):
@@ -997,6 +1009,20 @@ class TestProjectsCreateMeldInCLI:
         assert result.exception is not None
         assert "Expecting value" in str(result.exception)
 
+    def test_requires_work_location(self, runner):
+        # PM requires work_location (400 "Work Location is required.",
+        # verified live 2026-06-02). _COMMON_ARGS-minus-work-location must
+        # be rejected by Click before any backend call fires.
+        args = [a for a in self._COMMON_ARGS if a not in ("--work-location", "Kitchen")]
+        with patch("cli_anything.propertymeld.http_backend.create_meld_in_project") as mock_fn:
+            result = runner.invoke(cli, args + [
+                "--unit-id", "1870266",
+                "--maintenance-id", "57163",
+            ])
+        assert result.exit_code != 0
+        assert "--work-location" in result.output
+        mock_fn.assert_not_called()
+
 
 class TestWorkOrdersCreateCLI:
     """pm work-orders create — standalone meld creation."""
@@ -1008,6 +1034,7 @@ class TestWorkOrdersCreateCLI:
         "--work-category", "APPLIANCES",
         "--work-type", "TURN",
         "--due-date", "2026-05-16T00:00:00.000Z",
+        "--work-location", "Kitchen",
     ]
 
     def test_work_orders_create_runs_with_ergonomic_flags(self, runner):
@@ -1034,6 +1061,19 @@ class TestWorkOrdersCreateCLI:
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert data["meld_id"] == 12772803
+
+    def test_requires_work_location(self, runner):
+        # PM requires work_location (400 "Work Location is required.",
+        # verified live 2026-06-02). Click must reject before create_meld fires.
+        args = [a for a in self._COMMON_ARGS if a not in ("--work-location", "Kitchen")]
+        with patch("cli_anything.propertymeld.http_backend.create_meld") as mock_fn:
+            result = runner.invoke(cli, args + [
+                "--unit-id", "1870266",
+                "--maintenance-id", "57163",
+            ])
+        assert result.exit_code != 0
+        assert "--work-location" in result.output
+        mock_fn.assert_not_called()
 
 
 class TestWorkOrdersLinkTenantCLI:
