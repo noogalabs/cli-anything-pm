@@ -168,7 +168,8 @@ def list_work_entries_cmd(meld_id, as_json):
 @click.option("--agent-id", "agent", required=True, type=int,
               help="Persona ID of the agent who performed the work "
                    "(e.g. 90025=Person031, 90026=Person019)")
-@click.option("--description", required=True, help="Short summary, shown in the meld feed.")
+@click.option("--description", required=True, callback=_require_nonempty,
+              help="Short summary, shown in the meld feed.")
 @click.option("--long-description", "long_description", default="",
               help="Optional long-form notes.")
 @click.option("--checkin", default=None,
@@ -284,7 +285,7 @@ def upload_file(meld_id, file_path, uploader_role, description, as_json):
 
 @work_orders.command("send-message")
 @click.option("--meld-id", required=True, help="Meld ID")
-@click.option("--text", required=True, help="Message body")
+@click.option("--text", required=True, callback=_require_nonempty, help="Message body")
 @click.option("--hide-tenant", is_flag=True, default=False, help="Hide from tenant")
 @click.option("--hide-vendor", is_flag=True, default=False, help="Hide from vendor")
 @click.option("--hide-owner", is_flag=True, default=False, help="Hide from owner")
@@ -577,10 +578,10 @@ def get_tenant(tenant_id, as_json):
 
 @tenants.command("invite")
 @click.option("--unit-id", required=True, type=int, help="Unit ID to attach the tenant to")
-@click.option("--first-name", required=True, help="Tenant first name")
-@click.option("--last-name", required=True, help="Tenant last name")
-@click.option("--email", required=True, help="Primary email address")
-@click.option("--cell", required=True, help="Cell phone number")
+@click.option("--first-name", required=True, callback=_require_nonempty, help="Tenant first name")
+@click.option("--last-name", required=True, callback=_require_nonempty, help="Tenant last name")
+@click.option("--email", required=True, callback=_require_nonempty, help="Primary email address")
+@click.option("--cell", required=True, callback=_require_nonempty, help="Cell phone number")
 @click.option("--home", default="", help="Optional home phone number")
 @click.option("--secondary-email", default=None, help="Optional secondary email address")
 @click.option("--notes", default="", help="Optional tenant notes")
@@ -691,13 +692,13 @@ def list_vendors(limit, as_json):
 
 
 @vendors.command("invite")
-@click.option("--email", required=True, help="Vendor contact email.")
-@click.option("--first-name", "first_name", required=True, help="Vendor contact first name.")
-@click.option("--last-name", "last_name", required=True, help="Vendor contact last name.")
-@click.option("--company", required=True, help="Vendor company name.")
-@click.option("--line1", required=True, help="Vendor street address line 1.")
-@click.option("--postcode", required=True, help="Vendor postal code.")
-@click.option("--phone", required=True, help="Vendor phone number.")
+@click.option("--email", required=True, callback=_require_nonempty, help="Vendor contact email.")
+@click.option("--first-name", "first_name", required=True, callback=_require_nonempty, help="Vendor contact first name.")
+@click.option("--last-name", "last_name", required=True, callback=_require_nonempty, help="Vendor contact last name.")
+@click.option("--company", required=True, callback=_require_nonempty, help="Vendor company name.")
+@click.option("--line1", required=True, callback=_require_nonempty, help="Vendor street address line 1.")
+@click.option("--postcode", required=True, callback=_require_nonempty, help="Vendor postal code.")
+@click.option("--phone", required=True, callback=_require_nonempty, help="Vendor phone number.")
 @click.option("--state", default="", help="Vendor state/region.")
 @click.option("--json", "as_json", is_flag=True, default=True)
 def invite_vendor_cmd(email, first_name, last_name, company, line1, postcode, phone, state, as_json):
@@ -790,7 +791,7 @@ def _assign_vendor(work_order_id, vendor, account, as_json):
 
 @work_orders.command("assign-tech")
 @click.option("--work-order-id", required=True, help="Meld ID")
-@click.option("--tech", required=True, help="Tech name (partial match ok)")
+@click.option("--tech", required=True, callback=_require_nonempty, help="Tech name (partial match ok)")
 @click.option("--json", "as_json", is_flag=True, default=True)
 def work_orders_assign_tech(work_order_id, tech, as_json):
     """Assign an in-house tech to a work order (plain HTTP, no Playwright)."""
@@ -799,7 +800,7 @@ def work_orders_assign_tech(work_order_id, tech, as_json):
 
 @work_orders.command("assign-vendor")
 @click.option("--work-order-id", required=True, help="Meld ID")
-@click.option("--vendor", required=True, help="Vendor name (partial match ok)")
+@click.option("--vendor", required=True, callback=_require_nonempty, help="Vendor name (partial match ok)")
 @click.option("--account", default="1", show_default=True, help="Account prefix for composite_id")
 @click.option("--json", "as_json", is_flag=True, default=True)
 def work_orders_assign_vendor(work_order_id, vendor, account, as_json):
@@ -809,7 +810,7 @@ def work_orders_assign_vendor(work_order_id, vendor, account, as_json):
 
 @cli.command("assign-tech")
 @click.option("--work-order-id", required=True, help="Meld ID")
-@click.option("--tech", required=True, help="Tech name (partial match ok)")
+@click.option("--tech", required=True, callback=_require_nonempty, help="Tech name (partial match ok)")
 @click.option("--json", "as_json", is_flag=True, default=True)
 def assign_tech(work_order_id, tech, as_json):
     """Deprecated alias for pm work-orders assign-tech."""
@@ -819,7 +820,7 @@ def assign_tech(work_order_id, tech, as_json):
 
 @cli.command("assign-vendor")
 @click.option("--work-order-id", required=True, help="Meld ID")
-@click.option("--vendor", required=True, help="Vendor name (partial match ok)")
+@click.option("--vendor", required=True, callback=_require_nonempty, help="Vendor name (partial match ok)")
 @click.option("--account", default="1", show_default=True, help="Account prefix for composite_id")
 @click.option("--json", "as_json", is_flag=True, default=True)
 def assign_vendor_cmd(work_order_id, vendor, account, as_json):
@@ -914,10 +915,10 @@ def inspect_work_order(meld_id, as_json):
 
 
 @work_orders.command("create")
-@click.option("--brief-description", required=True)
-@click.option("--description", required=True)
-@click.option("--work-category", required=True)
-@click.option("--work-type", required=True)
+@click.option("--brief-description", required=True, callback=_require_nonempty)
+@click.option("--description", required=True, callback=_require_nonempty)
+@click.option("--work-category", required=True, callback=_require_nonempty)
+@click.option("--work-type", required=True, callback=_require_nonempty)
 @click.option("--due-date", required=True, help="ISO 8601, e.g. 2026-05-16T02:52:41.393Z")
 @click.option("--unit-id", type=int, default=None,
               help="Unit PK — auto-hydrated via GET /units/{id}/. Use this OR --unit-json.")
@@ -1040,10 +1041,10 @@ def add_melds_to_project_cmd(project_id, meld_ids, as_json):
 
 @projects.command("create-meld-in")
 @click.argument("project_id")
-@click.option("--brief-description", required=True)
-@click.option("--description", required=True)
-@click.option("--work-category", required=True, help="e.g. APPLIANCES, PLUMBING, HVAC")
-@click.option("--work-type", required=True, help="e.g. TURN, REPAIR")
+@click.option("--brief-description", required=True, callback=_require_nonempty)
+@click.option("--description", required=True, callback=_require_nonempty)
+@click.option("--work-category", required=True, callback=_require_nonempty, help="e.g. APPLIANCES, PLUMBING, HVAC")
+@click.option("--work-type", required=True, callback=_require_nonempty, help="e.g. TURN, REPAIR")
 @click.option("--due-date", required=True, help="ISO 8601, e.g. 2026-05-16T02:52:41.393Z")
 @click.option("--unit-id", type=int, default=None,
               help="Unit PK — auto-hydrated via GET /units/{id}/. Use this OR --unit-json.")
@@ -1133,14 +1134,14 @@ def create_meld_in_project_cmd(
 
 
 @projects.command("create")
-@click.option("--name", required=True, help="Project name")
-@click.option("--project-type", required=True, help="e.g. TURN, MAINTENANCE")
+@click.option("--name", required=True, callback=_require_nonempty, help="Project name")
+@click.option("--project-type", required=True, callback=_require_nonempty, help="e.g. TURN, MAINTENANCE")
 @click.option("--due-date", required=True, help="ISO 8601, e.g. 2026-05-30T04:00:00.000Z")
 @click.option("--start-date", required=True, help="ISO 8601, e.g. 2026-05-14T03:00:00Z")
 @click.option("--coordinator", "coordinators", multiple=True, required=True,
               type=int, help="Coordinator management-agent id (repeat for multiple)")
 @click.option("--unit-id", required=True, type=int, help="Unit PK")
-@click.option("--unit-label", required=True, help="Unit address label, e.g. '123 Main St, Chattanooga, TN, 37421'")
+@click.option("--unit-label", required=True, callback=_require_nonempty, help="Unit address label, e.g. '123 Main St, Chattanooga, TN, 37421'")
 @click.option("--description", default="", help="Project description")
 @click.option("--meld-location", default="Unit", show_default=True,
               help='Discriminator — usually "Unit"; PM also accepts property-bound shapes')
@@ -1239,7 +1240,7 @@ def update_meld_notes_cmd(meld_id, maintenance_notes, as_json):
 
 @work_orders.command("invoice-hold")
 @click.argument("invoice_id", type=int)
-@click.option("--reason", required=True, help="Reason the invoice is being put on hold")
+@click.option("--reason", required=True, callback=_require_nonempty, help="Reason the invoice is being put on hold")
 @click.option("--json", "as_json", is_flag=True, default=True)
 def invoice_hold_cmd(invoice_id, reason, as_json):
     """Place a meld invoice on hold."""
@@ -1249,7 +1250,7 @@ def invoice_hold_cmd(invoice_id, reason, as_json):
 
 @work_orders.command("invoice-decline")
 @click.argument("invoice_id", type=int)
-@click.option("--reason", required=True, help="Reason the invoice is being declined")
+@click.option("--reason", required=True, callback=_require_nonempty, help="Reason the invoice is being declined")
 @click.option("--json", "as_json", is_flag=True, default=True)
 def invoice_decline_cmd(invoice_id, reason, as_json):
     """Decline a meld invoice."""
@@ -1321,7 +1322,7 @@ def get_estimate(estimate_id, as_json):
 
 @estimates.command("create")
 @click.option("--meld-id", required=True, help="Meld ID")
-@click.option("--estimate-number", required=True, help="Estimate number")
+@click.option("--estimate-number", required=True, callback=_require_nonempty, help="Estimate number")
 @click.option("--amount", required=True, help="Estimate amount")
 @click.option("--description", default="", help="Description")
 @click.option("--due-date", default=None, help="Due date (YYYY-MM-DD)")
