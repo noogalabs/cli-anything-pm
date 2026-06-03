@@ -76,8 +76,19 @@ def get_token() -> str:
 
 
 def output_json(data: Any) -> None:
-    """Print data as JSON to stdout."""
+    """Print data as JSON to stdout.
+
+    Fail loud: if the payload is a result envelope reporting failure
+    (a dict with ``ok`` explicitly False), exit non-zero AFTER printing so
+    that shell callers and crons checking ``$?`` see the failure. Backend
+    write helpers return ``{"ok": False, ...}`` on 404/not-found/PM-4xx; without
+    this, every such command printed the error but still exited 0, silently
+    reporting failed assigns/schedules/merges as success. Reads pass payloads
+    with no ``ok`` key (or ``ok`` True) and are unaffected.
+    """
     print(json.dumps(data, indent=2, default=str))
+    if isinstance(data, dict) and data.get("ok") is False:
+        sys.exit(1)
 
 
 def print_error(message: str) -> None:
