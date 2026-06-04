@@ -194,6 +194,69 @@ class TestInspectMeldErrorHandling:
         assert result["notes"]["completion_notes"] == "done"
         assert result["photos"]["manager"] == []
 
+    def test_optional_path_401_recapture_fails_clean_exit(self, monkeypatch, capsys):
+        """F11: a 401 on the OPTIONAL tenant/vendor-files path raises
+        SessionExpired inside _http_get_optional_results. With inspect_meld now
+        decorated by @with_recapture_retry, a failed recapture funnels to a
+        clean SystemExit(1) + parseable stderr JSON, NOT a bare uncaught
+        SessionExpired traceback."""
+        _patch_creds(monkeypatch)
+
+        def fake_urlopen(req, **kw):
+            url = req.full_url
+            # Optional tenant/vendor file endpoints 401 (auth failure).
+            if "tenant-files" in url or "vendor-files" in url:
+                raise _http_error(url, 401, b'{"detail": "auth"}')
+            # Everything else (meld detail, manager files, work-entries,
+            # comments) returns valid empty/detail JSON.
+            if "/melds/90000014/" in url and "files" not in url and "work" not in url:
+                return _FakeResp(json.dumps(MELD_DETAIL).encode())
+            return _FakeResp(json.dumps({"count": 0, "next": None, "results": []}).encode())
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+        # Avoid spawning the real Playwright recapture; force it to fail so the
+        # decorator deterministically exits.
+        monkeypatch.setattr(hb, "_attempt_recapture", lambda: False)
+
+        with pytest.raises(SystemExit) as exc:
+            hb.inspect_meld("90000014")
+        assert exc.value.code == 1
+        # Last stderr line must parse as JSON (structured envelope, no traceback).
+        err = capsys.readouterr().err
+        json.loads(err.strip().splitlines()[-1])
+
+    def test_optional_path_401_then_recapture_succeeds_returns_dict(self, monkeypatch):
+        """F11: a 401 on the optional path that clears after one recapture must
+        re-run inspect_meld end-to-end and return the aggregated dict (empty
+        tenant/vendor photos), proving the decorator retried successfully."""
+        _patch_creds(monkeypatch)
+
+        # The optional path 401s only on the FIRST attempt (before recapture);
+        # after recapture clears the flag, the decorator's single re-invocation
+        # of inspect_meld runs cleanly to completion.
+        state = {"recaptured": False}
+
+        def fake_urlopen(req, **kw):
+            url = req.full_url
+            if ("tenant-files" in url or "vendor-files" in url) and not state["recaptured"]:
+                raise _http_error(url, 401, b'{"detail": "auth"}')
+            if "/melds/90000014/" in url and "files" not in url and "work" not in url:
+                return _FakeResp(json.dumps(MELD_DETAIL).encode())
+            return _FakeResp(json.dumps({"count": 0, "next": None, "results": []}).encode())
+
+        def fake_recapture():
+            state["recaptured"] = True
+            return True
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+        # Recapture succeeds (no real Playwright); decorator re-invokes the call.
+        monkeypatch.setattr(hb, "_attempt_recapture", fake_recapture)
+
+        result = hb.inspect_meld("90000014")
+        assert result["meld"]["id"] == 90000014
+        assert result["photos"]["tenant"] == []
+        assert result["photos"]["vendor"] == []
+
 
 # ── OPTIONAL path (_http_get_optional_results) ───────────────────────────────
 #
