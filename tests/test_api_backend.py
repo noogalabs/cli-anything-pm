@@ -652,7 +652,9 @@ class TestScheduleVendorAppointment:
             assert result["ok"] is False
             assert "No vendor appointment" in result["error"]
 
-    def test_uses_first_appointment_fallback(self):
+    def test_no_match_fails_loud(self):
+        """F4: an unmatched vendor_id must fail loud, NOT silently book the
+        first appointment (a DIFFERENT vendor) and report success."""
         meld = {
             "id": 12701108,
             "status": "PENDING_TENANT_AVAILABILITY",
@@ -676,16 +678,17 @@ class TestScheduleVendorAppointment:
             mg.return_value = meld
             mp.return_value = {}
 
-            # vendor_id 999 doesn't match — falls back to first appointment.
+            # vendor_id 999 matches no appointment — must fail loud, no PATCH.
             result = http_backend.schedule_vendor_appointment(
                 "12701108", "999", "2026-05-20T14:00:00-04:00"
             )
-            assert result["ok"] is True
-            assert result["assignment_request_id"] == 8000
-            assert result["appointment_id"] == 7000
-            assert "assignments/8000/segments/" in mp.call_args[0][0]
+            assert result["ok"] is False
+            assert "999" in result["error"]
+            mp.assert_not_called()
 
     def test_skips_rejected_request(self):
+        """F4: a rejected vendor request must NOT be silently rebooked onto a
+        different vendor's appointment via the old first-appointment fallback."""
         meld = {
             "id": 12701108,
             "status": "PENDING_ASSIGNMENT",
@@ -709,13 +712,46 @@ class TestScheduleVendorAppointment:
             mg.return_value = meld
             mp.return_value = {}
 
-            # vendor 42's request is rejected; falls back to first appointment.
+            # vendor 42's request is rejected — must fail loud, NOT rebook vendor 10.
             result = http_backend.schedule_vendor_appointment(
                 "12701108", "42", "2026-05-20T14:00:00-04:00"
             )
-            assert result["ok"] is True
-            assert result["assignment_request_id"] == 8000
-            assert "assignments/8000/segments/" in mp.call_args[0][0]
+            assert result["ok"] is False
+            assert "42" in result["error"]
+            mp.assert_not_called()
+
+    def test_refuses_when_appointment_already_booked(self):
+        """F5: a second schedule on an already-booked vendor appointment must
+        refuse rather than wipe the existing availability_segment via the
+        replace-all (segments_to_keep:[]) PATCH."""
+        booked = {
+            "id": 12701108,
+            "status": "PENDING_TENANT_AVAILABILITY",
+            "vendor_assignment_requests": [
+                {"id": 8000, "vendor": {"id": 42, "name": "Dyer HVAC"},
+                 "accepted": "2026-05-13T12:59:15Z", "rejected": None, "canceled": None},
+            ],
+            "vendorappointment": [
+                {"id": 7000, "meld": 12701108, "assignment_request": 8000,
+                 "availability_segment": {"id": 555, "event": {"dtstart": "2026-05-19T09:00:00-04:00"}}},
+            ],
+        }
+        with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
+             patch("cli_anything.propertymeld.http_backend._cookie_header") as mch, \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token") as mcs, \
+             patch("cli_anything.propertymeld.http_backend._http_get") as mg, \
+             patch("cli_anything.propertymeld.http_backend._http_patch") as mp:
+            mc.return_value = {"cookie": "x"}
+            mch.return_value = "Cookie: session=xyz"
+            mcs.return_value = "csrf"
+            mg.return_value = booked
+
+            result = http_backend.schedule_vendor_appointment(
+                "12701108", "42", "2026-05-20T14:00:00-04:00", duration_hours=2.0
+            )
+            assert result["ok"] is False
+            assert "reschedule" in result["error"].lower()
+            mp.assert_not_called()  # the destructive replace-all PATCH must NOT fire
 
 
 # ──────────────────────────────────────────────────────────────────────────────

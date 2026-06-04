@@ -2189,6 +2189,7 @@ def _list_photo_source(meld_id: str, endpoint: str, role: str, optional: bool = 
     return tagged, note
 
 
+@with_recapture_retry
 def inspect_meld(meld_id: str) -> dict:
     """Aggregate meld detail, photos, notes, work entries, and comments."""
     creds = _load_creds()
@@ -2338,8 +2339,9 @@ def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, dura
       2. Find the appointment in vendorappointment whose assignment_request
          matches that request.id.
 
-    Falls back to the first appointment on the meld when no exact vendor match
-    is found, mirroring the prior multi-vendor fallback behavior.
+    Returns {'ok': False} without issuing any PATCH when no appointment on the
+    meld is linked to the requested vendor_id (fail-loud; never books a
+    different vendor).
     """
     meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
@@ -2370,6 +2372,7 @@ def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, dura
     # Find the appointment whose linked assignment_request belongs to vendor_id.
     appt_id = None
     request_id = None
+    matched_appt = None
     for appt in appointments:
         if not isinstance(appt, dict):
             continue
@@ -2377,21 +2380,51 @@ def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, dura
         if linked_req is not None and str(req_to_vendor.get(linked_req)) == str(vendor_id):
             appt_id = appt.get("id")
             request_id = linked_req
+            matched_appt = appt
             break
 
     if appt_id is None:
-        # Fallback: use the first appointment on the meld (preserves multi-vendor
-        # behavior from the legacy mock-driven implementation).
-        first = next((a for a in appointments if isinstance(a, dict) and a.get("id") is not None), None)
-        if first:
-            appt_id = first.get("id")
-            request_id = first.get("assignment_request")
-
-    if appt_id is None:
-        return {"ok": False, "error": f"Vendor {vendor_id} not assigned to this meld"}
+        # No appointment on the meld is linked to the requested vendor. Fail
+        # loud instead of booking a DIFFERENT vendor's appointment. The prior
+        # "first appointment" fallback silently scheduled the wrong vendor and
+        # reported success — a wrong-target/destructive default. Reaching here
+        # means the match loop above found nothing, so we return before any
+        # _http_patch is issued.
+        return {
+            "ok": False,
+            "error": (
+                f"Vendor {vendor_id} has no matching appointment on meld {meld_id}; "
+                "refusing to schedule a different vendor"
+            ),
+        }
 
     if request_id is None:
         return {"ok": False, "error": f"Could not resolve assignment_request id for vendor {vendor_id}"}
+
+    # Fail loud rather than silently destroy an existing booking. The PATCH
+    # below sends segments_to_keep:[] — a replace-all correct only for the
+    # first-schedule case (an unbooked appointment with no availability_segment).
+    # If this vendor appointment is ALREADY scheduled (a booked
+    # availability_segment) or the meld carries proposed vendor availability
+    # windows, that empty keep-list would WIPE them. Refuse the destructive case
+    # and point the caller at the reschedule flow. Mirrors the in-house guard in
+    # schedule_appointment. The load-bearing signal is the appointment-level
+    # availability_segment (verified present in the response shape); the
+    # meld-level vendor_availability_segments check is defensive symmetry and is
+    # simply absent/falsy if PM does not expose that key. Use .get() truthiness
+    # (NOT `is not None`) so an empty {} placeholder for an unbooked appt still
+    # allows scheduling.
+    if (
+        (matched_appt and matched_appt.get("availability_segment"))
+        or meld.get("vendor_availability_segments")
+    ):
+        return {
+            "ok": False,
+            "error": (
+                "Vendor appointment already has a scheduled availability segment; "
+                "`schedule` would replace it. Use the reschedule flow instead."
+            ),
+        }
 
     # Compute dtend from dtstart + duration. The captured payload uses dtstart +
     # dtend (no "duration" key) — we mirror that. Try to parse dtstart as ISO 8601;
