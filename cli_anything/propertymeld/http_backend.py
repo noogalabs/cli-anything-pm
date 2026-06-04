@@ -1226,7 +1226,9 @@ def complete_meld(
 ) -> dict:
     """Mark a meld complete. Side-aware: manager vs vendor PM uses different payload shapes.
 
-    Manager surface (default): meld must be in PENDING_COMPLETION. Raises HTTP 403 otherwise.
+    Manager surface (default): meld must be in PENDING_COMPLETION. The CLI
+        checks that state before PATCH and fails loud without sending the
+        complete request otherwise.
         Payload: {completion_notes?: str}.
 
     Vendor surface: operator-on-behalf-of-vendor; pass vendor_id of the assigned vendor.
@@ -1254,7 +1256,6 @@ def complete_meld(
     meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
-    csrf_token = _get_csrf_token(cookie_hdr)
 
     if side == "vendor":
         payload: dict = {
@@ -1263,15 +1264,76 @@ def complete_meld(
             "reason": completion_notes or "",
         }
     else:
+        current = _http_get(f"melds/{meld_id}/", cookie_hdr)
+        current_status = _meld_status(current)
+        if current_status != "PENDING_COMPLETION":
+            _complete_meld_fail(
+                meld_id,
+                current_status,
+                completion_notes,
+                (
+                    f"meld {meld_id} is {current_status}, must be PENDING_COMPLETION to complete. "
+                    "Move it to PENDING_COMPLETION first, or relabel via the web UI."
+                ),
+            )
         payload = {}
         if completion_notes:
             payload["completion_notes"] = completion_notes
 
+    csrf_token = _get_csrf_token(cookie_hdr)
     result = _http_patch(
         f"melds/{meld_id}/complete/", payload, cookie_hdr, csrf_token,
         side=side, vendor_id=vendor_id,
     )
-    return {"ok": True, "meld_id": meld_id, "completion_notes": completion_notes, "side": side, "result": result}
+    verified_status = None
+    if side != "vendor":
+        verified = _http_get(f"melds/{meld_id}/", cookie_hdr)
+        verified_status = _meld_status(verified)
+        if verified_status != "COMPLETED":
+            _complete_meld_fail(
+                meld_id,
+                verified_status,
+                completion_notes,
+                f"meld {meld_id} complete request did not reach COMPLETED; actual state is {verified_status}.",
+                result=result,
+            )
+    return {
+        "ok": True,
+        "meld_id": meld_id,
+        "completion_notes": completion_notes,
+        "side": side,
+        "result": result,
+        **({"status": verified_status} if verified_status is not None else {}),
+    }
+
+
+def _meld_status(meld: Any) -> Optional[str]:
+    if isinstance(meld, dict):
+        status = meld.get("status")
+        if status is not None:
+            return str(status)
+    return None
+
+
+def _complete_meld_fail(
+    meld_id: str,
+    status: Optional[str],
+    completion_notes: Optional[str],
+    message: str,
+    *,
+    result: Optional[Any] = None,
+) -> None:
+    body: dict = {
+        "ok": False,
+        "error": message,
+        "meld_id": meld_id,
+        "status": status,
+        "completion_notes": completion_notes,
+    }
+    if result is not None:
+        body["result"] = result
+    print(json.dumps(body), file=sys.stderr)
+    sys.exit(1)
 
 
 @with_recapture_retry

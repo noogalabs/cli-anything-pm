@@ -130,15 +130,15 @@ class TestCompleteMeldSideRouting:
         """Manager side: payload is {completion_notes?: str}."""
         captured: dict = {}
 
-        class _Resp:
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
-            def read(self): return b'{"ok": true}'
-
         def fake_urlopen(req, **kw):
-            captured["url"] = req.full_url
-            captured["body"] = req.data
-            return _Resp()
+            captured.setdefault("methods", []).append(req.get_method())
+            if req.get_method() == "PATCH":
+                captured["url"] = req.full_url
+                captured["body"] = req.data
+                return _FakeResp(body=b'{"status": "COMPLETED"}')
+            if len(captured["methods"]) == 1:
+                return _FakeResp(body=b'{"status": "PENDING_COMPLETION"}')
+            return _FakeResp(body=b'{"status": "COMPLETED"}')
 
         monkeypatch.setattr(hb, "_load_creds", lambda: {"cookies": []})
         monkeypatch.setattr(hb, "_cookie_header", lambda c: "sessionid=x")
@@ -149,21 +149,20 @@ class TestCompleteMeldSideRouting:
         assert "/m/" in captured["url"]
         import json as _json
         assert _json.loads(captured["body"]) == {"completion_notes": "done"}
+        assert captured["methods"] == ["GET", "PATCH", "GET"]
 
     def test_complete_meld_vendor_payload_shape(self, monkeypatch):
         """Vendor side payload (capture-verified):
         {is_complete: true, date: <iso>, reason: <str>}."""
         captured: dict = {}
 
-        class _Resp:
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
-            def read(self): return b'{"ok": true}'
-
         def fake_urlopen(req, **kw):
-            captured["url"] = req.full_url
-            captured["body"] = req.data
-            return _Resp()
+            captured.setdefault("methods", []).append(req.get_method())
+            if req.get_method() == "PATCH":
+                captured["url"] = req.full_url
+                captured["body"] = req.data
+                return _FakeResp(body=b'{"status": "COMPLETED"}')
+            pytest.fail("vendor completion should not run unconfirmed post-PATCH status gate")
 
         monkeypatch.setattr(hb, "_load_creds", lambda: {"cookies": []})
         monkeypatch.setattr(hb, "_cookie_header", lambda c: "sessionid=x")
@@ -184,3 +183,82 @@ class TestCompleteMeldSideRouting:
             "date": "2026-05-17T14:00:00.000Z",
             "reason": "completed",
         }
+        assert captured["methods"] == ["PATCH"]
+
+    def test_complete_meld_pre_state_guard_fails_loud_without_patch(self, monkeypatch, capsys):
+        """Wire-boundary guard: non-PENDING_COMPLETION exits before PATCH."""
+        calls: list[tuple[str, str, bytes | None]] = []
+
+        def fake_urlopen(req, **kw):
+            calls.append((req.get_method(), req.full_url, req.data))
+            return _FakeResp(body=b'{"status": "PENDING_MORE_MANAGEMENT_AVAILABILITY"}')
+
+        monkeypatch.setattr(hb, "_load_creds", lambda: {"cookies": []})
+        monkeypatch.setattr(hb, "_cookie_header", lambda c: "sessionid=x")
+        monkeypatch.setattr(hb, "_get_csrf_token", lambda c: pytest.fail("csrf should not be fetched before pre-state guard"))
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        with pytest.raises(SystemExit) as exc:
+            hb.complete_meld("12345678", completion_notes="do not drop")
+
+        assert exc.value.code == 1
+        assert [method for method, _, _ in calls] == ["GET"]
+        err = json.loads(capsys.readouterr().err)
+        assert err["ok"] is False
+        assert err["status"] == "PENDING_MORE_MANAGEMENT_AVAILABILITY"
+        assert err["completion_notes"] == "do not drop"
+        assert "must be PENDING_COMPLETION" in err["error"]
+        assert "web UI" in err["error"]
+
+    def test_complete_meld_pending_completion_reaches_completed(self, monkeypatch):
+        """Wire-boundary happy path: GET pending -> PATCH -> GET completed."""
+        calls: list[tuple[str, str, bytes | None]] = []
+
+        def fake_urlopen(req, **kw):
+            calls.append((req.get_method(), req.full_url, req.data))
+            if req.get_method() == "PATCH":
+                return _FakeResp(body=b'{"status": "COMPLETED"}')
+            if len(calls) == 1:
+                return _FakeResp(body=b'{"status": "PENDING_COMPLETION"}')
+            return _FakeResp(body=b'{"status": "COMPLETED"}')
+
+        monkeypatch.setattr(hb, "_load_creds", lambda: {"cookies": []})
+        monkeypatch.setattr(hb, "_cookie_header", lambda c: "sessionid=x")
+        monkeypatch.setattr(hb, "_get_csrf_token", lambda c: "csrf")
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        result = hb.complete_meld("12345678", completion_notes="done")
+
+        assert result["ok"] is True
+        assert result["status"] == "COMPLETED"
+        assert [method for method, _, _ in calls] == ["GET", "PATCH", "GET"]
+        assert json.loads(calls[1][2]) == {"completion_notes": "done"}
+
+    def test_complete_meld_patch_could_not_complete_fails_loud(self, monkeypatch, capsys):
+        """Wire-boundary silent-success guard: post-PATCH non-COMPLETED exits 1."""
+        calls: list[tuple[str, str, bytes | None]] = []
+
+        def fake_urlopen(req, **kw):
+            calls.append((req.get_method(), req.full_url, req.data))
+            if req.get_method() == "PATCH":
+                return _FakeResp(body=b'{"status": "MAINTENANCE_COULD_NOT_COMPLETE"}')
+            if len(calls) == 1:
+                return _FakeResp(body=b'{"status": "PENDING_COMPLETION"}')
+            return _FakeResp(body=b'{"status": "MAINTENANCE_COULD_NOT_COMPLETE"}')
+
+        monkeypatch.setattr(hb, "_load_creds", lambda: {"cookies": []})
+        monkeypatch.setattr(hb, "_cookie_header", lambda c: "sessionid=x")
+        monkeypatch.setattr(hb, "_get_csrf_token", lambda c: "csrf")
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        with pytest.raises(SystemExit) as exc:
+            hb.complete_meld("12345678", completion_notes="preserve me")
+
+        assert exc.value.code == 1
+        assert [method for method, _, _ in calls] == ["GET", "PATCH", "GET"]
+        assert json.loads(calls[1][2]) == {"completion_notes": "preserve me"}
+        err = json.loads(capsys.readouterr().err)
+        assert err["ok"] is False
+        assert err["status"] == "MAINTENANCE_COULD_NOT_COMPLETE"
+        assert err["completion_notes"] == "preserve me"
+        assert "did not reach COMPLETED" in err["error"]
