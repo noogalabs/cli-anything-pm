@@ -652,7 +652,9 @@ class TestScheduleVendorAppointment:
             assert result["ok"] is False
             assert "No vendor appointment" in result["error"]
 
-    def test_uses_first_appointment_fallback(self):
+    def test_no_match_fails_loud(self):
+        """F4: an unmatched vendor_id must fail loud, NOT silently book the
+        first appointment (a DIFFERENT vendor) and report success."""
         meld = {
             "id": 12701108,
             "status": "PENDING_TENANT_AVAILABILITY",
@@ -676,16 +678,17 @@ class TestScheduleVendorAppointment:
             mg.return_value = meld
             mp.return_value = {}
 
-            # vendor_id 999 doesn't match — falls back to first appointment.
+            # vendor_id 999 matches no appointment — must fail loud, no PATCH.
             result = http_backend.schedule_vendor_appointment(
                 "12701108", "999", "2026-05-20T14:00:00-04:00"
             )
-            assert result["ok"] is True
-            assert result["assignment_request_id"] == 8000
-            assert result["appointment_id"] == 7000
-            assert "assignments/8000/segments/" in mp.call_args[0][0]
+            assert result["ok"] is False
+            assert "999" in result["error"]
+            mp.assert_not_called()
 
     def test_skips_rejected_request(self):
+        """F4: a rejected vendor request must NOT be silently rebooked onto a
+        different vendor's appointment via the old first-appointment fallback."""
         meld = {
             "id": 12701108,
             "status": "PENDING_ASSIGNMENT",
@@ -709,13 +712,13 @@ class TestScheduleVendorAppointment:
             mg.return_value = meld
             mp.return_value = {}
 
-            # vendor 42's request is rejected; falls back to first appointment.
+            # vendor 42's request is rejected — must fail loud, NOT rebook vendor 10.
             result = http_backend.schedule_vendor_appointment(
                 "12701108", "42", "2026-05-20T14:00:00-04:00"
             )
-            assert result["ok"] is True
-            assert result["assignment_request_id"] == 8000
-            assert "assignments/8000/segments/" in mp.call_args[0][0]
+            assert result["ok"] is False
+            assert "42" in result["error"]
+            mp.assert_not_called()
 
 
 # ──────────────────────────────────────────────────────────────────────────────

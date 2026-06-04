@@ -2338,8 +2338,9 @@ def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, dura
       2. Find the appointment in vendorappointment whose assignment_request
          matches that request.id.
 
-    Falls back to the first appointment on the meld when no exact vendor match
-    is found, mirroring the prior multi-vendor fallback behavior.
+    Returns {'ok': False} without issuing any PATCH when no appointment on the
+    meld is linked to the requested vendor_id (fail-loud; never books a
+    different vendor).
     """
     meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
@@ -2380,15 +2381,19 @@ def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, dura
             break
 
     if appt_id is None:
-        # Fallback: use the first appointment on the meld (preserves multi-vendor
-        # behavior from the legacy mock-driven implementation).
-        first = next((a for a in appointments if isinstance(a, dict) and a.get("id") is not None), None)
-        if first:
-            appt_id = first.get("id")
-            request_id = first.get("assignment_request")
-
-    if appt_id is None:
-        return {"ok": False, "error": f"Vendor {vendor_id} not assigned to this meld"}
+        # No appointment on the meld is linked to the requested vendor. Fail
+        # loud instead of booking a DIFFERENT vendor's appointment. The prior
+        # "first appointment" fallback silently scheduled the wrong vendor and
+        # reported success — a wrong-target/destructive default. Reaching here
+        # means the match loop above found nothing, so we return before any
+        # _http_patch is issued.
+        return {
+            "ok": False,
+            "error": (
+                f"Vendor {vendor_id} has no matching appointment on meld {meld_id}; "
+                "refusing to schedule a different vendor"
+            ),
+        }
 
     if request_id is None:
         return {"ok": False, "error": f"Could not resolve assignment_request id for vendor {vendor_id}"}
