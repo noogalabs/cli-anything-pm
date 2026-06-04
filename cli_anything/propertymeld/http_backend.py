@@ -2189,6 +2189,7 @@ def _list_photo_source(meld_id: str, endpoint: str, role: str, optional: bool = 
     return tagged, note
 
 
+@with_recapture_retry
 def inspect_meld(meld_id: str) -> dict:
     """Aggregate meld detail, photos, notes, work entries, and comments."""
     creds = _load_creds()
