@@ -2371,6 +2371,7 @@ def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, dura
     # Find the appointment whose linked assignment_request belongs to vendor_id.
     appt_id = None
     request_id = None
+    matched_appt = None
     for appt in appointments:
         if not isinstance(appt, dict):
             continue
@@ -2378,6 +2379,7 @@ def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, dura
         if linked_req is not None and str(req_to_vendor.get(linked_req)) == str(vendor_id):
             appt_id = appt.get("id")
             request_id = linked_req
+            matched_appt = appt
             break
 
     if appt_id is None:
@@ -2397,6 +2399,31 @@ def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, dura
 
     if request_id is None:
         return {"ok": False, "error": f"Could not resolve assignment_request id for vendor {vendor_id}"}
+
+    # Fail loud rather than silently destroy an existing booking. The PATCH
+    # below sends segments_to_keep:[] — a replace-all correct only for the
+    # first-schedule case (an unbooked appointment with no availability_segment).
+    # If this vendor appointment is ALREADY scheduled (a booked
+    # availability_segment) or the meld carries proposed vendor availability
+    # windows, that empty keep-list would WIPE them. Refuse the destructive case
+    # and point the caller at the reschedule flow. Mirrors the in-house guard in
+    # schedule_appointment. The load-bearing signal is the appointment-level
+    # availability_segment (verified present in the response shape); the
+    # meld-level vendor_availability_segments check is defensive symmetry and is
+    # simply absent/falsy if PM does not expose that key. Use .get() truthiness
+    # (NOT `is not None`) so an empty {} placeholder for an unbooked appt still
+    # allows scheduling.
+    if (
+        (matched_appt and matched_appt.get("availability_segment"))
+        or meld.get("vendor_availability_segments")
+    ):
+        return {
+            "ok": False,
+            "error": (
+                "Vendor appointment already has a scheduled availability segment; "
+                "`schedule` would replace it. Use the reschedule flow instead."
+            ),
+        }
 
     # Compute dtend from dtstart + duration. The captured payload uses dtstart +
     # dtend (no "duration" key) — we mirror that. Try to parse dtstart as ISO 8601;
