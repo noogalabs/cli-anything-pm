@@ -65,6 +65,7 @@ def _api_get(path: str, params: Optional[dict] = None) -> Any:
 
 def list_work_orders(
     status: Optional[str] = None,
+    status_raw: Optional[str] = None,
     assigned_to_tech: Optional[int] = None,
     assigned_to_vendor: Optional[int] = None,
     stuck_hours: Optional[float] = None,
@@ -85,10 +86,12 @@ def list_work_orders(
         PENDING_MORE_MANAGEMENT_AVAILABILITY
         COMPLETED
         MANAGER_CANCELED
+        MAINTENANCE_COULD_NOT_COMPLETE (raw-only via status_raw)
 
     The CLI exposes friendlier slugs ("open", "pending", "completed",
     "canceled"). "open" maps to ALL three PENDING_* states sent as repeated
     `status=` query params, which Nexus interprets as a logical OR.
+    `status_raw` bypasses that slug map and sends one raw PM status directly.
 
     --no-tenant-linked routing: PM's Nexus server-side filter uses the wrong
     predicate (`has_registered_tenant=False` instead of `len(tenants)==0`),
@@ -99,6 +102,10 @@ def list_work_orders(
     returns the tenants[] field) and filter on `not r.get("tenants")`. Remove
     the delegation once PM fixes the server-side predicate.
     """
+    if status and status_raw:
+        print_error("--status and --status-raw cannot be combined")
+        sys.exit(2)
+
     # Delegate to cookie-path when we need the tenants[] field that Nexus omits.
     # The cookie-path /api/melds/ list endpoint does NOT honor the Nexus
     # query filter set (assigned_to_*, stuck_hours, created_since, status_not).
@@ -126,6 +133,7 @@ def list_work_orders(
             "--assigned-to-vendor": assigned_to_vendor,
             "--stuck-hours": stuck_hours,
             "--created-since": created_since,
+            "--status-raw": status_raw,
             "--status-not": status_not,
         }
         set_flags = [name for name, val in incompatible.items() if val is not None]
@@ -145,6 +153,7 @@ def list_work_orders(
 
     results = _list_work_orders_nexus(
         status=status,
+        status_raw=status_raw,
         assigned_to_tech=assigned_to_tech,
         assigned_to_vendor=assigned_to_vendor,
         stuck_hours=stuck_hours,
@@ -170,6 +179,7 @@ def list_work_orders(
 
 def _list_work_orders_nexus(
     status: Optional[str] = None,
+    status_raw: Optional[str] = None,
     assigned_to_tech: Optional[int] = None,
     assigned_to_vendor: Optional[int] = None,
     stuck_hours: Optional[float] = None,
@@ -193,6 +203,8 @@ def _list_work_orders_nexus(
         states = slug_to_states.get(status.lower(), [status])
         for s in states:
             params.append(("status", s))
+    if status_raw:
+        params.append(("status", status_raw))
     if assigned_to_tech is not None:
         params.append(("assigned_to_tech", str(assigned_to_tech)))
     if assigned_to_vendor is not None:
