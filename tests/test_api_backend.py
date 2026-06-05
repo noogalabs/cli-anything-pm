@@ -110,6 +110,36 @@ class TestListWorkOrders:
         # tests below.
         assert "no_tenant_linked" not in url
 
+    def test_status_raw_filter_passed_as_raw_status_param(self):
+        with patch("urllib.request.urlopen") as mock_open:
+            mock_open.side_effect = [
+                make_response(TOKEN_RESPONSE),
+                make_response({"results": []}),
+            ]
+            api_backend.list_work_orders(
+                status_raw="MAINTENANCE_COULD_NOT_COMPLETE",
+                assigned_to_tech=57163,
+                created_since="2026-05-18T00:00:00Z",
+                status_not="COMPLETED",
+            )
+        url = mock_open.call_args_list[1][0][0].full_url
+        assert "status=MAINTENANCE_COULD_NOT_COMPLETE" in url
+        assert "assigned_to_tech=57163" in url
+        assert "created_since=2026-05-18T00%3A00%3A00Z" in url
+        assert "status_not=COMPLETED" in url
+
+    def test_status_and_status_raw_conflict_fails_loud(self, capsys):
+        with patch("urllib.request.urlopen") as mock_open:
+            with pytest.raises(SystemExit) as exc_info:
+                api_backend.list_work_orders(
+                    status="open",
+                    status_raw="MAINTENANCE_COULD_NOT_COMPLETE",
+                )
+        assert exc_info.value.code == 2
+        assert mock_open.call_count == 0
+        captured = capsys.readouterr()
+        assert "--status and --status-raw cannot be combined" in captured.err
+
     def test_no_tenant_linked_delegates_to_cookie_path_helper(self):
         # When no_tenant_linked=True, api_backend should bypass Nexus and call
         # http_backend.list_work_orders_rich which returns the tenants[] field.
@@ -154,6 +184,7 @@ class TestListWorkOrders:
         ("assigned_to_vendor", "--assigned-to-vendor"),
         ("stuck_hours", "--stuck-hours"),
         ("created_since", "--created-since"),
+        ("status_raw", "--status-raw"),
         ("status_not", "--status-not"),
     ])
     def test_no_tenant_linked_rejects_incompatible_filter_combos(
@@ -162,7 +193,14 @@ class TestListWorkOrders:
         # Combining --no-tenant-linked with Nexus-only filters silently
         # returned the wrong meld set pre-fix (cookie-path delegation drops
         # those query params). Loud-fail per silent-failure-half-ships rule.
-        kwargs = {"no_tenant_linked": True, flag_kwarg: 99 if flag_kwarg != "created_since" and flag_kwarg != "status_not" else "x"}
+        kwargs = {
+            "no_tenant_linked": True,
+            flag_kwarg: (
+                99
+                if flag_kwarg not in ("created_since", "status_raw", "status_not")
+                else "x"
+            ),
+        }
         with patch(
             "cli_anything.propertymeld.http_backend.list_work_orders_rich"
         ) as mock_rich:

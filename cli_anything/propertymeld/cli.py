@@ -57,6 +57,7 @@ def _require_nonempty(ctx, param, value):
 @click.option("--status", default=None,
               type=click.Choice(["open", "pending", "completed", "canceled"], case_sensitive=False),
               help="Filter by status (default: all)")
+@click.option("--status-raw", default=None, help="Filter by raw Property Meld status")
 @click.option("--assigned-to-tech", type=int, default=None, help="Filter to a specific in-house tech id")
 @click.option("--assigned-to-vendor", type=int, default=None, help="Filter to a specific vendor id")
 @click.option("--stuck-hours", type=float, default=None,
@@ -71,6 +72,7 @@ def _require_nonempty(ctx, param, value):
 @click.option("--json", "as_json", is_flag=True, default=True, help="Output as JSON (default)")
 def list_work_orders(
     status,
+    status_raw,
     assigned_to_tech,
     assigned_to_vendor,
     stuck_hours,
@@ -82,8 +84,12 @@ def list_work_orders(
     as_json,
 ):
     """List work orders."""
+    if status and status_raw:
+        raise click.UsageError("--status and --status-raw cannot be combined")
+
     results = api_backend.list_work_orders(
         status=status,
+        status_raw=status_raw,
         assigned_to_tech=assigned_to_tech,
         assigned_to_vendor=assigned_to_vendor,
         stuck_hours=stuck_hours,
