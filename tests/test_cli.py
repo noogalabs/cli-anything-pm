@@ -48,6 +48,7 @@ class TestWorkOrdersCLI:
             runner.invoke(cli, ["work-orders", "list", "--status", "open"])
         mock_fn.assert_called_once_with(
             status="open",
+            status_raw=None,
             assigned_to_tech=None,
             assigned_to_vendor=None,
             stuck_hours=None,
@@ -76,6 +77,7 @@ class TestWorkOrdersCLI:
         assert result.exit_code == 0
         mock_fn.assert_called_once_with(
             status=None,
+            status_raw=None,
             assigned_to_tech=57163,
             assigned_to_vendor=99,
             stuck_hours=48.0,
@@ -85,6 +87,47 @@ class TestWorkOrdersCLI:
             include_tech=False,
             limit=25,
         )
+
+    def test_list_with_status_raw_flag(self, runner):
+        with patch("cli_anything.propertymeld.api_backend.list_work_orders",
+                   return_value=MOCK_WO_LIST) as mock_fn:
+            result = runner.invoke(
+                cli,
+                [
+                    "work-orders", "list",
+                    "--status-raw", "MAINTENANCE_COULD_NOT_COMPLETE",
+                    "--assigned-to-tech", "57163",
+                    "--created-since", "2026-05-18T00:00:00Z",
+                    "--status-not", "COMPLETED",
+                ],
+            )
+        assert result.exit_code == 0
+        mock_fn.assert_called_once_with(
+            status=None,
+            status_raw="MAINTENANCE_COULD_NOT_COMPLETE",
+            assigned_to_tech=57163,
+            assigned_to_vendor=None,
+            stuck_hours=None,
+            created_since="2026-05-18T00:00:00Z",
+            status_not="COMPLETED",
+            no_tenant_linked=False,
+            include_tech=False,
+            limit=25,
+        )
+
+    def test_list_rejects_status_and_status_raw_conflict(self, runner):
+        with patch("cli_anything.propertymeld.api_backend.list_work_orders") as mock_fn:
+            result = runner.invoke(
+                cli,
+                [
+                    "work-orders", "list",
+                    "--status", "open",
+                    "--status-raw", "MAINTENANCE_COULD_NOT_COMPLETE",
+                ],
+            )
+        assert result.exit_code != 0
+        assert "--status and --status-raw cannot be combined" in result.output
+        mock_fn.assert_not_called()
 
     def test_list_with_include_tech_flag(self, runner):
         with patch("cli_anything.propertymeld.api_backend.list_work_orders",
