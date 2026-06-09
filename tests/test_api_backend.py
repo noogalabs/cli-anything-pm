@@ -197,6 +197,7 @@ class TestListWorkOrders:
 
     @pytest.mark.parametrize("flag_kwarg,flag_name", [
         ("created_since", "--created-since"),
+        ("status_raw", "--status-raw"),
         ("status_not", "--status-not"),
     ])
     def test_no_tenant_linked_rejects_incompatible_filter_combos(
@@ -282,6 +283,20 @@ class TestListWorkOrders:
         ):
             results = api_backend.list_work_orders(assigned_to_vendor=99, limit=25)
         assert len(results) == 25
+        captured = capsys.readouterr()
+        assert "result may be incomplete" in captured.err
+
+    def test_client_side_filter_warns_when_cap_hit_even_with_sparse_matches(self, capsys):
+        rich_results = [
+            {"id": i, "vendor_assignment_requests": [{"vendor": {"id": 99 if i == 0 else 44}}]}
+            for i in range(100)
+        ]
+        with patch(
+            "cli_anything.propertymeld.http_backend.list_work_orders_rich",
+            return_value=rich_results,
+        ):
+            results = api_backend.list_work_orders(assigned_to_vendor=99, limit=25)
+        assert [r["id"] for r in results] == [0]
         captured = capsys.readouterr()
         assert "result may be incomplete" in captured.err
 
