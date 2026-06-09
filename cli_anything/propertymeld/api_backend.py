@@ -124,6 +124,7 @@ def list_work_orders(
     if needs_cookie_filter:
         incompatible = {
             "--created-since": created_since,
+            "--status-raw": status_raw,
             "--status-not": status_not,
         }
         set_flags = [name for name, val in incompatible.items() if val is not None]
@@ -139,15 +140,14 @@ def list_work_orders(
 
         from . import http_backend
         fetch_limit = max(limit * 4, 100)
-        rich_status = status_raw or status
-        rich = http_backend.list_work_orders_rich(limit=fetch_limit, status=rich_status)
+        rich = http_backend.list_work_orders_rich(limit=fetch_limit, status=status)
         filtered = _filter_work_orders_rich(
             rich,
             assigned_to_vendor=assigned_to_vendor,
             stuck_hours=stuck_hours,
             no_tenant_linked=no_tenant_linked,
         )
-        if len(rich) >= fetch_limit and len(filtered) >= limit:
+        if len(rich) >= fetch_limit:
             print(
                 "Warning: result may be incomplete; cookie list page cap was "
                 "reached before client-side filters exhausted all matches.",
