@@ -147,7 +147,11 @@ def list_work_orders(
             stuck_hours=stuck_hours,
             no_tenant_linked=no_tenant_linked,
         )
-        if len(rich) >= fetch_limit:
+        # list_work_orders_rich currently clamps to one 100-row cookie page, so
+        # fetch_limit values above 100 are aspirational. Warn on the effective
+        # cap; true >100 completeness needs a future _paginate_all-backed path.
+        effective_cap = min(fetch_limit, 100)
+        if len(rich) >= effective_cap:
             print(
                 "Warning: result may be incomplete; cookie list page cap was "
                 "reached before client-side filters exhausted all matches.",
