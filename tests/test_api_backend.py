@@ -300,6 +300,34 @@ class TestListWorkOrders:
         captured = capsys.readouterr()
         assert "result may be incomplete" in captured.err
 
+    def test_client_side_filter_warns_for_limit_above_default_page_cap(self, capsys):
+        rich_results = [
+            {"id": i, "vendor_assignment_requests": [{"vendor": {"id": 99}}]}
+            for i in range(100)
+        ]
+        with patch(
+            "cli_anything.propertymeld.http_backend.list_work_orders_rich",
+            return_value=rich_results,
+        ):
+            results = api_backend.list_work_orders(assigned_to_vendor=99, limit=200)
+        assert len(results) == 100
+        captured = capsys.readouterr()
+        assert "result may be incomplete" in captured.err
+
+    def test_client_side_filter_warns_for_limit_above_cap_with_sparse_matches(self, capsys):
+        rich_results = [
+            {"id": i, "vendor_assignment_requests": [{"vendor": {"id": 99 if i == 0 else 44}}]}
+            for i in range(100)
+        ]
+        with patch(
+            "cli_anything.propertymeld.http_backend.list_work_orders_rich",
+            return_value=rich_results,
+        ):
+            results = api_backend.list_work_orders(assigned_to_vendor=99, limit=200)
+        assert [r["id"] for r in results] == [0]
+        captured = capsys.readouterr()
+        assert "result may be incomplete" in captured.err
+
     def test_rich_filter_predicates_missing_fields_and_stuck_boundary(self):
         now = api_backend.datetime.fromisoformat("2026-06-09T12:00:00+00:00")
         assert api_backend._row_matches_vendor(
