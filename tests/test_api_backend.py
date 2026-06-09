@@ -82,33 +82,51 @@ class TestListWorkOrders:
             results = api_backend.list_work_orders()
         assert results == [{"id": 999}]
 
-    def test_new_filter_flags_are_forwarded_to_query(self):
-        # NOTE: no_tenant_linked moved to a separate test below — that flag now
-        # delegates to http_backend.list_work_orders_rich (cookie-path) rather
-        # than pushing a Nexus query param. PM Nexus server-side predicate was
-        # wrong (used has_registered_tenant=False instead of len(tenants)==0).
-        with patch("urllib.request.urlopen") as mock_open:
-            mock_open.side_effect = [
-                make_response(TOKEN_RESPONSE),
-                make_response({"results": []}),
-            ]
-            api_backend.list_work_orders(
-                assigned_to_tech=90025,
-                assigned_to_vendor=99,
-                stuck_hours=48,
-                created_since="2026-05-18T00:00:00Z",
-                status_not="COMPLETED",
-            )
-        url = mock_open.call_args_list[1][0][0].full_url
-        assert "assigned_to_tech=90025" in url
-        assert "assigned_to_vendor=99" in url
-        assert "stuck_hours=48" in url
-        assert "created_since=2026-05-18T00%3A00%3A00Z" in url
-        assert "status_not=COMPLETED" in url
-        # no_tenant_linked is intentionally NOT pushed as a Nexus query param
-        # anymore — verified by the separate test_no_tenant_linked_delegates_*
-        # tests below.
-        assert "no_tenant_linked" not in url
+    def test_vendor_filter_uses_cookie_rows_not_ignored_nexus_param(self):
+        rich_results = [
+            {"id": 1001, "vendor_assignment_requests": [
+                {"vendor": {"id": 99, "name": "Dyer HVAC"}}
+            ]},
+            {"id": 1002, "vendor_assignment_requests": [
+                {"vendor": {"id": 44, "name": "Other Vendor"}}
+            ]},
+            {"id": 1003, "vendor_assignment_requests": []},
+            {"id": 1004},
+        ]
+        with patch(
+            "cli_anything.propertymeld.http_backend.list_work_orders_rich",
+            return_value=rich_results,
+        ) as mock_rich, patch("urllib.request.urlopen") as mock_open:
+            results = api_backend.list_work_orders(assigned_to_vendor=99, limit=25)
+        assert mock_open.call_count == 0
+        mock_rich.assert_called_once_with(limit=100, status=None)
+        assert [r["id"] for r in results] == [1001]
+
+    def test_stuck_hours_filter_uses_updated_cookie_timestamp(self):
+        rich_results = [
+            {"id": 1001, "updated": "2000-01-01T00:00:00Z"},
+            {"id": 1002, "updated": "2999-01-01T00:00:00Z"},
+        ]
+        with patch(
+            "cli_anything.propertymeld.http_backend.list_work_orders_rich",
+            return_value=rich_results,
+        ) as mock_rich, patch("urllib.request.urlopen") as mock_open:
+            results = api_backend.list_work_orders(stuck_hours=1, limit=25)
+        assert mock_open.call_count == 0
+        mock_rich.assert_called_once_with(limit=100, status=None)
+        assert [r["id"] for r in results] == [1001]
+
+    def test_assigned_to_tech_fails_loud_until_tech_path_is_gated(self, capsys):
+        with patch("urllib.request.urlopen") as mock_open, patch(
+            "cli_anything.propertymeld.http_backend.list_work_orders_rich"
+        ) as mock_rich:
+            with pytest.raises(SystemExit) as exc_info:
+                api_backend.list_work_orders(assigned_to_tech=90025)
+        assert exc_info.value.code == 2
+        assert mock_open.call_count == 0
+        assert mock_rich.call_count == 0
+        captured = capsys.readouterr()
+        assert "--assigned-to-tech is not supported" in captured.err
 
     def test_status_raw_filter_passed_as_raw_status_param(self):
         with patch("urllib.request.urlopen") as mock_open:
@@ -118,13 +136,11 @@ class TestListWorkOrders:
             ]
             api_backend.list_work_orders(
                 status_raw="MAINTENANCE_COULD_NOT_COMPLETE",
-                assigned_to_tech=90025,
                 created_since="2026-05-18T00:00:00Z",
                 status_not="COMPLETED",
             )
         url = mock_open.call_args_list[1][0][0].full_url
         assert "status=MAINTENANCE_COULD_NOT_COMPLETE" in url
-        assert "assigned_to_tech=90025" in url
         assert "created_since=2026-05-18T00%3A00%3A00Z" in url
         assert "status_not=COMPLETED" in url
 
@@ -180,11 +196,7 @@ class TestListWorkOrders:
         assert [r["id"] for r in results] == list(range(10))
 
     @pytest.mark.parametrize("flag_kwarg,flag_name", [
-        ("assigned_to_tech", "--assigned-to-tech"),
-        ("assigned_to_vendor", "--assigned-to-vendor"),
-        ("stuck_hours", "--stuck-hours"),
         ("created_since", "--created-since"),
-        ("status_raw", "--status-raw"),
         ("status_not", "--status-not"),
     ])
     def test_no_tenant_linked_rejects_incompatible_filter_combos(
@@ -211,7 +223,86 @@ class TestListWorkOrders:
         assert mock_rich.call_count == 0
         captured = capsys.readouterr()
         assert flag_name in captured.err
-        assert "no-tenant-linked" in captured.err.lower()
+        assert "cookie list path" in captured.err.lower()
+
+    def test_no_tenant_linked_can_combine_with_vendor_and_stuck_filters(self):
+        rich_results = [
+            {
+                "id": 1001,
+                "tenants": [],
+                "updated": "2000-01-01T00:00:00Z",
+                "vendor_assignment_requests": [{"vendor": {"id": 99}}],
+            },
+            {
+                "id": 1002,
+                "tenants": [{"id": 5}],
+                "updated": "2000-01-01T00:00:00Z",
+                "vendor_assignment_requests": [{"vendor": {"id": 99}}],
+            },
+            {
+                "id": 1003,
+                "tenants": [],
+                "updated": "2000-01-01T00:00:00Z",
+                "vendor_assignment_requests": [{"vendor": {"id": 44}}],
+            },
+        ]
+        with patch(
+            "cli_anything.propertymeld.http_backend.list_work_orders_rich",
+            return_value=rich_results,
+        ), patch("urllib.request.urlopen") as mock_open:
+            results = api_backend.list_work_orders(
+                no_tenant_linked=True,
+                assigned_to_vendor=99,
+                stuck_hours=1,
+                limit=25,
+            )
+        assert mock_open.call_count == 0
+        assert [r["id"] for r in results] == [1001]
+
+    def test_stuck_hours_missing_updated_fails_loud(self, capsys):
+        with patch(
+            "cli_anything.propertymeld.http_backend.list_work_orders_rich",
+            return_value=[{"id": 1001}],
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                api_backend.list_work_orders(stuck_hours=1)
+        assert exc_info.value.code == 2
+        captured = capsys.readouterr()
+        assert "Cannot honor --stuck-hours" in captured.err
+        assert "updated timestamp" in captured.err
+
+    def test_client_side_filter_warns_when_page_cap_may_truncate(self, capsys):
+        rich_results = [
+            {"id": i, "vendor_assignment_requests": [{"vendor": {"id": 99}}]}
+            for i in range(100)
+        ]
+        with patch(
+            "cli_anything.propertymeld.http_backend.list_work_orders_rich",
+            return_value=rich_results,
+        ):
+            results = api_backend.list_work_orders(assigned_to_vendor=99, limit=25)
+        assert len(results) == 25
+        captured = capsys.readouterr()
+        assert "result may be incomplete" in captured.err
+
+    def test_rich_filter_predicates_missing_fields_and_stuck_boundary(self):
+        now = api_backend.datetime.fromisoformat("2026-06-09T12:00:00+00:00")
+        assert api_backend._row_matches_vendor(
+            {"vendor_assignment_requests": [{"vendor": {"id": 99}}]},
+            99,
+        )
+        assert not api_backend._row_matches_vendor({"vendor_assignment_requests": []}, 99)
+        assert not api_backend._row_matches_vendor({}, 99)
+        assert api_backend._row_matches_stuck_hours(
+            {"id": 1001, "updated": "2026-06-09T10:00:00Z"},
+            2,
+            now=now,
+        )
+        assert not api_backend._row_matches_stuck_hours(
+            {"id": 1002, "updated": "2026-06-09T10:30:00Z"},
+            2,
+            now=now,
+        )
 
     def test_include_tech_merges_cookie_assignment_fields(self):
         nexus_response = {

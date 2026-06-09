@@ -13,6 +13,7 @@ import json
 import ssl
 import sys
 import urllib.request
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from .http_backend import _validate_meld_id
@@ -106,49 +107,52 @@ def list_work_orders(
         print_error("--status and --status-raw cannot be combined")
         sys.exit(2)
 
-    # Delegate to cookie-path when we need the tenants[] field that Nexus omits.
-    # The cookie-path /api/melds/ list endpoint does NOT honor the Nexus
-    # query filter set (assigned_to_*, stuck_hours, created_since, status_not).
-    # Silently dropping those filters when --no-tenant-linked is combined with
-    # them returns wrong-meld sets to the caller — a silent-failure-half-ship
-    # per locked rule (feedback_no_silent_failure_half_ships, 2026-05-23).
-    # Reject the combo loudly until v1.1 wires client-side filtering on the
-    # cookie response. AM-sweep case (--no-tenant-linked + status alone) ships
-    # clean; combo callers get a clear error and choose to drop the conflict
-    # or wait for the full-feature fix.
-    #
-    # Over-fetch heuristic: max(limit*4, 100). Sized for typical AM-sweep where
-    # truly-empty melds are ~10-20% of the open list. For atypical workloads
-    # (e.g. limit=500 + low FP ratio) the post-filter can silently truncate
-    # without surfacing 'result may be incomplete'. Switch to _paginate_all in
-    # http_backend.list_work_orders_rich if a real consumer needs accurate
-    # full-corpus filtering past the 100-per-page cap.
-    #
-    # `tenants` field can be a list, None, or missing — truthy-check `not
-    # r.get("tenants")` treats all three as 'no tenant linked' so a malformed
-    # response can't silently slip a real meld past the filter.
-    if no_tenant_linked:
+    if assigned_to_tech is not None:
+        print_error(
+            "--assigned-to-tech is not supported on `work-orders list` yet: "
+            "PM Nexus ignores the list param and Nexus list rows do not expose "
+            "assigned_technicians. Use --include-tech with an unfiltered list "
+            "or wait for the gated detail-fetch/server-param follow-up."
+        )
+        sys.exit(2)
+
+    needs_cookie_filter = (
+        no_tenant_linked
+        or assigned_to_vendor is not None
+        or stuck_hours is not None
+    )
+    if needs_cookie_filter:
         incompatible = {
-            "--assigned-to-tech": assigned_to_tech,
-            "--assigned-to-vendor": assigned_to_vendor,
-            "--stuck-hours": stuck_hours,
             "--created-since": created_since,
-            "--status-raw": status_raw,
             "--status-not": status_not,
         }
         set_flags = [name for name, val in incompatible.items() if val is not None]
         if set_flags:
             print_error(
-                "--no-tenant-linked cannot be combined with "
-                f"{', '.join(set_flags)} yet — the cookie-path delegation "
-                "drops Nexus query params. Drop the conflicting flag(s) or "
-                "use --no-tenant-linked alone (status + limit still apply)."
+                f"{', '.join(set_flags)} cannot be combined with "
+                "--assigned-to-vendor, --stuck-hours, or --no-tenant-linked yet: "
+                "those filters use the cookie list path, which does not honor "
+                "created_since/status_not. Refusing instead of returning a "
+                "partially filtered list."
             )
             sys.exit(2)
 
         from . import http_backend
-        rich = http_backend.list_work_orders_rich(limit=max(limit * 4, 100), status=status)
-        filtered = [r for r in rich if not r.get("tenants")]
+        fetch_limit = max(limit * 4, 100)
+        rich_status = status_raw or status
+        rich = http_backend.list_work_orders_rich(limit=fetch_limit, status=rich_status)
+        filtered = _filter_work_orders_rich(
+            rich,
+            assigned_to_vendor=assigned_to_vendor,
+            stuck_hours=stuck_hours,
+            no_tenant_linked=no_tenant_linked,
+        )
+        if len(rich) >= fetch_limit and len(filtered) >= limit:
+            print(
+                "Warning: result may be incomplete; cookie list page cap was "
+                "reached before client-side filters exhausted all matches.",
+                file=sys.stderr,
+            )
         return filtered[:limit]
 
     results = _list_work_orders_nexus(
@@ -175,6 +179,74 @@ def list_work_orders(
                 _warn_include_tech_unavailable("cookie list returned no rows")
         _merge_assignment_fields(results, rich, detail_fetcher)
     return results
+
+
+def _filter_work_orders_rich(
+    rows: list[dict],
+    *,
+    assigned_to_vendor: Optional[int] = None,
+    stuck_hours: Optional[float] = None,
+    no_tenant_linked: bool = False,
+) -> list[dict]:
+    now = datetime.now(timezone.utc)
+    filtered: list[dict] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if no_tenant_linked and row.get("tenants"):
+            continue
+        if assigned_to_vendor is not None and not _row_matches_vendor(row, assigned_to_vendor):
+            continue
+        if stuck_hours is not None and not _row_matches_stuck_hours(row, stuck_hours, now=now):
+            continue
+        filtered.append(row)
+    return filtered
+
+
+def _row_matches_vendor(row: dict, vendor_id: int) -> bool:
+    requests = row.get("vendor_assignment_requests") or []
+    if not isinstance(requests, list):
+        return False
+    for request in requests:
+        if not isinstance(request, dict):
+            continue
+        vendor = request.get("vendor") or {}
+        if isinstance(vendor, dict) and str(vendor.get("id")) == str(vendor_id):
+            return True
+    return False
+
+
+def _parse_pm_datetime(value: Any) -> datetime:
+    if not value:
+        raise ValueError("missing timestamp")
+    if not isinstance(value, str):
+        raise ValueError(f"timestamp is not a string: {type(value).__name__}")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"invalid timestamp {value!r}") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _row_matches_stuck_hours(row: dict, stuck_hours: float, *, now: datetime) -> bool:
+    """Return true when a meld has had no activity for at least stuck_hours.
+
+    Blue's 2026-06-09 probe confirmed cookie list rows expose `updated` and
+    the legacy Nexus `stuck_hours` param is ignored. We therefore define this
+    filter as "no activity in N hours" using the row's `updated` timestamp.
+    """
+    try:
+        updated = _parse_pm_datetime(row.get("updated"))
+    except ValueError as exc:
+        print_error(
+            "Cannot honor --stuck-hours: cookie row is missing a valid updated "
+            f"timestamp for meld {row.get('id')}: {exc}"
+        )
+        sys.exit(2)
+    age_hours = (now.astimezone(timezone.utc) - updated).total_seconds() / 3600
+    return age_hours >= stuck_hours
 
 
 def _list_work_orders_nexus(
