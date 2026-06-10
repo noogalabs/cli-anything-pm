@@ -64,6 +64,17 @@ def _api_get(path: str, params: Optional[dict] = None) -> Any:
         sys.exit(1)
 
 
+def _next_api_v2_path(raw_next: Any) -> Optional[str]:
+    """Return an /api/v2-relative path from a DRF next URL."""
+    if not raw_next:
+        return None
+    if not isinstance(raw_next, str):
+        return None
+    if "/api/v2" not in raw_next:
+        return None
+    return raw_next.split("/api/v2", 1)[1]
+
+
 def list_work_orders(
     status: Optional[str] = None,
     status_raw: Optional[str] = None,
@@ -264,7 +275,8 @@ def _list_work_orders_nexus(
     limit: int = 25,
 ) -> list:
     """List work orders through Nexus only."""
-    params: list[tuple[str, str]] = [("limit", str(limit))]
+    page_size = max(1, min(limit, 100))
+    params: list[tuple[str, str]] = [("limit", str(page_size))]
     if status:
         slug_to_states = {
             "open": [
@@ -292,9 +304,20 @@ def _list_work_orders_nexus(
     if status_not:
         params.append(("status_not", status_not))
 
-    data = _api_get("/meld/", params)
-    results = data.get("results", data) if isinstance(data, dict) else data
-    return results
+    results: list = []
+    next_path: Optional[str] = "/meld/"
+    next_params: Optional[list[tuple[str, str]]] = params
+    while next_path and len(results) < limit:
+        data = _api_get(next_path, next_params)
+        page_items = data.get("results", data) if isinstance(data, dict) else data
+        if not isinstance(page_items, list):
+            return []
+        results.extend(page_items)
+        if not isinstance(data, dict):
+            break
+        next_path = _next_api_v2_path(data.get("next"))
+        next_params = None
+    return results[:limit]
 
 
 _ASSIGNMENT_FIELDS = (
@@ -387,8 +410,9 @@ def _paginate_until(path: str, limit: int) -> list:
         raw_next = data.get("next")
         if not raw_next:
             break
-        if "/api/v2" in raw_next:
-            next_path = raw_next.split("/api/v2", 1)[1]
+        parsed_next = _next_api_v2_path(raw_next)
+        if parsed_next:
+            next_path = parsed_next
             params = None  # the `next` URL already has limit + cursor baked in
         else:
             break

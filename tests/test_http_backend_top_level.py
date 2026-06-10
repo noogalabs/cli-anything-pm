@@ -110,6 +110,133 @@ class TestDeleteProject:
         assert result == {"ok": True, "project_id": 222964, "deleted": True}
 
 
+class TestListProjects:
+    def test_unscoped_projects_paginate_next_until_limit(self, monkeypatch):
+        _patch_creds_csrf(monkeypatch)
+        calls = []
+        pages = {
+            "projects/?limit=3": {
+                "results": [{"id": 222001}, {"id": 222002}],
+                "next": "https://app.propertymeld.test/3287/m/3287/api/projects/?cursor=abc&limit=100",
+            },
+            "projects/?cursor=abc&limit=100": {
+                "results": [{"id": 222003}],
+                "next": None,
+            },
+        }
+
+        def fake_http_get(path, cookie_hdr):
+            calls.append(path)
+            return pages[path]
+
+        monkeypatch.setattr(hb, "_http_get", fake_http_get)
+        result = hb.list_projects(limit=3)
+
+        assert [r["id"] for r in result] == [222001, 222002, 222003]
+        assert calls == [
+            "projects/?limit=3",
+            "projects/?cursor=abc&limit=100",
+        ]
+
+    def test_unscoped_projects_stops_fetching_once_limit_collected(self, monkeypatch):
+        _patch_creds_csrf(monkeypatch)
+        calls = []
+        pages = {
+            "projects/?limit=100": {
+                "results": [{"id": i} for i in range(1000, 1100)],
+                "next": "https://app.propertymeld.test/3287/m/3287/api/projects/?cursor=page2&limit=100",
+            },
+            "projects/?cursor=page2&limit=100": {
+                "results": [{"id": i} for i in range(1100, 1200)],
+                "next": "https://app.propertymeld.test/3287/m/3287/api/projects/?cursor=page3&limit=100",
+            },
+            "projects/?cursor=page3&limit=100": {
+                "results": [{"id": i} for i in range(1200, 1300)],
+                "next": None,
+            },
+        }
+
+        def fake_http_get(path, cookie_hdr):
+            calls.append(path)
+            return pages[path]
+
+        monkeypatch.setattr(hb, "_http_get", fake_http_get)
+        result = hb.list_projects(limit=150)
+
+        assert len(result) == 150
+        assert [r["id"] for r in result[:2]] == [1000, 1001]
+        assert calls == [
+            "projects/?limit=100",
+            "projects/?cursor=page2&limit=100",
+        ]
+
+    def test_paginate_all_without_stop_at_keeps_fetch_all_contract(self, monkeypatch):
+        _patch_creds_csrf(monkeypatch)
+        calls = []
+        pages = {
+            "vendors/?limit=100": {
+                "results": [{"id": 1}],
+                "next": "https://app.propertymeld.test/3287/m/3287/api/vendors/?cursor=page2&limit=100",
+            },
+            "vendors/?cursor=page2&limit=100": {
+                "results": [{"id": 2}],
+                "next": None,
+            },
+        }
+
+        def fake_http_get(path, cookie_hdr):
+            calls.append(path)
+            return pages[path]
+
+        monkeypatch.setattr(hb, "_http_get", fake_http_get)
+        result = hb._paginate_all("vendors/?limit=100", "sessionid=fake")
+
+        assert [r["id"] for r in result] == [1, 2]
+        assert calls == [
+            "vendors/?limit=100",
+            "vendors/?cursor=page2&limit=100",
+        ]
+
+    def test_unscoped_projects_limit_zero_fetches_all(self, monkeypatch):
+        _patch_creds_csrf(monkeypatch)
+        calls = []
+        pages = {
+            "projects/?limit=100": {
+                "results": [{"id": 1}],
+                "next": "https://app.propertymeld.test/3287/m/3287/api/projects/?cursor=page2&limit=100",
+            },
+            "projects/?cursor=page2&limit=100": {
+                "results": [{"id": 2}],
+                "next": None,
+            },
+        }
+
+        def fake_http_get(path, cookie_hdr):
+            calls.append(path)
+            return pages[path]
+
+        monkeypatch.setattr(hb, "_http_get", fake_http_get)
+        result = hb.list_projects(limit=0)
+
+        assert [r["id"] for r in result] == [1, 2]
+        assert calls == [
+            "projects/?limit=100",
+            "projects/?cursor=page2&limit=100",
+        ]
+
+    def test_meld_scoped_projects_preserve_existing_path(self, monkeypatch):
+        _patch_creds_csrf(monkeypatch)
+        calls = []
+
+        def fake_http_get(path, cookie_hdr):
+            calls.append(path)
+            return {"results": [{"id": 222001}]}
+
+        monkeypatch.setattr(hb, "_http_get", fake_http_get)
+        assert hb.list_projects(meld_id="12701108") == [{"id": 222001}]
+        assert calls == ["melds/12701108/projects/"]
+
+
 class TestHoldMeldInvoice:
     def test_uses_hold_subpath_with_reason(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
