@@ -1270,16 +1270,30 @@ class TestP2GapCLICommands:
     def test_delete_file_calls_backend(self, runner):
         with patch("cli_anything.propertymeld.http_backend.delete_meld_file",
                    return_value={"ok": True, "file_id": 20254356, "deleted": True}) as mock_fn:
-            result = runner.invoke(cli, ["work-orders", "delete-file", "20254356"])
+            result = runner.invoke(cli, ["work-orders", "delete-file", "20254356", "--force"])
         assert result.exit_code == 0
         mock_fn.assert_called_once_with(20254356)
+
+    def test_delete_file_without_force_in_no_tty_aborts(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.delete_meld_file") as mock_fn:
+            result = runner.invoke(cli, ["work-orders", "delete-file", "20254356"])
+        assert result.exit_code != 0
+        assert "requires --force" in result.output
+        mock_fn.assert_not_called()
 
     def test_delete_project_calls_backend(self, runner):
         with patch("cli_anything.propertymeld.http_backend.delete_project",
                    return_value={"ok": True, "project_id": 222964, "deleted": True}) as mock_fn:
-            result = runner.invoke(cli, ["projects", "delete", "222964"])
+            result = runner.invoke(cli, ["projects", "delete", "222964", "--force"])
         assert result.exit_code == 0
         mock_fn.assert_called_once_with(222964)
+
+    def test_delete_project_without_force_in_no_tty_aborts(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.delete_project") as mock_fn:
+            result = runner.invoke(cli, ["projects", "delete", "222964"])
+        assert result.exit_code != 0
+        assert "requires --force" in result.output
+        mock_fn.assert_not_called()
 
 
 class TestUnitsPerson003NotesCLI:

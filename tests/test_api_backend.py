@@ -72,6 +72,30 @@ class TestListWorkOrders:
         assert "status=PENDING_VENDOR" in url
         assert "status=PENDING_MORE_MANAGEMENT_AVAILABILITY" in url
 
+    def test_work_orders_paginates_nexus_next_until_limit(self):
+        first_page = {
+            "count": 101,
+            "next": "https://nexus.propertymeld.test/api/v2/meld/?cursor=abc&limit=100",
+            "results": [{"id": i} for i in range(1000, 1100)],
+        }
+        second_page = {
+            "count": 101,
+            "next": None,
+            "results": [{"id": 1100}],
+        }
+        with patch("urllib.request.urlopen") as mock_open:
+            mock_open.side_effect = [
+                make_response(TOKEN_RESPONSE),
+                make_response(first_page),
+                make_response(second_page),
+            ]
+            results = api_backend.list_work_orders(limit=150)
+
+        assert [r["id"] for r in results] == list(range(1000, 1101))
+        urls = [c.args[0].full_url for c in mock_open.call_args_list]
+        assert "limit=100" in urls[1]
+        assert urls[2].endswith("/api/v2/meld/?cursor=abc&limit=100")
+
     def test_handles_flat_list_response(self):
         """Some endpoints return a flat list, not {results: [...]}."""
         with patch("urllib.request.urlopen") as mock_open:

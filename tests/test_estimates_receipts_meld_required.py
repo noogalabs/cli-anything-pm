@@ -64,6 +64,92 @@ class TestListEstimatesMeldRequired:
         hb.list_estimates(meld_id="90000014", limit=25, status="issued")
         assert captured["path"] == "estimates/meld/90000014/?limit=25&status=issued"
 
+    def test_meld_scoped_paginates_next_until_limit(self, monkeypatch):
+        _patch_creds(monkeypatch)
+        calls = []
+        pages = {
+            "estimates/meld/90000014/?limit=3": {
+                "results": [{"id": 9001}, {"id": 9002}],
+                "next": "https://app.propertymeld.test/3287/m/3287/api/estimates/meld/90000014/?cursor=abc&limit=100",
+            },
+            "estimates/meld/90000014/?cursor=abc&limit=100": {
+                "results": [{"id": 9003}],
+                "next": None,
+            },
+        }
+
+        def fake_http_get(path, cookie_hdr):
+            calls.append(path)
+            return pages[path]
+
+        monkeypatch.setattr(hb, "_http_get", fake_http_get)
+        result = hb.list_estimates(meld_id="90000014", limit=3)
+
+        assert [r["id"] for r in result] == [9001, 9002, 9003]
+        assert calls == [
+            "estimates/meld/90000014/?limit=3",
+            "estimates/meld/90000014/?cursor=abc&limit=100",
+        ]
+
+    def test_meld_scoped_stops_fetching_once_limit_collected(self, monkeypatch):
+        _patch_creds(monkeypatch)
+        calls = []
+        pages = {
+            "estimates/meld/90000014/?limit=100": {
+                "results": [{"id": i} for i in range(9000, 9100)],
+                "next": "https://app.propertymeld.test/3287/m/3287/api/estimates/meld/90000014/?cursor=page2&limit=100",
+            },
+            "estimates/meld/90000014/?cursor=page2&limit=100": {
+                "results": [{"id": i} for i in range(9100, 9200)],
+                "next": "https://app.propertymeld.test/3287/m/3287/api/estimates/meld/90000014/?cursor=page3&limit=100",
+            },
+            "estimates/meld/90000014/?cursor=page3&limit=100": {
+                "results": [{"id": i} for i in range(9200, 9300)],
+                "next": None,
+            },
+        }
+
+        def fake_http_get(path, cookie_hdr):
+            calls.append(path)
+            return pages[path]
+
+        monkeypatch.setattr(hb, "_http_get", fake_http_get)
+        result = hb.list_estimates(meld_id="90000014", limit=150)
+
+        assert len(result) == 150
+        assert [r["id"] for r in result[:2]] == [9000, 9001]
+        assert calls == [
+            "estimates/meld/90000014/?limit=100",
+            "estimates/meld/90000014/?cursor=page2&limit=100",
+        ]
+
+    def test_meld_scoped_limit_zero_fetches_all(self, monkeypatch):
+        _patch_creds(monkeypatch)
+        calls = []
+        pages = {
+            "estimates/meld/90000014/?limit=100": {
+                "results": [{"id": 1}],
+                "next": "https://app.propertymeld.test/3287/m/3287/api/estimates/meld/90000014/?cursor=page2&limit=100",
+            },
+            "estimates/meld/90000014/?cursor=page2&limit=100": {
+                "results": [{"id": 2}],
+                "next": None,
+            },
+        }
+
+        def fake_http_get(path, cookie_hdr):
+            calls.append(path)
+            return pages[path]
+
+        monkeypatch.setattr(hb, "_http_get", fake_http_get)
+        result = hb.list_estimates(meld_id="90000014", limit=0)
+
+        assert [r["id"] for r in result] == [1, 2]
+        assert calls == [
+            "estimates/meld/90000014/?limit=100",
+            "estimates/meld/90000014/?cursor=page2&limit=100",
+        ]
+
 
 class TestListReceiptsMeldRequired:
     def test_raises_valueerror_when_meld_id_missing(self, monkeypatch):
@@ -105,6 +191,18 @@ class TestListReceiptsMeldRequired:
         # Bare list form
         monkeypatch.setattr(hb, "_http_get", lambda p, h: [{"id": 3}])
         assert hb.list_receipts(meld_id="100") == [{"id": 3}]
+
+
+class TestUpdateEstimateNoOp:
+    def test_update_estimate_no_fields_fails_before_http(self, monkeypatch):
+        called = []
+        monkeypatch.setattr(hb, "_load_creds", lambda: called.append("_load_creds"))
+
+        result = hb.update_estimate("9001")
+
+        assert result["ok"] is False
+        assert "no fields" in result["error"].lower()
+        assert called == []
 
 
 class TestEstimatesListCliRequiresMeld:
