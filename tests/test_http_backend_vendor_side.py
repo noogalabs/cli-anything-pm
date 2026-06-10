@@ -103,6 +103,7 @@ class TestVendorSetSchedule:
         hb.vendor_set_schedule(
             "91159", 8559205,
             new_segments=[("2026-05-17T14:00:00.000Z", "2026-05-17T16:00:00.000Z")],
+            segments_to_keep=[],
         )
         assert "/v/91159/" in cap["url"]
         assert "/assignments/8559205/segments/" in cap["url"]
@@ -114,19 +115,29 @@ class TestVendorSetSchedule:
         assert body["new_segments"][0]["event"]["_cid"] == "event_0"
         assert body["appointments_required"] == 1
 
+    def test_requires_explicit_segments_to_keep(self, monkeypatch):
+        _patch_creds_csrf(monkeypatch)
+        _capture_urlopen(monkeypatch)
+        with pytest.raises(ValueError, match="segments_to_keep is required"):
+            hb.vendor_set_schedule(
+                "91159", 8559205,
+                new_segments=[("2026-05-17T14:00:00.000Z", "2026-05-17T16:00:00.000Z")],
+            )
+
     def test_accepts_fully_formed_segments(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch)
         seg = {"event": {"dtstart": "a", "dtend": "b", "type": "default", "_cid": "event_3"}}
-        hb.vendor_set_schedule("91159", 8559205, new_segments=[seg])
+        hb.vendor_set_schedule("91159", 8559205, new_segments=[seg], segments_to_keep=[123])
         body = json.loads(cap["body"])
+        assert body["segments_to_keep"] == [123]
         assert body["new_segments"] == [seg]
 
     def test_rejects_bad_segment(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
         _capture_urlopen(monkeypatch)
         with pytest.raises(ValueError, match="Unsupported segment shape"):
-            hb.vendor_set_schedule("91159", 8559205, new_segments=["bad"])
+            hb.vendor_set_schedule("91159", 8559205, new_segments=["bad"], segments_to_keep=[])
 
 
 class TestVendorCreateInvoice:

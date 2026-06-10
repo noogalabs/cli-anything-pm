@@ -53,6 +53,22 @@ def _require_nonempty(ctx, param, value):
     return value
 
 
+def _require_force_for_delete(force: bool, *, label: str, object_id) -> None:
+    """Fail closed before destructive deletes in non-interactive contexts."""
+    if force:
+        return
+    if not sys.stdin.isatty():
+        output_json({
+            "ok": False,
+            "error": f"{label} delete requires --force in non-interactive context",
+            "id": object_id,
+        })
+    click.confirm(
+        f"Delete {label} {object_id}? This is irreversible.",
+        abort=True,
+    )
+
+
 @work_orders.command("list")
 @click.option("--status", default=None,
               type=click.Choice(["open", "pending", "completed", "canceled"], case_sensitive=False),
@@ -1223,9 +1239,12 @@ def detach_meld_cmd(meld_id, as_json):
 
 @projects.command("delete")
 @click.argument("project_id", type=int)
+@click.option("--force", is_flag=True, default=False,
+              help="Skip the interactive confirm prompt (required in no-TTY contexts).")
 @click.option("--json", "as_json", is_flag=True, default=True)
-def delete_project_cmd(project_id, as_json):
+def delete_project_cmd(project_id, force, as_json):
     """Delete a project by id."""
+    _require_force_for_delete(force, label="project", object_id=project_id)
     result = http_backend.delete_project(project_id)
     output_json(result)
 
@@ -1264,9 +1283,12 @@ def invoice_decline_cmd(invoice_id, reason, as_json):
 
 @work_orders.command("delete-file")
 @click.argument("file_id", type=int)
+@click.option("--force", is_flag=True, default=False,
+              help="Skip the interactive confirm prompt (required in no-TTY contexts).")
 @click.option("--json", "as_json", is_flag=True, default=True)
-def delete_file_cmd(file_id, as_json):
+def delete_file_cmd(file_id, force, as_json):
     """Delete a manager-uploaded work-order file by id."""
+    _require_force_for_delete(force, label="work-order file", object_id=file_id)
     result = http_backend.delete_meld_file(file_id)
     output_json(result)
 

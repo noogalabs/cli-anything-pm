@@ -440,7 +440,7 @@ def _http_get_no_exit(path: str, cookie_hdr: str, *, side: str = "manager", vend
         return normalize_http_error(e.code, body)
 
 
-def _paginate_all(path: str, cookie_hdr: str, max_pages: int = 50) -> list:
+def _paginate_all(path: str, cookie_hdr: str, max_pages: int = 50, stop_at: Optional[int] = None) -> list:
     """Walk the DRF `next` link chain and concatenate `results` arrays.
 
     Many cookie-API list endpoints return at most 100 items per page (and
@@ -452,6 +452,8 @@ def _paginate_all(path: str, cookie_hdr: str, max_pages: int = 50) -> list:
 
     `max_pages` is a defensive cap to prevent runaway pagination on a
     misconfigured endpoint; raise it if a real list legitimately exceeds it.
+    `stop_at` preserves the "all rows" default but lets user-facing bounded
+    list commands stop fetching once enough rows have been collected.
     """
     results: list = []
     pages = 0
@@ -463,6 +465,9 @@ def _paginate_all(path: str, cookie_hdr: str, max_pages: int = 50) -> list:
             page_items = page.get("results")
             if isinstance(page_items, list):
                 results.extend(page_items)
+                if stop_at is not None and len(results) >= stop_at:
+                    next_path = None
+                    continue
             else:
                 # Non-paginated dict — return whatever it gave us
                 return page_items if isinstance(page_items, list) else []
@@ -1424,7 +1429,9 @@ def vendor_set_schedule(
             event.dtstart, event.dtend, event.type, event._cid. Helper
             accepts either fully-formed segments or simplified
             (dtstart, dtend) tuples/dicts and normalizes.
-        segments_to_keep: Existing segment IDs to retain (default empty).
+        segments_to_keep: Existing segment IDs to retain. Must be supplied
+            explicitly; pass [] only after the caller has verified there are no
+            existing segments to preserve.
         mark_scheduled: PM flag — leave False unless echoing the web UI.
         appointments_required: Number of appointment windows needed (default 1).
     """
@@ -1432,6 +1439,12 @@ def vendor_set_schedule(
         raise ValueError("vendor_id is required")
     vendor_id = str(vendor_id)
     assignment_id = int(assignment_id)
+    if segments_to_keep is None:
+        raise ValueError(
+            "segments_to_keep is required for vendor_set_schedule; "
+            "pass existing segment ids to preserve, or [] only after probing "
+            "that no existing segments would be replaced."
+        )
 
     def _normalize_segment(seg, idx: int) -> dict:
         if isinstance(seg, dict) and "event" in seg:
@@ -1449,7 +1462,7 @@ def vendor_set_schedule(
         raise ValueError(f"Unsupported segment shape at index {idx}: {seg!r}")
 
     payload = {
-        "segments_to_keep": segments_to_keep or [],
+        "segments_to_keep": segments_to_keep,
         "new_segments": [_normalize_segment(s, i) for i, s in enumerate(new_segments)],
         "mark_scheduled": mark_scheduled,
         "appointments_required": appointments_required,
@@ -2534,9 +2547,13 @@ def list_projects(meld_id: Optional[str] = None, limit: int = 100) -> list:
         meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
-    path = f"melds/{meld_id}/projects/" if meld_id else f"projects/?limit={limit}"
-    data = _http_get(path, cookie_hdr)
-    return data.get("results", data) if isinstance(data, dict) else data
+    if meld_id:
+        data = _http_get(f"melds/{meld_id}/projects/", cookie_hdr)
+        return data.get("results", data) if isinstance(data, dict) else data
+    stop_at = limit if limit > 0 else None
+    page_limit = min(limit, 100) if limit > 0 else 100
+    results = _paginate_all(f"projects/?limit={page_limit}", cookie_hdr, stop_at=stop_at)
+    return results[:limit] if limit > 0 else results
 
 
 @with_recapture_retry
@@ -3480,11 +3497,13 @@ def list_estimates(meld_id: Optional[str] = None, limit: int = 100, status: Opti
     meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
-    path = f"estimates/meld/{meld_id}/?limit={limit}"
+    page_limit = min(limit, 100) if limit > 0 else 100
+    path = f"estimates/meld/{meld_id}/?limit={page_limit}"
     if status:
-        path += f"&status={status}"
-    data = _http_get(path, cookie_hdr)
-    return data.get("results", data) if isinstance(data, dict) else data
+        path += "&" + urllib.parse.urlencode({"status": status})
+    stop_at = limit if limit > 0 else None
+    results = _paginate_all(path, cookie_hdr, stop_at=stop_at)
+    return results[:limit] if limit > 0 else results
 
 
 @with_recapture_retry
@@ -3519,9 +3538,6 @@ def create_estimate(meld_id: str, estimate_number: str, amount: str, description
 @with_recapture_retry
 def update_estimate(estimate_id: str, estimate_number: Optional[str] = None, amount: Optional[str] = None, description: Optional[str] = None, status: Optional[str] = None) -> dict:
     """Update an invoice."""
-    creds = _load_creds()
-    cookie_hdr = _cookie_header(creds)
-    csrf_token = _get_csrf_token(cookie_hdr)
     payload = {}
     if estimate_number:
         payload["estimate_number"] = estimate_number
@@ -3531,6 +3547,11 @@ def update_estimate(estimate_id: str, estimate_number: Optional[str] = None, amo
         payload["description"] = description
     if status:
         payload["status"] = status
+    if not payload:
+        return {"ok": False, "error": "no fields to update", "estimate_id": estimate_id}
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+    csrf_token = _get_csrf_token(cookie_hdr)
     result = _http_patch(f"estimates/{estimate_id}/", payload, cookie_hdr, csrf_token)
     return {"ok": True, "estimate_id": estimate_id, "result": result}
 
