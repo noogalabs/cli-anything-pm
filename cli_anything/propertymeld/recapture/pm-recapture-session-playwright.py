@@ -22,7 +22,7 @@ MFA
 ---
 Default (headless/auto) mode FAILS FAST on an MFA challenge: it exits 2 with
 ``{"error": "mfa_required"}`` so the agent routes to the manual relay. It does
-not block, because the auto caller kills the subprocess at 120s while the relay
+not block, because the auto caller kills the subprocess at 180s while the relay
 waits up to 360s. The opt-in ``--mfa-relay`` mode runs the file-poll relay
 (agent drops David's relayed SMS code into PM_MFA_CODE_FILE) for the manual,
 human-in-the-loop path.
@@ -228,6 +228,33 @@ def _has_login_error(page) -> bool:
         return False
 
 
+def _login_form_present(page) -> bool:
+    """A password field still present after submit => we never left the login form.
+
+    Broadens auth-fail detection beyond the error-banner selector: wrong creds
+    that leave the user on /login WITHOUT a recognized banner would otherwise be
+    misclassified as a transient render flake and retried — and rapid re-login is
+    exactly what trips PM bot-detection. If the password field is still here after
+    a submit + post-submit timeout, treat it as a genuine auth failure (no retry).
+    """
+    try:
+        return page.query_selector(PASSWORD_SEL) is not None
+    except Exception:
+        return False
+
+
+def _handle_mfa(page, mfa_relay: bool) -> None:
+    """Route a detected MFA challenge: relay-fill it (manual path), or fast-fail.
+
+    Shared by both detection sites — the still-on-/login timeout branch and the
+    non-/login URL-shape hedge — so they route identically.
+    """
+    if mfa_relay:
+        _do_mfa_relay(page)  # fills the code, submits; raises on failure
+    else:
+        raise MfaRequired(f"MFA challenge at {page.url[:80]}")
+
+
 def _do_login(page, context, email: str, password: str, mfa_relay: bool) -> list:
     """One login attempt. Raises MfaRequired / _AuthFailed / _TransientRenderError."""
     from playwright.sync_api import TimeoutError as PWTimeout
@@ -249,17 +276,29 @@ def _do_login(page, context, email: str, password: str, mfa_relay: bool) -> list
     try:
         page.wait_for_url(lambda url: "/login" not in url, timeout=POST_SUBMIT_TIMEOUT_MS)
     except PWTimeout:
-        # Still on /login after submit. Three possibilities, in priority order:
+        # Still on /login after submit. Possibilities, in priority order:
         if _page_has_otp(page):
-            if mfa_relay:
-                _do_mfa_relay(page)  # fills the code, submits; raises on failure
-            else:
-                raise MfaRequired(f"MFA challenge at {page.url[:80]}")
-        elif _has_login_error(page):
-            raise _AuthFailed("login rejected (error banner shown — check credentials)")
+            _handle_mfa(page, mfa_relay)
+        elif _has_login_error(page) or _login_form_present(page):
+            # Explicit error banner, OR the login form is still sitting there
+            # (submit did not advance us) => genuine auth failure. NOT retried —
+            # rapid re-login is what trips bot-detection.
+            raise _AuthFailed(
+                "login did not advance past /login (error banner or login form still present "
+                "— check credentials)"
+            )
         else:
-            # No OTP, no explicit error: treat as a transient render flake (retry).
+            # No OTP, no error, no login form: a genuine transient render flake (retry).
             raise _TransientRenderError(f"did not advance past /login (url={page.url[:80]})")
+
+    # URL-shape hedge: PM may serve the MFA/verify challenge on a NON-/login URL
+    # (so wait_for_url above "succeeded" off /login but we are not actually in).
+    # Re-check for an OTP field HERE — after the URL transition but BEFORE the
+    # app-host nav / cookie extraction, because navigating away would lose the
+    # challenge page. Making MFA detection robust to the challenge's URL shape
+    # directly hardens the limited-shot live validation.
+    if _page_has_otp(page):
+        _handle_mfa(page, mfa_relay)
 
     # Ensure we land on the app host so all session cookies are set.
     if APP_HOST not in page.url:

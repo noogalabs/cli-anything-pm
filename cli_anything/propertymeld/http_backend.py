@@ -168,6 +168,21 @@ def _cookie_header(creds: dict) -> str:
     return "; ".join(parts)
 
 
+# Positive WRITE-session marker: the authenticated manager page carries
+# ``window.PM.csrf_token`` — the exact token writes need (see _get_csrf_token).
+# A login / MFA / interstitial page lacks it, so REQUIRING it is what closes the
+# false-valid-on-HTTP-200 hole.
+_WRITE_SESSION_CSRF_RE = re.compile(r"window\.PM\.csrf_token\s*=\s*[\"']([\w-]+)[\"']")
+# Belt: a login or MFA form in the body means we were bounced to an auth page
+# served as a 200 (no redirect). Reject it even on the off chance the csrf marker
+# co-occurs.
+_LOGIN_OR_MFA_FORM_RE = re.compile(
+    r"""type=["']password["']|name=["']password["']"""
+    r"""|autocomplete=["']one-time-code["']|name=["'](?:otp|code|token)["']""",
+    re.IGNORECASE,
+)
+
+
 def session_cookie_valid(timeout: int = 15) -> bool:
     """Validate the UI session COOKIE against the manager WRITE surface.
 
@@ -175,13 +190,19 @@ def session_cookie_valid(timeout: int = 15) -> bool:
     validates the Nexus API TOKEN (the READ path). A write-only outage — API/read
     up, UI cookie stale — is invisible to the token probe but caught here: we
     issue a non-mutating GET to the same ``/m/`` manager surface that writes use
-    (modeled on ``_get_csrf_token``'s GET to ``{BASE}/melds/``) and treat anything
-    other than an authenticated 200 as invalid.
+    (modeled on ``_get_csrf_token``'s GET to ``{BASE}/melds/``).
+
+    A 200 status is NOT sufficient: PM serves the login / MFA / interstitial page
+    as an HTTP **200 with no redirect**, so a status-only check would FALSE-VALID
+    on a stale session and skip recapture — re-introducing the exact write-blind
+    no-op this fix exists to kill. So we also READ THE BODY and require the
+    positive write marker ``window.PM.csrf_token`` (what writes actually need),
+    and reject any login/MFA form.
 
     FAIL-CLOSED by design: a missing creds file, empty cookie header, 401/403,
-    redirect to ``/login``, or any network/parse error all return ``False`` so a
-    caller proceeds to recapture rather than skipping it on a stale cookie. This
-    helper never raises and never calls ``sys.exit`` — it is safe to gate on.
+    redirect to ``/login``, a 200 that lacks the write marker (or shows a login/
+    MFA form), or any network/parse error all return ``False`` so a caller
+    proceeds to recapture. This helper never raises and never calls ``sys.exit``.
     """
     if not os.path.exists(CREDS_PATH):
         return False
@@ -205,12 +226,20 @@ def session_cookie_valid(timeout: int = 15) -> bool:
             # 200 alone is not proof — the final URL must still be inside the app.
             if "/login" in resp.geturl():
                 return False
-            return resp.status == 200
+            if resp.status != 200:
+                return False
+            body = resp.read().decode("utf-8", errors="ignore")
     except urllib.error.HTTPError:
         # 401/403 (and anything else) => not a usable write session.
         return False
     except Exception:
         return False
+
+    # Body inspection (the load-bearing fail-closed check): reject a login/MFA
+    # form served as 200, and REQUIRE the positive write-session marker.
+    if _LOGIN_OR_MFA_FORM_RE.search(body):
+        return False
+    return bool(_WRITE_SESSION_CSRF_RE.search(body))
 
 
 def _get_csrf_token(cookie_hdr: str) -> str:

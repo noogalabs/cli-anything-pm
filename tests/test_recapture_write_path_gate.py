@@ -295,7 +295,16 @@ def test_attempt_recapture_passes_force(monkeypatch):
     assert argv[1] == hb._RECAPTURE_SCRIPT
 
 
-# ── session_cookie_valid is fail-closed ──────────────────────────────────────
+# ── session_cookie_valid is fail-closed (incl. the 200-body false-valid hole) ──
+
+# A real authenticated manager page carries the window.PM.csrf_token marker.
+_MANAGER_BODY = '<html><head><script>window.PM.csrf_token = "abc123DEF-456";</script></head><body>melds</body></html>'
+# A login page served as a 200 with NO redirect — the false-valid trap.
+_LOGIN_200_BODY = '<html><body><form><input type="email" name="email"><input type="password" name="password"><button type="submit">Log in</button></form></body></html>'
+# An MFA challenge served as a 200.
+_MFA_200_BODY = '<html><body><input autocomplete="one-time-code" name="otp"></body></html>'
+MANAGER_URL = "https://app.propertymeld.com/3287/m/3287/melds/"
+
 
 def _seed_creds(path):
     with open(path, "w") as f:
@@ -305,59 +314,140 @@ def _seed_creds(path):
         )
 
 
-def test_session_cookie_valid_false_on_401(tmp_path, monkeypatch):
+def _fake_resp(status=200, url=MANAGER_URL, body=""):
+    class _Resp:
+        def __init__(self):
+            self.status = status
+        def geturl(self):
+            return url
+        def read(self):
+            return body.encode("utf-8")
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+    return _Resp()
+
+
+def _probe(monkeypatch, tmp_path, resp_or_exc):
     path = str(tmp_path / "c.json")
     _seed_creds(path)
     monkeypatch.setattr(hb, "CREDS_PATH", path)
-    err = urllib.error.HTTPError("https://app.propertymeld.com", 401, "Unauthorized", {}, None)
-    monkeypatch.setattr(hb.urllib.request, "urlopen", mock.Mock(side_effect=err))
+    if isinstance(resp_or_exc, Exception):
+        monkeypatch.setattr(hb.urllib.request, "urlopen", mock.Mock(side_effect=resp_or_exc))
+    else:
+        monkeypatch.setattr(hb.urllib.request, "urlopen", mock.Mock(return_value=resp_or_exc))
+
+
+def test_session_cookie_valid_false_on_401(tmp_path, monkeypatch):
+    _probe(monkeypatch, tmp_path, urllib.error.HTTPError("u", 401, "Unauthorized", {}, None))
     assert hb.session_cookie_valid() is False
 
 
 def test_session_cookie_valid_false_on_network_error(tmp_path, monkeypatch):
-    path = str(tmp_path / "c.json")
-    _seed_creds(path)
-    monkeypatch.setattr(hb, "CREDS_PATH", path)
-    monkeypatch.setattr(hb.urllib.request, "urlopen", mock.Mock(side_effect=OSError("boom")))
+    _probe(monkeypatch, tmp_path, OSError("boom"))
     assert hb.session_cookie_valid() is False
 
 
 def test_session_cookie_valid_false_on_login_redirect(tmp_path, monkeypatch):
-    path = str(tmp_path / "c.json")
-    _seed_creds(path)
-    monkeypatch.setattr(hb, "CREDS_PATH", path)
-
-    class _Resp:
-        status = 200
-        def geturl(self):
-            return "https://app.propertymeld.com/login/?next=/"
-        def __enter__(self):
-            return self
-        def __exit__(self, *a):
-            return False
-
-    monkeypatch.setattr(hb.urllib.request, "urlopen", mock.Mock(return_value=_Resp()))
+    _probe(monkeypatch, tmp_path, _fake_resp(url="https://app.propertymeld.com/login/?next=/"))
     assert hb.session_cookie_valid() is False
 
 
-def test_session_cookie_valid_true_on_authed_200(tmp_path, monkeypatch):
-    path = str(tmp_path / "c.json")
-    _seed_creds(path)
-    monkeypatch.setattr(hb, "CREDS_PATH", path)
+def test_session_cookie_valid_false_on_200_login_html(tmp_path, monkeypatch):
+    """THE false-valid hole (Codie's P1): a login page served as 200-no-redirect.
 
-    class _Resp:
-        status = 200
-        def geturl(self):
-            return "https://app.propertymeld.com/3287/m/3287/melds/"
-        def __enter__(self):
-            return self
-        def __exit__(self, *a):
-            return False
+    Status 200, manager URL (no redirect), but the BODY is the login form. Must be
+    False — a status-only check would FALSE-VALID here and skip recapture.
+    """
+    _probe(monkeypatch, tmp_path, _fake_resp(status=200, url=MANAGER_URL, body=_LOGIN_200_BODY))
+    assert hb.session_cookie_valid() is False
 
-    monkeypatch.setattr(hb.urllib.request, "urlopen", mock.Mock(return_value=_Resp()))
+
+def test_session_cookie_valid_false_on_200_mfa_html(tmp_path, monkeypatch):
+    """An MFA challenge served as a 200 at the manager URL must also be False."""
+    _probe(monkeypatch, tmp_path, _fake_resp(status=200, url=MANAGER_URL, body=_MFA_200_BODY))
+    assert hb.session_cookie_valid() is False
+
+
+def test_session_cookie_valid_false_on_200_without_write_marker(tmp_path, monkeypatch):
+    """200 + no login form but ALSO no csrf write-marker => still False (require positive proof)."""
+    _probe(monkeypatch, tmp_path, _fake_resp(status=200, url=MANAGER_URL, body="<html><body>nothing useful</body></html>"))
+    assert hb.session_cookie_valid() is False
+
+
+def test_session_cookie_valid_true_on_authed_200_with_csrf(tmp_path, monkeypatch):
+    """200 at the manager URL WITH the window.PM.csrf_token write marker => True."""
+    _probe(monkeypatch, tmp_path, _fake_resp(status=200, url=MANAGER_URL, body=_MANAGER_BODY))
     assert hb.session_cookie_valid() is True
 
 
 def test_session_cookie_valid_false_when_no_creds_file(tmp_path, monkeypatch):
     monkeypatch.setattr(hb, "CREDS_PATH", str(tmp_path / "missing.json"))
     assert hb.session_cookie_valid() is False
+
+
+# ── _do_login classification: MFA URL-shape hedge + auth-fail no-retry (P2/P3) ─
+
+class _LoginFakePage:
+    """Minimal page double for _do_login. `transition` controls whether the
+    post-submit wait_for_url succeeds (lands off /login) or times out."""
+
+    def __init__(self, transition):
+        self._transition = transition
+        self.url = "https://app.propertymeld.com/login/?next=/"
+
+    def goto(self, url, **kw):
+        self.url = url
+
+    def wait_for_selector(self, sel, timeout=None):
+        return True
+
+    def fill(self, sel, val):
+        pass
+
+    def click(self, sel):
+        pass
+
+    def wait_for_url(self, predicate, timeout=None):
+        from playwright.sync_api import TimeoutError as PWTimeout
+        if self._transition:
+            # Transitions OFF /login but to a verify page (the URL-shape hedge case).
+            self.url = "https://app.propertymeld.com/verify/2fa"
+            return
+        raise PWTimeout("still on /login")
+
+
+def test_mfa_url_shape_hedge_routes_to_mfa(mod, monkeypatch):
+    """Challenge on a NON-/login URL (wait_for_url 'succeeded') is still caught
+    by the post-transition OTP re-check, before cookie extraction."""
+    page = _LoginFakePage(transition=True)
+    ctx = mock.Mock()
+    monkeypatch.setattr(mod, "_page_has_otp", mock.Mock(return_value=True))
+
+    with pytest.raises(mod.MfaRequired):
+        mod._do_login(page, ctx, "e", "p", mfa_relay=False)
+    ctx.cookies.assert_not_called()  # routed to MFA before extracting cookies
+
+
+def test_login_form_present_is_auth_fail_not_transient(mod, monkeypatch):
+    """Wrong creds left on /login WITHOUT a banner => _AuthFailed (no retry),
+    NOT _TransientRenderError. This is the P2 bot-guard broadening."""
+    page = _LoginFakePage(transition=False)
+    monkeypatch.setattr(mod, "_page_has_otp", mock.Mock(return_value=False))
+    monkeypatch.setattr(mod, "_has_login_error", mock.Mock(return_value=False))
+    monkeypatch.setattr(mod, "_login_form_present", mock.Mock(return_value=True))
+
+    with pytest.raises(mod._AuthFailed):
+        mod._do_login(page, mock.Mock(), "e", "p", mfa_relay=False)
+
+
+def test_no_signals_after_submit_is_transient(mod, monkeypatch):
+    """Still on /login with NO otp / no banner / no login form => transient (retry)."""
+    page = _LoginFakePage(transition=False)
+    monkeypatch.setattr(mod, "_page_has_otp", mock.Mock(return_value=False))
+    monkeypatch.setattr(mod, "_has_login_error", mock.Mock(return_value=False))
+    monkeypatch.setattr(mod, "_login_form_present", mock.Mock(return_value=False))
+
+    with pytest.raises(mod._TransientRenderError):
+        mod._do_login(page, mock.Mock(), "e", "p", mfa_relay=False)
