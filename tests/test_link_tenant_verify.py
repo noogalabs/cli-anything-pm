@@ -1,18 +1,18 @@
 """HTTP-boundary contract tests for link_tenant_to_meld verify-and-fail-loud.
 
 These drive the REAL bug an operator reported: link_tenant_to_meld PATCHed the
-meld with a merged `tenants` array, PM returned HTTP 2xx, and the function
-returned linked:true computed from the LOCAL merge — but an immediate re-GET
-showed tenants=[]. The meld's `tenants` relation is very likely read-only /
-derived, so the PATCH was silently ignored. Success was illusory.
+base meld detail with a merged `tenants` array, PM returned HTTP 2xx, and the
+function returned linked:true computed from the LOCAL merge — but an immediate
+re-GET showed tenants=[]. The base meld `tenants` relation is read-only/derived,
+so the write target must be PM's dedicated meld-tenants endpoint.
 
-The fix re-GETs the meld after the PATCH and asserts the tenant id actually
-persisted; if not it RAISES (fail-loud), pointing to the web-UI workaround.
+The fix PATCHes and re-GETs /api/melds/{id}/tenants/ and asserts the tenant id
+actually persisted; if not it RAISES (fail-loud).
 
 The tests mock urllib.request.urlopen at the wire boundary (NOT a mid-level
 helper), mirroring tests/test_schedule_appointment.py. link_tenant_to_meld
-calls _http_get(melds/{id}/) TWICE (initial read + verify re-GET); the fake
-urlopen sequences the two meld-GET responses by call order.
+calls _http_get(melds/{id}/tenants/) TWICE (initial read + verify re-GET); the
+fake urlopen sequences the two relation-GET responses by call order.
 """
 import json
 
@@ -41,9 +41,8 @@ def _patch_creds_csrf(monkeypatch):
     monkeypatch.setattr(hb, "_get_csrf_token", lambda cookie_hdr: "csrf-fake")
 
 
-# Initial meld GET: no tenants yet + the required full-echo fields the PATCH
-# payload reads back (brief_description/work_location/work_category/work_type/
-# priority).
+# Initial relation GET: no tenants yet. Extra meld fields are kept in the
+# fixture to prove the dedicated endpoint ignores old full-echo requirements.
 _MELD_NO_TENANTS = json.dumps(
     {
         "id": 12937555,
@@ -65,10 +64,10 @@ _PATCH_2XX = json.dumps({"id": 12937555, "tenants": []}).encode()
 
 def _wire(monkeypatch, *, verify_meld_body):
     """Install a urlopen that sequences responses:
-      1st GET melds/12937555/  -> initial body (_MELD_NO_TENANTS)
-      GET tenants/4242/        -> _TENANT
-      PATCH melds/12937555/    -> _PATCH_2XX
-      2nd GET melds/12937555/  -> verify_meld_body (persisted or not)
+      1st GET melds/12937555/tenants/  -> initial body (_MELD_NO_TENANTS)
+      GET tenants/4242/                -> _TENANT
+      PATCH melds/12937555/tenants/    -> _PATCH_2XX
+      2nd GET melds/12937555/tenants/  -> verify_meld_body (persisted or not)
     """
     calls = []
     meld_get_count = {"n": 0}
@@ -79,7 +78,7 @@ def _wire(monkeypatch, *, verify_meld_body):
         calls.append({"method": method, "url": url, "body": req.data})
         if url.endswith("/tenants/4242/"):
             return _FakeResp(_TENANT)
-        if url.endswith("/melds/12937555/"):
+        if url.endswith("/melds/12937555/tenants/"):
             if method == "PATCH":
                 return _FakeResp(_PATCH_2XX)
             # GET: first call is the initial read, second is the verify re-GET.
@@ -110,17 +109,18 @@ class TestLinkTenantVerify:
         assert result["linked"] is True
         assert result["tenant_id"] == 4242
         assert result["tenant_count"] == 1
-        # The fix re-GETs the meld after the PATCH: two meld GETs total.
+        # The fix re-GETs the relation after the PATCH: two relation GETs total.
         meld_gets = [
             c for c in calls
-            if c["method"] == "GET" and c["url"].endswith("/melds/12937555/")
+            if c["method"] == "GET"
+            and c["url"].endswith("/melds/12937555/tenants/")
         ]
         assert len(meld_gets) == 2
 
     def test_not_persisted_raises_fail_loud(self, monkeypatch):
         """THE regression: PATCH returns 2xx but the verify re-GET still shows
-        tenants=[] -> the link did not persist -> RAISE RuntimeError pointing
-        to the web-UI workaround. Must NOT return a linked:true dict."""
+        tenants=[] -> the link did not persist -> RAISE RuntimeError. Must NOT
+        return a linked:true dict."""
         _patch_creds_csrf(monkeypatch)
         verify_body = json.dumps({"id": 12937555, "tenants": []}).encode()
         _wire(monkeypatch, verify_meld_body=verify_body)
@@ -129,5 +129,6 @@ class TestLinkTenantVerify:
             hb.link_tenant_to_meld("12937555", 4242)
 
         msg = str(exc.value).lower()
-        assert "web ui" in msg or "web-ui" in msg
+        assert "dedicated" in msg
+        assert "relation is unchanged" in msg
         assert "did not persist" in msg

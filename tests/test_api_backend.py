@@ -1938,7 +1938,7 @@ _TENANT_FIXTURE = {
 
 
 class TestLinkTenantToMeld:
-    """PATCH /api/melds/{id}/ with merged tenants array — closes P1 #14."""
+    """PATCH /api/melds/{id}/tenants/ with a merged tenants array."""
 
     def _patches(self):
         return (
@@ -1975,14 +1975,8 @@ class TestLinkTenantToMeld:
             assert result["tenant_id"] == 9000009
             assert result["tenant_count"] == 2
             path, payload, _, _ = mp.call_args[0]
-            assert path == "melds/90000003/"
-            # Full-echo PATCH: required meld fields must be present (delta 400s in
-            # prod, verified live 2026-05-29). A regression to a delta payload
-            # (just {"id", "tenants"}) fails these assertions.
-            for field in ("brief_description", "work_location", "work_category",
-                          "work_type", "priority"):
-                assert field in payload, f"full-echo payload missing {field}"
-            assert "id" not in payload
+            assert path == "melds/90000003/tenants/"
+            assert set(payload) == {"tenants"}
             assert len(payload["tenants"]) == 2
             assert _TENANT_FIXTURE in payload["tenants"]
             assert existing in payload["tenants"]
@@ -2044,10 +2038,12 @@ class TestLinkTenantToMeld:
 
             get_paths = [c.args[0] for c in mg.call_args_list]
             assert get_paths == [
-                "melds/90000003/", "tenants/9000009/", "melds/90000003/"
+                "melds/90000003/tenants/",
+                "tenants/9000009/",
+                "melds/90000003/tenants/",
             ]
             patch_path = mp.call_args[0][0]
-            assert patch_path == "melds/90000003/"
+            assert patch_path == "melds/90000003/tenants/"
 
     def test_handles_missing_tenants_field_on_meld(self):
         with self._patches()[0] as mc, self._patches()[1] as mch, \
