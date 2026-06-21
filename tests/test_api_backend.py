@@ -1938,7 +1938,7 @@ _TENANT_FIXTURE = {
 
 
 class TestLinkTenantToMeld:
-    """PATCH /api/melds/{id}/tenants/ with a merged tenants array."""
+    """PUT /api/melds/{id}/tenants/ with a full relation-object echo."""
 
     def _patches(self):
         return (
@@ -1946,25 +1946,55 @@ class TestLinkTenantToMeld:
             patch("cli_anything.propertymeld.http_backend._cookie_header"),
             patch("cli_anything.propertymeld.http_backend._get_csrf_token"),
             patch("cli_anything.propertymeld.http_backend._http_get"),
-            patch("cli_anything.propertymeld.http_backend._http_patch"),
+            patch("cli_anything.propertymeld.http_backend._http_options"),
+            patch("cli_anything.propertymeld.http_backend._http_put"),
         )
 
-    def _stub_creds(self, mc, mch, mcs):
+    def _stub_creds(self, mc, mch, mcs, mo=None):
         mc.return_value = {"cookie": "x"}
         mch.return_value = "Cookie: session=xyz"
         mcs.return_value = "csrf"
+        if mo is not None:
+            mo.return_value = {
+                "actions": {
+                    "PUT": {
+                        "id": {"read_only": True},
+                        "updated": {"read_only": True},
+                        "tenants": {"read_only": False, "required": True},
+                        "work_category": {"read_only": False, "required": True},
+                        "work_location": {"read_only": False, "required": True},
+                        "brief_description": {"read_only": False, "required": True},
+                        "meld_group": {"read_only": False, "required": True},
+                        "user_groups": {"read_only": False, "required": True},
+                        "priority": {"read_only": False},
+                    }
+                }
+            }
+
+    def _current_relation(self, tenants=None):
+        return {
+            "id": "12791190",
+            "updated": "2026-06-21T00:00:00Z",
+            "tenants": tenants or [],
+            "work_category": "PLUMBING",
+            "work_location": "Bathroom",
+            "brief_description": "Leaky tub",
+            "meld_group": 11430754,
+            "user_groups": [],
+            "priority": "MEDIUM",
+        }
 
     def test_appends_to_existing_tenants_array(self):
         with self._patches()[0] as mc, self._patches()[1] as mch, \
              self._patches()[2] as mcs, self._patches()[3] as mg, \
-             self._patches()[4] as mp:
-            self._stub_creds(mc, mch, mcs)
+             self._patches()[4] as mo, self._patches()[5] as mp:
+            self._stub_creds(mc, mch, mcs, mo)
             existing = {"id": 9999, "first_name": "Other", "last_name": "Tenant"}
             mg.side_effect = [
-                {"id": "12791190", "tenants": [existing]},  # GET meld
+                self._current_relation([existing]),          # GET relation
                 _TENANT_FIXTURE,                              # GET tenant for hydration
-                # verify re-GET (post-PATCH persistence check): tenant now present
-                {"id": "12791190", "tenants": [existing, _TENANT_FIXTURE]},
+                # verify re-GET (post-PUT persistence check): tenant now present
+                self._current_relation([existing, _TENANT_FIXTURE]),
             ]
             mp.return_value = {"id": "12791190", "tenants": [existing, _TENANT_FIXTURE]}
 
@@ -1976,7 +2006,14 @@ class TestLinkTenantToMeld:
             assert result["tenant_count"] == 2
             path, payload, _, _ = mp.call_args[0]
             assert path == "melds/12791190/tenants/"
-            assert set(payload) == {"tenants"}
+            assert payload["work_category"] == "PLUMBING"
+            assert payload["work_location"] == "Bathroom"
+            assert payload["brief_description"] == "Leaky tub"
+            assert payload["meld_group"] == 11430754
+            assert payload["user_groups"] == []
+            assert payload["priority"] == "MEDIUM"
+            assert "id" not in payload
+            assert "updated" not in payload
             assert len(payload["tenants"]) == 2
             assert _TENANT_FIXTURE in payload["tenants"]
             assert existing in payload["tenants"]
@@ -1984,9 +2021,9 @@ class TestLinkTenantToMeld:
     def test_idempotent_already_linked_short_circuits_patch(self):
         with self._patches()[0] as mc, self._patches()[1] as mch, \
              self._patches()[2] as mcs, self._patches()[3] as mg, \
-             self._patches()[4] as mp:
-            self._stub_creds(mc, mch, mcs)
-            mg.return_value = {"id": "12791190", "tenants": [_TENANT_FIXTURE]}
+             self._patches()[4] as mo, self._patches()[5] as mp:
+            self._stub_creds(mc, mch, mcs, mo)
+            mg.return_value = self._current_relation([_TENANT_FIXTURE])
 
             result = http_backend.link_tenant_to_meld("12791190", 4010708)
 
@@ -2008,11 +2045,9 @@ class TestLinkTenantToMeld:
         """
         with self._patches()[0] as mc, self._patches()[1] as mch, \
              self._patches()[2] as mcs, self._patches()[3] as mg, \
-             self._patches()[4] as mp:
-            self._stub_creds(mc, mch, mcs)
-            mg.return_value = {
-                "id": "12791190", "tenants": [{"id": "4010708"}]
-            }
+             self._patches()[4] as mo, self._patches()[5] as mp:
+            self._stub_creds(mc, mch, mcs, mo)
+            mg.return_value = self._current_relation([{"id": "4010708"}])
 
             result = http_backend.link_tenant_to_meld("12791190", 4010708)
 
@@ -2021,16 +2056,16 @@ class TestLinkTenantToMeld:
             assert result["tenant_count"] == 1
             mp.assert_not_called()
 
-    def test_hits_correct_paths_get_meld_then_get_tenant_then_patch(self):
+    def test_hits_correct_paths_get_relation_then_get_tenant_then_put(self):
         with self._patches()[0] as mc, self._patches()[1] as mch, \
              self._patches()[2] as mcs, self._patches()[3] as mg, \
-             self._patches()[4] as mp:
-            self._stub_creds(mc, mch, mcs)
+             self._patches()[4] as mo, self._patches()[5] as mp:
+            self._stub_creds(mc, mch, mcs, mo)
             mg.side_effect = [
-                {"id": "12791190", "tenants": []},
+                self._current_relation(),
                 _TENANT_FIXTURE,
-                # verify re-GET (post-PATCH persistence check) re-hits the meld
-                {"id": "12791190", "tenants": [_TENANT_FIXTURE]},
+                # verify re-GET (post-PUT persistence check) re-hits the relation
+                self._current_relation([_TENANT_FIXTURE]),
             ]
             mp.return_value = {"id": "12791190", "tenants": [_TENANT_FIXTURE]}
 
@@ -2042,19 +2077,19 @@ class TestLinkTenantToMeld:
                 "tenants/4010708/",
                 "melds/12791190/tenants/",
             ]
-            patch_path = mp.call_args[0][0]
-            assert patch_path == "melds/12791190/tenants/"
+            put_path = mp.call_args[0][0]
+            assert put_path == "melds/12791190/tenants/"
 
     def test_handles_missing_tenants_field_on_meld(self):
         with self._patches()[0] as mc, self._patches()[1] as mch, \
              self._patches()[2] as mcs, self._patches()[3] as mg, \
-             self._patches()[4] as mp:
-            self._stub_creds(mc, mch, mcs)
+             self._patches()[4] as mo, self._patches()[5] as mp:
+            self._stub_creds(mc, mch, mcs, mo)
             mg.side_effect = [
-                {"id": "12791190"},  # no tenants key at all
+                {k: v for k, v in self._current_relation().items() if k != "tenants"},
                 _TENANT_FIXTURE,
-                # verify re-GET (post-PATCH persistence check): tenant present
-                {"id": "12791190", "tenants": [_TENANT_FIXTURE]},
+                # verify re-GET (post-PUT persistence check): tenant present
+                self._current_relation([_TENANT_FIXTURE]),
             ]
             mp.return_value = {"id": "12791190", "tenants": [_TENANT_FIXTURE]}
 
@@ -2064,6 +2099,31 @@ class TestLinkTenantToMeld:
             assert result["tenant_count"] == 1
             _, payload, _, _ = mp.call_args[0]
             assert payload["tenants"] == [_TENANT_FIXTURE]
+
+    def test_required_relation_fields_are_preserved_for_full_object_put(self):
+        with self._patches()[0] as mc, self._patches()[1] as mch, \
+             self._patches()[2] as mcs, self._patches()[3] as mg, \
+             self._patches()[4] as mo, self._patches()[5] as mp:
+            self._stub_creds(mc, mch, mcs, mo)
+            current = self._current_relation()
+            mg.side_effect = [
+                current,
+                _TENANT_FIXTURE,
+                self._current_relation([_TENANT_FIXTURE]),
+            ]
+            mp.return_value = {"id": "12791190", "tenants": [_TENANT_FIXTURE]}
+
+            http_backend.link_tenant_to_meld("12791190", 4010708)
+
+            _, payload, _, _ = mp.call_args[0]
+            for key in (
+                "work_category",
+                "work_location",
+                "brief_description",
+                "meld_group",
+                "user_groups",
+            ):
+                assert payload[key] == current[key]
 
     def test_verify_accepts_string_tenant_id_from_pm(self):
         """Regression: PM may return the persisted tenant id as a STRING.
@@ -2076,13 +2136,13 @@ class TestLinkTenantToMeld:
         """
         with self._patches()[0] as mc, self._patches()[1] as mch, \
              self._patches()[2] as mcs, self._patches()[3] as mg, \
-             self._patches()[4] as mp:
-            self._stub_creds(mc, mch, mcs)
+             self._patches()[4] as mo, self._patches()[5] as mp:
+            self._stub_creds(mc, mch, mcs, mo)
             mg.side_effect = [
-                {"id": "12791190", "tenants": []},         # GET meld
+                self._current_relation(),                   # GET relation
                 _TENANT_FIXTURE,                            # GET tenant hydration
                 # verify re-GET: PM returns the tenant id as a STRING
-                {"id": "12791190", "tenants": [{"id": "4010708"}]},
+                self._current_relation([{"id": "4010708"}]),
             ]
             mp.return_value = {"id": "12791190", "tenants": [_TENANT_FIXTURE]}
 

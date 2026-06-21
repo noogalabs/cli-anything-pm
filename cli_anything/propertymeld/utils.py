@@ -104,11 +104,13 @@ def _is_html_response(body: str) -> bool:
 def normalize_http_error(status_code: int, body: str) -> dict:
     """Normalize PM error bodies, especially raw HTML error pages."""
     if _is_html_response(body):
-        excerpt = " ".join((body or "").split())[:200]
+        text = body or ""
+        excerpt = " ".join(text.split())[:200]
         return {
             "error": f"HTTP {status_code}",
             "status_code": status_code,
             "body_excerpt": excerpt,
+            "body": text,
         }
 
     detail = (body or "").strip()
@@ -124,7 +126,7 @@ def normalize_http_error(status_code: int, body: str) -> dict:
 
     result = {"error": f"HTTP {status_code}", "status_code": status_code}
     if detail:
-        result["detail"] = detail[:300]
+        result["detail"] = detail
     return result
 
 
