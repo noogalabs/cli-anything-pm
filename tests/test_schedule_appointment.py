@@ -271,6 +271,12 @@ class TestForcePendingCompletionFlow:
 
     def test_wrong_status_refuses_without_accept_patch(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
+        csrf_calls = []
+        monkeypatch.setattr(
+            hb,
+            "_get_csrf_token",
+            lambda cookie_hdr: csrf_calls.append(cookie_hdr) or "csrf-fake",
+        )
         calls = _wire(monkeypatch, meld_body=_PENDING_COMPLETION_MELD)
 
         result = hb.force_pending_completion(
@@ -280,6 +286,7 @@ class TestForcePendingCompletionFlow:
         assert result["ok"] is False
         assert result["status"] == "PENDING_COMPLETION"
         assert "PENDING_MORE_MANAGEMENT_AVAILABILITY" in result["error"]
+        assert csrf_calls == []
         assert not any(c["url"].endswith("/accept/") for c in calls)
 
     def test_existing_segments_block_not_wipe(self, monkeypatch):

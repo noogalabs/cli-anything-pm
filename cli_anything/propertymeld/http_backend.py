@@ -2026,7 +2026,6 @@ def force_pending_completion(meld_id: str, dtstart: Optional[str] = None, durati
     meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
-    csrf_token = _get_csrf_token(cookie_hdr)
 
     meld = _http_get(f"melds/{meld_id}/", cookie_hdr)
     status = _meld_status(meld)
@@ -2057,6 +2056,7 @@ def force_pending_completion(meld_id: str, dtstart: Optional[str] = None, durati
         return {**destructive_error, "meld_id": meld_id, "status": status}
 
     chosen_dtstart = dtstart or _default_force_pending_dtstart()
+    csrf_token = _get_csrf_token(cookie_hdr)
     result, booked_start = _accept_with_window(
         meld_id, chosen_dtstart, duration_hours, cookie_hdr, csrf_token
     )
