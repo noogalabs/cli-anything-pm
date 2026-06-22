@@ -54,6 +54,18 @@ class TestExitNonZeroOnBackendFailure:
         assert result.exit_code == 1, result.output
         assert json.loads(result.output)["ok"] is False
 
+    def test_force_pending_completion_exits_1_on_failure_envelope(self, runner):
+        """work-orders force-pending-completion returns a guard failure.
+        Command must exit 1 so hooks/crons cannot treat it as success."""
+        from unittest.mock import patch
+        with patch("cli_anything.propertymeld.http_backend.force_pending_completion",
+                   return_value={"ok": False,
+                                 "error": "meld 12701108 is PENDING_COMPLETION"}):
+            result = runner.invoke(cli, ["work-orders", "force-pending-completion",
+                                         "--meld-id", "12701108"])
+        assert result.exit_code == 1, result.output
+        assert json.loads(result.output)["ok"] is False
+
     def test_schedule_vendor_exits_1_on_failure_envelope(self, runner):
         """work-orders schedule-vendor -> schedule_vendor_appointment returns
         an unresolved-assignment failure. Command must exit 1."""

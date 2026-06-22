@@ -445,6 +445,22 @@ def complete_meld(meld_id, notes, as_json):
     output_json(result)
 
 
+@work_orders.command("force-pending-completion")
+@click.argument("meld_id_arg", required=False)
+@click.option("--meld-id", "meld_id_opt", default=None, help="Meld ID to force to PENDING_COMPLETION")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def force_pending_completion(meld_id_arg, meld_id_opt, as_json):
+    """Move an empty in-house zombie meld to PENDING_COMPLETION."""
+    if meld_id_arg and meld_id_opt and meld_id_arg != meld_id_opt:
+        raise click.UsageError("pass either positional meld_id or --meld-id, not both")
+    meld_id = meld_id_opt or meld_id_arg
+    if not meld_id:
+        raise click.UsageError("missing meld id: pass `pm work-orders force-pending-completion <meld_id>`")
+    meld_id = _normalize_meld_id(meld_id)
+    result = http_backend.force_pending_completion(meld_id)
+    output_json(result)
+
+
 @work_orders.command("cancel")
 @click.option("--meld-id", required=True, help="Meld ID to cancel")
 @click.option("--reason", required=True, callback=_require_nonempty,
