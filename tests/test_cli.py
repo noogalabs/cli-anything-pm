@@ -444,6 +444,36 @@ class TestWorkOrdersScheduleCLI:
                                         duration_hours=3.0)
 
 
+class TestWorkOrdersForcePendingCompletionCLI:
+    def test_force_pending_completion_accepts_positional_id(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.force_pending_completion",
+                   return_value={"ok": True, "meld_id": 90000014,
+                                 "status": "PENDING_COMPLETION"}) as mock_fn:
+            result = runner.invoke(cli, ["work-orders", "force-pending-completion",
+                                         "90000014"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["status"] == "PENDING_COMPLETION"
+        mock_fn.assert_called_once_with("90000014")
+
+    def test_force_pending_completion_accepts_meld_id_option(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.force_pending_completion",
+                   return_value={"ok": True, "meld_id": 90000014,
+                                 "status": "PENDING_COMPLETION"}) as mock_fn:
+            result = runner.invoke(cli, ["work-orders", "force-pending-completion",
+                                         "--meld-id", "90000014"])
+        assert result.exit_code == 0
+        mock_fn.assert_called_once_with("90000014")
+
+    def test_force_pending_completion_rejects_conflicting_ids(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.force_pending_completion") as mock_fn:
+            result = runner.invoke(cli, ["work-orders", "force-pending-completion",
+                                         "90000014", "--meld-id", "12701109"])
+        assert result.exit_code != 0
+        assert "either positional meld_id or --meld-id" in result.output
+        mock_fn.assert_not_called()
+
+
 class TestWorkOrdersLifecycleCLI:
     def test_clone_supports_all_override_flags(self, runner):
         with patch("cli_anything.propertymeld.http_backend.clone_meld",

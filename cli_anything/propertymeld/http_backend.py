@@ -1863,6 +1863,94 @@ def _compute_dtend(dtstart: str, duration_hours: float) -> str:
         return dtstart
 
 
+def _default_force_pending_dtstart() -> str:
+    """Return the default candidate start for the force transition probe.
+
+    The real PM zombie probe owns confirming whether PM accepts this now-ish
+    window. Keeping it isolated prevents the unverified live detail from
+    spreading through the implementation.
+    """
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _management_appointment_for_accept(meld: Any) -> tuple[Optional[dict], Optional[dict]]:
+    if not isinstance(meld, dict):
+        return None, {
+            "ok": False,
+            "error": "Unexpected PM meld schema: expected object response",
+            "schema_divergence": True,
+        }
+    if "managementappointment" not in meld:
+        return None, {
+            "ok": False,
+            "error": "Unexpected PM meld schema: missing managementappointment field",
+            "schema_divergence": True,
+        }
+    appts = meld.get("managementappointment")
+    if not isinstance(appts, list):
+        return None, {
+            "ok": False,
+            "error": "Unexpected PM meld schema: managementappointment is not a list",
+            "schema_divergence": True,
+        }
+    if not appts:
+        return None, {"ok": False, "error": "No in-house tech assignment found on this meld"}
+    appt = appts[0]
+    if not isinstance(appt, dict) or "id" not in appt:
+        return None, {
+            "ok": False,
+            "error": "Unexpected PM meld schema: managementappointment[0].id missing",
+            "schema_divergence": True,
+        }
+    return appt, None
+
+
+def _destructive_accept_guard(meld: dict, appt: dict, command_name: str) -> Optional[dict]:
+    # Fail loud rather than silently destroy existing availability data. The
+    # accept/ PATCH sends segments_to_keep:[] — correct for the first-schedule
+    # or empty-zombie case, but destructive if any real window already exists.
+    if (
+        appt.get("availability_segment")
+        or appt.get("management_availability_segments")
+        or meld.get("management_availability_segments")
+    ):
+        return {
+            "ok": False,
+            "error": (
+                "Meld already has scheduled or proposed availability segments; "
+                f"`{command_name}` would replace them. Use the reschedule flow instead."
+            ),
+        }
+    return None
+
+
+def _accept_with_window(
+    meld_id: int,
+    dtstart: str,
+    duration_hours: float,
+    cookie_hdr: str,
+    csrf_token: str,
+) -> tuple[dict, str]:
+    dtend = _compute_dtend(dtstart, duration_hours)
+    payload = {
+        "mark_scheduled": True,
+        "segments_to_keep": [],
+        "management_availability_segments": [
+            {"event": {"dtstart": dtstart, "dtend": dtend}}
+        ],
+    }
+    result = _http_patch(f"melds/{meld_id}/accept/", payload, cookie_hdr, csrf_token)
+
+    booked_start = dtstart
+    segs = result.get("management_availability_segments") if isinstance(result, dict) else None
+    if segs and isinstance(segs[0], dict):
+        event = segs[0].get("event") or {}
+        booked_start = event.get("dtstart", dtstart)
+    return result, booked_start
+
+
 @with_recapture_retry
 def schedule_appointment(meld_id: str, dtstart: str, duration_hours: float = 2.0) -> dict:
     """Schedule an in-house tech appointment window on a meld.
@@ -1904,57 +1992,99 @@ def schedule_appointment(meld_id: str, dtstart: str, duration_hours: float = 2.0
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_csrf_token(cookie_hdr)
 
-    # Get the management appointment from the meld. Its presence is the
-    # proof an in-house tech is assigned (PM creates it at assignment time).
     meld = _http_get(f"melds/{meld_id}/", cookie_hdr)
-    appts = meld.get("managementappointment", [])
-    if not appts:
-        return {"ok": False, "error": "No in-house tech assignment found on this meld"}
-    appt = appts[0]
+    appt, error = _management_appointment_for_accept(meld)
+    if error:
+        return error
     appt_id = appt["id"]
 
-    # Fail loud rather than silently destroy existing availability data. The
-    # accept/ PATCH below sends segments_to_keep:[] — correct for the first-
-    # schedule case this fixes (an unstarted meld with no segments). But if the
-    # appointment is ALREADY scheduled (a booked availability_segment) or the
-    # meld already carries proposed management availability windows, that empty
-    # keep-list would WIPE them. Refuse the destructive case and point the
-    # caller at the reschedule flow instead of silently dropping real windows.
-    if (
-        appt.get("availability_segment")
-        or appt.get("management_availability_segments")
-        or meld.get("management_availability_segments")
-    ):
-        return {
-            "ok": False,
-            "error": (
-                "Meld already has scheduled or proposed availability segments; "
-                "`schedule` would replace them. Use the reschedule flow instead."
-            ),
-        }
+    destructive_error = _destructive_accept_guard(meld, appt, "schedule")
+    if destructive_error:
+        return destructive_error
 
-    dtend = _compute_dtend(dtstart, duration_hours)
-    payload = {
-        "mark_scheduled": True,
-        "segments_to_keep": [],
-        "management_availability_segments": [
-            {"event": {"dtstart": dtstart, "dtend": dtend}}
-        ],
-    }
-    result = _http_patch(f"melds/{meld_id}/accept/", payload, cookie_hdr, csrf_token)
-
-    # Pull the booked dtstart back out of the response for the contract.
-    # accept/ returns the meld shape with management_availability_segments[].
-    booked_start = dtstart
-    segs = result.get("management_availability_segments") if isinstance(result, dict) else None
-    if segs and isinstance(segs[0], dict):
-        event = segs[0].get("event") or {}
-        booked_start = event.get("dtstart", dtstart)
+    result, booked_start = _accept_with_window(
+        meld_id, dtstart, duration_hours, cookie_hdr, csrf_token
+    )
 
     return {
         "ok": True,
         "meld_id": meld_id,
         "appointment_id": appt_id,
+        "dtstart": booked_start,
+        "duration_hours": duration_hours,
+        "result": result,
+    }
+
+
+@with_recapture_retry
+def force_pending_completion(meld_id: str, dtstart: Optional[str] = None, duration_hours: float = 0.25) -> dict:
+    """Move an empty in-house zombie meld to PENDING_COMPLETION via accept/.
+
+    This deliberately does NOT auto-chain the manager complete action; it only
+    performs the state transition needed to unblock a separately-audited close.
+    """
+    meld_id = _validate_meld_id(meld_id)
+    creds = _load_creds()
+    cookie_hdr = _cookie_header(creds)
+
+    meld = _http_get(f"melds/{meld_id}/", cookie_hdr)
+    status = _meld_status(meld)
+    if status is None:
+        return {
+            "ok": False,
+            "error": "Unexpected PM meld schema: missing status field",
+            "schema_divergence": True,
+            "meld_id": meld_id,
+        }
+    if status != "PENDING_MORE_MANAGEMENT_AVAILABILITY":
+        return {
+            "ok": False,
+            "error": (
+                f"meld {meld_id} is {status}, must be "
+                "PENDING_MORE_MANAGEMENT_AVAILABILITY to force PENDING_COMPLETION"
+            ),
+            "meld_id": meld_id,
+            "status": status,
+        }
+
+    appt, error = _management_appointment_for_accept(meld)
+    if error:
+        return {**error, "meld_id": meld_id, "status": status}
+
+    destructive_error = _destructive_accept_guard(meld, appt, "force-pending-completion")
+    if destructive_error:
+        return {**destructive_error, "meld_id": meld_id, "status": status}
+
+    chosen_dtstart = dtstart or _default_force_pending_dtstart()
+    csrf_token = _get_csrf_token(cookie_hdr)
+    result, booked_start = _accept_with_window(
+        meld_id, chosen_dtstart, duration_hours, cookie_hdr, csrf_token
+    )
+
+    verified = _http_get(f"melds/{meld_id}/", cookie_hdr)
+    verified_status = _meld_status(verified)
+    if verified_status != "PENDING_COMPLETION":
+        return {
+            "ok": False,
+            "error": (
+                "accept/ request completed but meld did not reach PENDING_COMPLETION; "
+                f"actual state is {verified_status}"
+            ),
+            "meld_id": meld_id,
+            "old_status": status,
+            "status": verified_status,
+            "dtstart": booked_start,
+            "duration_hours": duration_hours,
+            "result": result,
+        }
+
+    return {
+        "ok": True,
+        "meld_id": meld_id,
+        "appointment_id": appt["id"],
+        "old_status": status,
+        "new_status": verified_status,
+        "status": verified_status,
         "dtstart": booked_start,
         "duration_hours": duration_hours,
         "result": result,
