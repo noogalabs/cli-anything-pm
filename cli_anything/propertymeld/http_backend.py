@@ -1365,6 +1365,25 @@ def complete_meld(
                     "Move it to PENDING_COMPLETION first, or relabel via the web UI."
                 ),
             )
+        # In-house melds cannot be closed via the manager complete/ path: PM
+        # routes them to MAINTENANCE_COULD_NOT_COMPLETE. The differentiator is the
+        # completion ACTION, not meld state — the tech-app checkout completes an
+        # in-house meld, but manager complete/ strands it. Confirmed live
+        # 2026-06-23 (TQY8B7DB stranded WITH completed work-entries; identical
+        # state to a tech-app-completed meld). Fail loud BEFORE the PATCH so we
+        # never strand a meld.
+        if _meld_is_in_house(current):
+            _complete_meld_fail(
+                meld_id,
+                current_status,
+                completion_notes,
+                (
+                    f"meld {meld_id} is an in-house meld; the manager complete path "
+                    "strands it in MAINTENANCE_COULD_NOT_COMPLETE. Complete it via the "
+                    "tech-app checkout (tech checks out), or relabel via the web UI. "
+                    "(Vendor melds use the vendor complete path and are unaffected.)"
+                ),
+            )
         payload = {}
         if completion_notes:
             payload["completion_notes"] = completion_notes
@@ -1394,6 +1413,20 @@ def complete_meld(
         "result": result,
         **({"status": verified_status} if verified_status is not None else {}),
     }
+
+
+def _meld_is_in_house(meld: Any) -> bool:
+    """True if the meld has an in-house servicer assignment.
+
+    In-house melds complete via the tech-app checkout; the manager complete/
+    path strands them in MAINTENANCE_COULD_NOT_COMPLETE (PM behavior confirmed
+    live 2026-06-23). Vendor melds have an empty `in_house_servicers` and carry a
+    `vendorassignment` instead, so they do not trip this guard.
+    """
+    if not isinstance(meld, dict):
+        return False
+    servicers = meld.get("in_house_servicers")
+    return isinstance(servicers, list) and len(servicers) > 0
 
 
 def _meld_status(meld: Any) -> Optional[str]:
@@ -1863,18 +1896,6 @@ def _compute_dtend(dtstart: str, duration_hours: float) -> str:
         return dtstart
 
 
-def _default_force_pending_dtstart() -> str:
-    """Return the default candidate start for the force transition probe.
-
-    The real PM zombie probe owns confirming whether PM accepts this now-ish
-    window. Keeping it isolated prevents the unverified live detail from
-    spreading through the implementation.
-    """
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
 def _management_appointment_for_accept(meld: Any) -> tuple[Optional[dict], Optional[dict]]:
     if not isinstance(meld, dict):
         return None, {
@@ -1922,79 +1943,6 @@ def _destructive_accept_guard(meld: dict, appt: dict, command_name: str) -> Opti
                 "Meld already has scheduled or proposed availability segments; "
                 f"`{command_name}` would replace them. Use the reschedule flow instead."
             ),
-        }
-    return None
-
-
-def _occupied_meld_guard(meld: dict, command_name: str) -> Optional[dict]:
-    if "tenants" not in meld:
-        return {
-            "ok": False,
-            "error": "Unexpected PM meld schema: missing tenants field",
-            "schema_divergence": True,
-        }
-    tenants = meld.get("tenants")
-    if tenants is None:
-        tenants = []
-    if not isinstance(tenants, list):
-        return {
-            "ok": False,
-            "error": "Unexpected PM meld schema: tenants is not a list",
-            "schema_divergence": True,
-        }
-    if tenants:
-        return {
-            "ok": False,
-            "error": (
-                f"`{command_name}` is only safe for vacant, empty zombie melds. "
-                "This meld is occupied or has linked tenants, so the accept/ path would "
-                "create a real appointment and notify the resident. Use the PM web UI "
-                "or the proper tech-complete path instead."
-            ),
-            "occupied": True,
-            "tenant_count": len(tenants),
-        }
-    return None
-
-
-def _force_pending_work_entries_guard(meld_id: int, cookie_hdr: str) -> Optional[dict]:
-    data = _http_get(f"melds/{meld_id}/work-entries/", cookie_hdr)
-    if isinstance(data, dict):
-        if "results" in data:
-            entries = data.get("results")
-        elif isinstance(data.get("id"), int):
-            entries = [data]
-        elif not data:
-            entries = []
-        else:
-            return {
-                "ok": False,
-                "error": "Unexpected PM work-entries schema: missing results list",
-                "schema_divergence": True,
-            }
-    elif isinstance(data, list):
-        entries = data
-    else:
-        return {
-            "ok": False,
-            "error": "Unexpected PM work-entries schema",
-            "schema_divergence": True,
-        }
-    if not isinstance(entries, list):
-        return {
-            "ok": False,
-            "error": "Unexpected PM work-entries schema: expected list/results",
-            "schema_divergence": True,
-        }
-    if entries:
-        return {
-            "ok": False,
-            "error": (
-                "`force-pending-completion` is only safe for empty zombie melds. "
-                "This meld already has work entries, so use the PM web UI or the "
-                "proper tech-complete path instead of creating a synthetic appointment."
-            ),
-            "work_entry_count": len(entries),
         }
     return None
 
@@ -2091,84 +2039,26 @@ def schedule_appointment(meld_id: str, dtstart: str, duration_hours: float = 2.0
 
 @with_recapture_retry
 def force_pending_completion(meld_id: str, dtstart: Optional[str] = None, duration_hours: float = 0.25) -> dict:
-    """Move an empty in-house zombie meld to PENDING_COMPLETION via accept/.
+    """DISABLED. Previously moved an in-house meld to PENDING_COMPLETION via accept/.
 
-    This deliberately does NOT auto-chain the manager complete action; it only
-    performs the state transition needed to unblock a separately-audited close.
+    Hard-guarded 2026-06-23: this only ever produces an IN-HOUSE PENDING_COMPLETION
+    meld, and in-house melds cannot be closed via the manager complete/ path (they
+    strand in MAINTENANCE_COULD_NOT_COMPLETE — see complete_meld + the in-house
+    guard). It also mutated PM state by booking a synthetic appointment. There is
+    no safe close use-case, so the function refuses up front without mutating.
+    Complete in-house melds via the tech-app checkout, or relabel via the web UI.
     """
     meld_id = _validate_meld_id(meld_id)
-    creds = _load_creds()
-    cookie_hdr = _cookie_header(creds)
-
-    meld = _http_get(f"melds/{meld_id}/", cookie_hdr)
-    status = _meld_status(meld)
-    if status is None:
-        return {
-            "ok": False,
-            "error": "Unexpected PM meld schema: missing status field",
-            "schema_divergence": True,
-            "meld_id": meld_id,
-        }
-    if status != "PENDING_MORE_MANAGEMENT_AVAILABILITY":
-        return {
-            "ok": False,
-            "error": (
-                f"meld {meld_id} is {status}, must be "
-                "PENDING_MORE_MANAGEMENT_AVAILABILITY to force PENDING_COMPLETION"
-            ),
-            "meld_id": meld_id,
-            "status": status,
-        }
-
-    appt, error = _management_appointment_for_accept(meld)
-    if error:
-        return {**error, "meld_id": meld_id, "status": status}
-
-    occupied_error = _occupied_meld_guard(meld, "force-pending-completion")
-    if occupied_error:
-        return {**occupied_error, "meld_id": meld_id, "status": status}
-
-    destructive_error = _destructive_accept_guard(meld, appt, "force-pending-completion")
-    if destructive_error:
-        return {**destructive_error, "meld_id": meld_id, "status": status}
-
-    work_entries_error = _force_pending_work_entries_guard(meld_id, cookie_hdr)
-    if work_entries_error:
-        return {**work_entries_error, "meld_id": meld_id, "status": status}
-
-    chosen_dtstart = dtstart or _default_force_pending_dtstart()
-    csrf_token = _get_csrf_token(cookie_hdr)
-    result, booked_start = _accept_with_window(
-        meld_id, chosen_dtstart, duration_hours, cookie_hdr, csrf_token
-    )
-
-    verified = _http_get(f"melds/{meld_id}/", cookie_hdr)
-    verified_status = _meld_status(verified)
-    if verified_status != "PENDING_COMPLETION":
-        return {
-            "ok": False,
-            "error": (
-                "accept/ request completed but meld did not reach PENDING_COMPLETION; "
-                f"actual state is {verified_status}"
-            ),
-            "meld_id": meld_id,
-            "old_status": status,
-            "status": verified_status,
-            "dtstart": booked_start,
-            "duration_hours": duration_hours,
-            "result": result,
-        }
-
     return {
-        "ok": True,
+        "ok": False,
+        "deprecated": True,
+        "error": (
+            "force-pending-completion is disabled: it only produces in-house "
+            "PENDING_COMPLETION melds, which strand in MAINTENANCE_COULD_NOT_COMPLETE "
+            "when closed via manager complete/. Complete in-house melds via the "
+            "tech-app checkout, or relabel via the web UI."
+        ),
         "meld_id": meld_id,
-        "appointment_id": appt["id"],
-        "old_status": status,
-        "new_status": verified_status,
-        "status": verified_status,
-        "dtstart": booked_start,
-        "duration_hours": duration_hours,
-        "result": result,
     }
 
 
