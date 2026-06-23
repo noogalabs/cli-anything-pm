@@ -245,186 +245,20 @@ class TestScheduleAppointmentFlow:
         # Unparseable input falls back to dtstart (PM then 400s, not us guessing).
         assert hb._compute_dtend("not-a-date", 2.0) == "not-a-date"
 
+class TestForcePendingCompletionDisabled:
+    """force-pending-completion was hard-guarded 2026-06-23: it only ever produced
+    in-house PENDING_COMPLETION melds, which strand in MAINTENANCE_COULD_NOT_COMPLETE
+    when closed via manager complete/. It now refuses up front without mutating PM
+    state. Full in-house guard coverage: tests/test_in_house_complete_guard.py.
+    """
 
-class TestForcePendingCompletionFlow:
-    def test_uses_accept_endpoint_and_verifies_pending_completion(self, monkeypatch):
-        _patch_creds_csrf(monkeypatch)
-        calls = _wire(
-            monkeypatch,
-            meld_body=[_ZOMBIE_MELD_WITH_APPT, _PENDING_COMPLETION_MELD],
-        )
-
+    def test_refuses_up_front_without_network(self, monkeypatch):
+        def _boom(*a, **k):
+            raise AssertionError("disabled command must not hit the network")
+        monkeypatch.setattr(hb.urllib.request, "urlopen", _boom)
         result = hb.force_pending_completion(
             "12937555", dtstart="2026-06-10T18:00:00Z", duration_hours=0.25
         )
-
-        accept_calls = [c for c in calls if c["url"].endswith("/accept/")]
-        assert len(accept_calls) == 1
-        assert accept_calls[0]["method"] == "PATCH"
-        assert "/melds/12937555/accept/" in accept_calls[0]["url"]
-        payload = json.loads(accept_calls[0]["body"])
-        assert payload == {
-            "mark_scheduled": True,
-            "segments_to_keep": [],
-            "management_availability_segments": [
-                {
-                    "event": {
-                        "dtstart": "2026-06-10T18:00:00Z",
-                        "dtend": "2026-06-10T18:15:00+00:00",
-                    }
-                }
-            ],
-        }
-        assert result["ok"] is True
-        assert result["old_status"] == "PENDING_MORE_MANAGEMENT_AVAILABILITY"
-        assert result["new_status"] == "PENDING_COMPLETION"
-        assert result["status"] == "PENDING_COMPLETION"
-        assert result["appointment_id"] == 4255991
-
-    def test_wrong_status_refuses_without_accept_patch(self, monkeypatch):
-        _patch_creds_csrf(monkeypatch)
-        csrf_calls = []
-        monkeypatch.setattr(
-            hb,
-            "_get_csrf_token",
-            lambda cookie_hdr: csrf_calls.append(cookie_hdr) or "csrf-fake",
-        )
-        calls = _wire(monkeypatch, meld_body=_PENDING_COMPLETION_MELD)
-
-        result = hb.force_pending_completion(
-            "12937555", dtstart="2026-06-10T18:00:00Z", duration_hours=0.25
-        )
-
         assert result["ok"] is False
-        assert result["status"] == "PENDING_COMPLETION"
-        assert "PENDING_MORE_MANAGEMENT_AVAILABILITY" in result["error"]
-        assert csrf_calls == []
-        assert not any(c["url"].endswith("/accept/") for c in calls)
-
-    def test_existing_segments_block_not_wipe(self, monkeypatch):
-        _patch_creds_csrf(monkeypatch)
-        scheduled = json.dumps(
-            {
-                "status": "PENDING_MORE_MANAGEMENT_AVAILABILITY",
-                "tenants": [],
-                "managementappointment": [
-                    {"id": 4255991, "availability_segment": {"id": 2878830}}
-                ],
-            }
-        ).encode()
-        calls = _wire(monkeypatch, meld_body=scheduled)
-
-        result = hb.force_pending_completion(
-            "12937555", dtstart="2026-06-10T18:00:00Z", duration_hours=0.25
-        )
-
-        assert result["ok"] is False
-        assert "reschedule" in result["error"].lower()
-        assert "force-pending-completion" in result["error"]
-        assert not any(c["url"].endswith("/accept/") for c in calls)
-
-    def test_schema_divergence_guard_before_field_lock(self, monkeypatch):
-        _patch_creds_csrf(monkeypatch)
-        divergent = json.dumps({"status": "PENDING_MORE_MANAGEMENT_AVAILABILITY"}).encode()
-        calls = _wire(monkeypatch, meld_body=divergent)
-
-        result = hb.force_pending_completion(
-            "12937555", dtstart="2026-06-10T18:00:00Z", duration_hours=0.25
-        )
-
-        assert result["ok"] is False
-        assert result["schema_divergence"] is True
-        assert "managementappointment" in result["error"]
-        assert not any(c["url"].endswith("/accept/") for c in calls)
-
-    def test_occupied_meld_refuses_without_accept_patch(self, monkeypatch):
-        _patch_creds_csrf(monkeypatch)
-        csrf_calls = []
-        monkeypatch.setattr(
-            hb,
-            "_get_csrf_token",
-            lambda cookie_hdr: csrf_calls.append(cookie_hdr) or "csrf-fake",
-        )
-        calls = _wire(monkeypatch, meld_body=_OCCUPIED_ZOMBIE_MELD)
-
-        result = hb.force_pending_completion(
-            "12937555", dtstart="2026-06-10T18:00:00Z", duration_hours=0.25
-        )
-
-        assert result["ok"] is False
-        assert result["status"] == "PENDING_MORE_MANAGEMENT_AVAILABILITY"
-        assert result["occupied"] is True
-        assert result["tenant_count"] == 1
-        assert "occupied" in result["error"].lower()
-        assert "MAINTENANCE_COULD_NOT_COMPLETE" not in result["error"]
-        assert csrf_calls == []
-        assert not any(c["url"].endswith("/accept/") for c in calls)
-
-    def test_non_empty_work_entries_refuse_without_accept_patch(self, monkeypatch):
-        _patch_creds_csrf(monkeypatch)
-        csrf_calls = []
-        monkeypatch.setattr(
-            hb,
-            "_get_csrf_token",
-            lambda cookie_hdr: csrf_calls.append(cookie_hdr) or "csrf-fake",
-        )
-        calls = []
-
-        def fake_urlopen(req, **kw):
-            method = req.get_method()
-            url = req.full_url
-            calls.append({"method": method, "url": url, "body": req.data})
-            if url.endswith("/accept/"):
-                return _FakeResp(_ACCEPT_200)
-            if method == "GET" and url.endswith("/melds/12937555/work-entries/"):
-                return _FakeResp(json.dumps({"results": [{"id": 9001}]}).encode())
-            if method == "GET" and url.endswith("/melds/12937555/"):
-                return _FakeResp(_ZOMBIE_MELD_WITH_APPT)
-            return _FakeResp(b"{}")
-
-        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
-
-        result = hb.force_pending_completion(
-            "12937555", dtstart="2026-06-10T18:00:00Z", duration_hours=0.25
-        )
-
-        assert result["ok"] is False
-        assert result["status"] == "PENDING_MORE_MANAGEMENT_AVAILABILITY"
-        assert result["work_entry_count"] == 1
-        assert "empty zombie" in result["error"].lower()
-        assert csrf_calls == []
-        assert not any(c["url"].endswith("/accept/") for c in calls)
-
-    def test_unknown_work_entries_dict_shape_fails_closed(self, monkeypatch):
-        _patch_creds_csrf(monkeypatch)
-        csrf_calls = []
-        monkeypatch.setattr(
-            hb,
-            "_get_csrf_token",
-            lambda cookie_hdr: csrf_calls.append(cookie_hdr) or "csrf-fake",
-        )
-        calls = []
-
-        def fake_urlopen(req, **kw):
-            method = req.get_method()
-            url = req.full_url
-            calls.append({"method": method, "url": url, "body": req.data})
-            if url.endswith("/accept/"):
-                return _FakeResp(_ACCEPT_200)
-            if method == "GET" and url.endswith("/melds/12937555/work-entries/"):
-                return _FakeResp(json.dumps({"count": 1, "items": [{"id": 9001}]}).encode())
-            if method == "GET" and url.endswith("/melds/12937555/"):
-                return _FakeResp(_ZOMBIE_MELD_WITH_APPT)
-            return _FakeResp(b"{}")
-
-        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
-
-        result = hb.force_pending_completion(
-            "12937555", dtstart="2026-06-10T18:00:00Z", duration_hours=0.25
-        )
-
-        assert result["ok"] is False
-        assert result["schema_divergence"] is True
-        assert "work-entries" in result["error"]
-        assert csrf_calls == []
-        assert not any(c["url"].endswith("/accept/") for c in calls)
+        assert result.get("deprecated") is True
+        assert "tech-app" in result["error"] or "tech app" in result["error"]
