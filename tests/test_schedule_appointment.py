@@ -71,6 +71,7 @@ _MELD_WITH_APPT = json.dumps(
 _ZOMBIE_MELD_WITH_APPT = json.dumps(
     {
         "status": "PENDING_MORE_MANAGEMENT_AVAILABILITY",
+        "tenants": [],
         "managementappointment": [{"id": 4255991, "availability_segment": None}],
     }
 ).encode()
@@ -78,6 +79,15 @@ _ZOMBIE_MELD_WITH_APPT = json.dumps(
 _PENDING_COMPLETION_MELD = json.dumps(
     {
         "status": "PENDING_COMPLETION",
+        "tenants": [],
+        "managementappointment": [{"id": 4255991, "availability_segment": None}],
+    }
+).encode()
+
+_OCCUPIED_ZOMBIE_MELD = json.dumps(
+    {
+        "status": "PENDING_MORE_MANAGEMENT_AVAILABILITY",
+        "tenants": [{"id": 9000020, "name": "Synthetic Person 004"}],
         "managementappointment": [{"id": 4255991, "availability_segment": None}],
     }
 ).encode()
@@ -99,6 +109,8 @@ def _wire(monkeypatch, *, meld_body=_MELD_WITH_APPT, accept_body=_ACCEPT_200):
             raise urllib.error.HTTPError(url, 500, "Server Error", {}, io.BytesIO(_PM_500_HTML))
         if url.endswith("/accept/"):
             return _FakeResp(accept_body)
+        if method == "GET" and url.endswith("/melds/12937555/work-entries/"):
+            return _FakeResp(json.dumps({"results": []}).encode())
         if method == "GET" and url.endswith("/melds/12937555/"):
             if len(meld_bodies) > 1:
                 return _FakeResp(meld_bodies.pop(0))
@@ -294,6 +306,7 @@ class TestForcePendingCompletionFlow:
         scheduled = json.dumps(
             {
                 "status": "PENDING_MORE_MANAGEMENT_AVAILABILITY",
+                "tenants": [],
                 "managementappointment": [
                     {"id": 4255991, "availability_segment": {"id": 2878830}}
                 ],
@@ -322,4 +335,96 @@ class TestForcePendingCompletionFlow:
         assert result["ok"] is False
         assert result["schema_divergence"] is True
         assert "managementappointment" in result["error"]
+        assert not any(c["url"].endswith("/accept/") for c in calls)
+
+    def test_occupied_meld_refuses_without_accept_patch(self, monkeypatch):
+        _patch_creds_csrf(monkeypatch)
+        csrf_calls = []
+        monkeypatch.setattr(
+            hb,
+            "_get_csrf_token",
+            lambda cookie_hdr: csrf_calls.append(cookie_hdr) or "csrf-fake",
+        )
+        calls = _wire(monkeypatch, meld_body=_OCCUPIED_ZOMBIE_MELD)
+
+        result = hb.force_pending_completion(
+            "12937555", dtstart="2026-06-10T18:00:00Z", duration_hours=0.25
+        )
+
+        assert result["ok"] is False
+        assert result["status"] == "PENDING_MORE_MANAGEMENT_AVAILABILITY"
+        assert result["occupied"] is True
+        assert result["tenant_count"] == 1
+        assert "occupied" in result["error"].lower()
+        assert "MAINTENANCE_COULD_NOT_COMPLETE" not in result["error"]
+        assert csrf_calls == []
+        assert not any(c["url"].endswith("/accept/") for c in calls)
+
+    def test_non_empty_work_entries_refuse_without_accept_patch(self, monkeypatch):
+        _patch_creds_csrf(monkeypatch)
+        csrf_calls = []
+        monkeypatch.setattr(
+            hb,
+            "_get_csrf_token",
+            lambda cookie_hdr: csrf_calls.append(cookie_hdr) or "csrf-fake",
+        )
+        calls = []
+
+        def fake_urlopen(req, **kw):
+            method = req.get_method()
+            url = req.full_url
+            calls.append({"method": method, "url": url, "body": req.data})
+            if url.endswith("/accept/"):
+                return _FakeResp(_ACCEPT_200)
+            if method == "GET" and url.endswith("/melds/12937555/work-entries/"):
+                return _FakeResp(json.dumps({"results": [{"id": 9001}]}).encode())
+            if method == "GET" and url.endswith("/melds/12937555/"):
+                return _FakeResp(_ZOMBIE_MELD_WITH_APPT)
+            return _FakeResp(b"{}")
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        result = hb.force_pending_completion(
+            "12937555", dtstart="2026-06-10T18:00:00Z", duration_hours=0.25
+        )
+
+        assert result["ok"] is False
+        assert result["status"] == "PENDING_MORE_MANAGEMENT_AVAILABILITY"
+        assert result["work_entry_count"] == 1
+        assert "empty zombie" in result["error"].lower()
+        assert csrf_calls == []
+        assert not any(c["url"].endswith("/accept/") for c in calls)
+
+    def test_unknown_work_entries_dict_shape_fails_closed(self, monkeypatch):
+        _patch_creds_csrf(monkeypatch)
+        csrf_calls = []
+        monkeypatch.setattr(
+            hb,
+            "_get_csrf_token",
+            lambda cookie_hdr: csrf_calls.append(cookie_hdr) or "csrf-fake",
+        )
+        calls = []
+
+        def fake_urlopen(req, **kw):
+            method = req.get_method()
+            url = req.full_url
+            calls.append({"method": method, "url": url, "body": req.data})
+            if url.endswith("/accept/"):
+                return _FakeResp(_ACCEPT_200)
+            if method == "GET" and url.endswith("/melds/12937555/work-entries/"):
+                return _FakeResp(json.dumps({"count": 1, "items": [{"id": 9001}]}).encode())
+            if method == "GET" and url.endswith("/melds/12937555/"):
+                return _FakeResp(_ZOMBIE_MELD_WITH_APPT)
+            return _FakeResp(b"{}")
+
+        monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
+
+        result = hb.force_pending_completion(
+            "12937555", dtstart="2026-06-10T18:00:00Z", duration_hours=0.25
+        )
+
+        assert result["ok"] is False
+        assert result["schema_divergence"] is True
+        assert "work-entries" in result["error"]
+        assert csrf_calls == []
         assert not any(c["url"].endswith("/accept/") for c in calls)

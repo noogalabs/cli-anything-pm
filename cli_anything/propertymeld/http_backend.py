@@ -1926,6 +1926,79 @@ def _destructive_accept_guard(meld: dict, appt: dict, command_name: str) -> Opti
     return None
 
 
+def _occupied_meld_guard(meld: dict, command_name: str) -> Optional[dict]:
+    if "tenants" not in meld:
+        return {
+            "ok": False,
+            "error": "Unexpected PM meld schema: missing tenants field",
+            "schema_divergence": True,
+        }
+    tenants = meld.get("tenants")
+    if tenants is None:
+        tenants = []
+    if not isinstance(tenants, list):
+        return {
+            "ok": False,
+            "error": "Unexpected PM meld schema: tenants is not a list",
+            "schema_divergence": True,
+        }
+    if tenants:
+        return {
+            "ok": False,
+            "error": (
+                f"`{command_name}` is only safe for vacant, empty zombie melds. "
+                "This meld is occupied or has linked tenants, so the accept/ path would "
+                "create a real appointment and notify the resident. Use the PM web UI "
+                "or the proper tech-complete path instead."
+            ),
+            "occupied": True,
+            "tenant_count": len(tenants),
+        }
+    return None
+
+
+def _force_pending_work_entries_guard(meld_id: int, cookie_hdr: str) -> Optional[dict]:
+    data = _http_get(f"melds/{meld_id}/work-entries/", cookie_hdr)
+    if isinstance(data, dict):
+        if "results" in data:
+            entries = data.get("results")
+        elif isinstance(data.get("id"), int):
+            entries = [data]
+        elif not data:
+            entries = []
+        else:
+            return {
+                "ok": False,
+                "error": "Unexpected PM work-entries schema: missing results list",
+                "schema_divergence": True,
+            }
+    elif isinstance(data, list):
+        entries = data
+    else:
+        return {
+            "ok": False,
+            "error": "Unexpected PM work-entries schema",
+            "schema_divergence": True,
+        }
+    if not isinstance(entries, list):
+        return {
+            "ok": False,
+            "error": "Unexpected PM work-entries schema: expected list/results",
+            "schema_divergence": True,
+        }
+    if entries:
+        return {
+            "ok": False,
+            "error": (
+                "`force-pending-completion` is only safe for empty zombie melds. "
+                "This meld already has work entries, so use the PM web UI or the "
+                "proper tech-complete path instead of creating a synthetic appointment."
+            ),
+            "work_entry_count": len(entries),
+        }
+    return None
+
+
 def _accept_with_window(
     meld_id: int,
     dtstart: str,
@@ -2051,9 +2124,17 @@ def force_pending_completion(meld_id: str, dtstart: Optional[str] = None, durati
     if error:
         return {**error, "meld_id": meld_id, "status": status}
 
+    occupied_error = _occupied_meld_guard(meld, "force-pending-completion")
+    if occupied_error:
+        return {**occupied_error, "meld_id": meld_id, "status": status}
+
     destructive_error = _destructive_accept_guard(meld, appt, "force-pending-completion")
     if destructive_error:
         return {**destructive_error, "meld_id": meld_id, "status": status}
+
+    work_entries_error = _force_pending_work_entries_guard(meld_id, cookie_hdr)
+    if work_entries_error:
+        return {**work_entries_error, "meld_id": meld_id, "status": status}
 
     chosen_dtstart = dtstart or _default_force_pending_dtstart()
     csrf_token = _get_csrf_token(cookie_hdr)
