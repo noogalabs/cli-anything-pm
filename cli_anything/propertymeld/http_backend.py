@@ -488,6 +488,30 @@ def _http_get(path: str, cookie_hdr: str, *, side: str = "manager", vendor_id: O
         sys.exit(1)
 
 
+def _http_options(path: str, cookie_hdr: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
+    """OPTIONS a browser-session API path, return parsed JSON metadata."""
+    req = urllib.request.Request(
+        _build_url(path, side=side, vendor_id=vendor_id),
+        method="OPTIONS",
+        headers={
+            "Cookie": cookie_hdr,
+            "Accept": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "User-Agent": UA,
+            "Referer": f"{BASE}/melds/",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=15) as resp:
+            return _parse_json_body_or_exit(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise SessionExpired(e)
+        body = e.read().decode("utf-8", errors="ignore")
+        print(json.dumps(normalize_http_error(e.code, body)), file=sys.stderr)
+        sys.exit(1)
+
+
 def _http_get_no_exit(path: str, cookie_hdr: str, *, side: str = "manager", vendor_id: Optional[str] = None) -> Any:
     """GET variant that RETURNS a normalized error dict on non-401 HTTPError
     instead of sys.exit(1).
@@ -3536,25 +3560,70 @@ def create_meld(
     return {"ok": True, "meld_id": result.get("id"), "result": result}
 
 
+def _writable_put_fields_from_options(options_meta: Any) -> set[str]:
+    actions = options_meta.get("actions") if isinstance(options_meta, dict) else None
+    put_fields = actions.get("PUT") if isinstance(actions, dict) else None
+    if not isinstance(put_fields, dict):
+        raise RuntimeError(
+            "PropertyMeld did not advertise a PUT serializer for meld tenant linking"
+        )
+    return {
+        key for key, meta in put_fields.items()
+        if isinstance(meta, dict) and not meta.get("read_only")
+    }
+
+
+def _required_put_fields_from_options(options_meta: Any) -> set[str]:
+    actions = options_meta.get("actions") if isinstance(options_meta, dict) else None
+    put_fields = actions.get("PUT") if isinstance(actions, dict) else None
+    if not isinstance(put_fields, dict):
+        return set()
+    return {
+        key for key, meta in put_fields.items()
+        if isinstance(meta, dict) and meta.get("required")
+    }
+
+
+def _build_meld_tenants_put_payload(current: dict, options_meta: Any, tenants: list) -> dict:
+    writable_fields = _writable_put_fields_from_options(options_meta)
+    payload = {
+        key: current[key]
+        for key in writable_fields
+        if key in current
+    }
+    payload["tenants"] = tenants
+
+    missing_required = sorted(
+        key for key in _required_put_fields_from_options(options_meta)
+        if key not in payload or payload[key] is None
+    )
+    if missing_required:
+        raise RuntimeError(
+            "PropertyMeld meld-tenants PUT payload is missing required field(s): "
+            + ", ".join(missing_required)
+        )
+    return payload
+
+
 
 @with_recapture_retry
 def link_tenant_to_meld(meld_id: str, tenant_id) -> dict:
-    """Link a tenant to a meld by appending to the meld's tenants array.
+    """Link a tenant to a meld through PM's dedicated meld-tenants endpoint.
 
-    PATCH /api/melds/{meld_id}/ requires a full-payload echo: delta PATCHes
-    return HTTP 400 with field-required errors for brief_description,
-    work_location, work_category, work_type, and priority (verified live
-    2026-05-29), mirroring the set_coordinator shape. Tenants field is replaced
-    atomically — we read existing tenants first, append the new tenant as a
-    fully-hydrated object, and PATCH the merged array with the required meld
-    fields echoed from the current meld.
+    Earlier versions tried to PATCH /api/melds/{meld_id}/ with a merged
+    tenants array. PM accepted that PATCH with HTTP 2xx but left the relation
+    unchanged. The management app exposes the real relation endpoint as
+    /api/melds/{meld_id}/tenants/. Its live OPTIONS metadata advertises
+    `actions.PUT`: PUT replaces the whole relation object, so we round-trip
+    every writable field from the relation GET unchanged and replace only
+    tenants.
 
     Hydration mirrors the create_meld_in_project fix (P1 #2): PM serializers
     may walk nested fields on the tenants array, so we send full objects from
     GET /api/tenants/{id}/ rather than stripped {"id": N} placeholders.
 
     Idempotent: if tenant_id is already linked, returns {"already_linked": True}
-    without firing the PATCH.
+    without firing the PUT.
 
     Closes P1 #14 — gmail-tenant-link skill Step 5 was Playwright-only before.
     """
@@ -3563,7 +3632,7 @@ def link_tenant_to_meld(meld_id: str, tenant_id) -> dict:
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
 
-    current = _http_get(f"melds/{meld_id}/", cookie_hdr)
+    current = _http_get(f"melds/{meld_id}/tenants/", cookie_hdr)
     existing_tenants = current.get("tenants") or []
     # str()-normalize ids (PM may return them as strings): a str-vs-int slip
     # here would skip the already-linked short-circuit and fall through to the
@@ -3583,6 +3652,7 @@ def link_tenant_to_meld(meld_id: str, tenant_id) -> dict:
         }
 
     new_tenant = get_tenant(tenant_id_int)
+    options_meta = _http_options(f"melds/{meld_id}/tenants/", cookie_hdr)
     # Dedup guard by normalized id: belt-and-suspenders so the no-dedup append
     # can never duplicate a tenant even if the short-circuit above is bypassed.
     merged_tenants = list(existing_tenants)
@@ -3590,22 +3660,12 @@ def link_tenant_to_meld(meld_id: str, tenant_id) -> dict:
         merged_tenants.append(new_tenant)
 
     csrf_token = _get_csrf_token(cookie_hdr)
-    payload = {
-        "brief_description": current.get("brief_description"),
-        "work_location": current.get("work_location") or "",
-        "work_category": current.get("work_category"),
-        "work_type": current.get("work_type"),
-        "priority": current.get("priority"),
-        "tenants": merged_tenants,
-    }
-    result = _http_patch(f"melds/{meld_id}/", payload, cookie_hdr, csrf_token)
+    payload = _build_meld_tenants_put_payload(current, options_meta, merged_tenants)
+    result = _http_put(f"melds/{meld_id}/tenants/", payload, cookie_hdr, csrf_token)
 
-    # Verify-and-fail-loud: PM returns HTTP 2xx for the PATCH even when the
-    # meld's `tenants` relation is read-only/derived and silently ignores the
-    # write (operator hit this: linked:true but an immediate re-GET showed
-    # tenants=[]). Re-GET and confirm the link actually persisted server-side
-    # rather than trusting the local merge.
-    verify = _http_get(f"melds/{meld_id}/", cookie_hdr)
+    # Verify-and-fail-loud: never trust the local merge or the PUT response.
+    # Re-GET the relation endpoint and confirm the tenant actually persisted.
+    verify = _http_get(f"melds/{meld_id}/tenants/", cookie_hdr)
     persisted_tenants = verify.get("tenants") or []
     # Normalize both sides to str: PM may return tenant ids as strings, and a
     # str-vs-int mismatch here would raise "did NOT persist" on a genuine
@@ -3618,10 +3678,8 @@ def link_tenant_to_meld(meld_id: str, tenant_id) -> dict:
     if str(tenant_id_int) not in persisted_ids:
         raise RuntimeError(
             f"Tenant {tenant_id_int} link did NOT persist on meld {meld_id}: "
-            f"PropertyMeld accepted the PATCH (HTTP 2xx) but the meld's tenants "
-            f"relation is unchanged (likely a read-only/derived relation). Link "
-            f"this tenant via the PropertyMeld web UI for now. CLI link-tenant "
-            f"is pending the correct write-target fix."
+            f"PropertyMeld accepted the dedicated meld-tenants PUT (HTTP 2xx) "
+            f"but the relation is unchanged."
         )
 
     return {
