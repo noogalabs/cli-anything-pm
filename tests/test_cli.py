@@ -1355,6 +1355,34 @@ class TestUnitsEditNotesCLI:
         assert result.exit_code != 0
 
 
+class TestUnitsGetCLI:
+    """pm units get <unit_id> exposes the existing direct read-only backend."""
+
+    def test_returns_full_unit_without_rewriting_current_tenants(self, runner):
+        unit = {
+            "id": 1754419,
+            "display_address": {"full_address": "redacted"},
+            "prop": {"id": 1646329},
+            "current_tenants": [
+                {"id": 4043079, "is_active": True, "contact": {"cell_phone": "+14235551234"}},
+            ],
+        }
+        with patch("cli_anything.propertymeld.http_backend.get_unit",
+                   return_value=unit) as mock_fn:
+            result = runner.invoke(cli, ["units", "get", "1754419", "--json"])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output) == unit
+        mock_fn.assert_called_once_with(1754419)
+
+    def test_requires_integer_unit_id_before_backend_call(self, runner):
+        with patch("cli_anything.propertymeld.http_backend.get_unit") as mock_fn:
+            result = runner.invoke(cli, ["units", "get", "not-a-unit", "--json"])
+
+        assert result.exit_code != 0
+        mock_fn.assert_not_called()
+
+
 class TestTenantsEditNotesCLI:
     """pm tenants edit-notes <tenant_id> --notes <text> — resident-level recallable notes."""
 

@@ -510,6 +510,20 @@ def units():
     pass
 
 
+@units.command("get")
+@click.argument("unit_id", type=int)
+@click.option("--json", "as_json", is_flag=True, default=True)
+def get_unit_cmd(unit_id, as_json):
+    """Get a full unit by integer ID, including current_tenants.
+
+    This is the direct read-only GET /api/units/{unit_id}/ surface. It avoids
+    address resolution when a work-order response already supplies the exact
+    unit primary key.
+    """
+    result = http_backend.get_unit(unit_id)
+    output_json(result)
+
+
 @units.command("edit-notes")
 @click.argument("unit_id", type=int)
 @click.option("--notes", required=True,
