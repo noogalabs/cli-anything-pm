@@ -13,6 +13,7 @@ os.environ.setdefault("PM_CLIENT_ID", "test-client-id")
 os.environ.setdefault("PM_CLIENT_SECRET", "test-client-secret")
 
 from cli_anything.propertymeld import api_backend
+from cli_anything.propertymeld.markers import marker_kind
 from cli_anything.propertymeld.utils import clear_token_cache
 
 
@@ -104,7 +105,11 @@ class TestListWorkOrders:
                 make_response([{"id": 999}]),
             ]
             results = api_backend.list_work_orders()
-        assert results == [{"id": 999}]
+        # The row survives; work_entries is now explicitly marked not-carried
+        # rather than absent, so a consumer cannot read its absence as "none".
+        assert len(results) == 1
+        assert results[0]["id"] == 999
+        assert marker_kind(results[0]["work_entries"]) == "not-carried"
 
     def test_vendor_filter_uses_cookie_rows_not_ignored_nexus_param(self):
         rich_results = [
@@ -464,7 +469,9 @@ class TestListWorkOrders:
             ]
             results = api_backend.list_work_orders(include_tech=True)
 
-        assert results[0]["in_house_servicers"] == []
+        # CHANGED 2026-08-10: same rule as the detail path — a failed cookie
+        # list fetch marks the assignment fields instead of emptying them.
+        assert marker_kind(results[0]["in_house_servicers"]) == "fetch-failed"
         assert mock_detail.call_count == 0
         captured = capsys.readouterr()
         assert "cookie list fetch failed" in captured.err
@@ -586,7 +593,12 @@ class TestGetWorkOrder:
             ]
             result = api_backend.get_work_order("12904264", include_tech=True)
 
-        assert result["in_house_servicers"] == []
+        # CHANGED 2026-08-10: a failed cookie fetch must NOT produce []. These
+        # fields answer "who is assigned", and an empty list reads as "nobody
+        # assigned" on the emergency-intake path. The old assertion encoded that
+        # ambiguity — the warning text beside it even described the problem.
+        assert marker_kind(result["in_house_servicers"]) == "fetch-failed"
+        assert (result["in_house_servicers"] or []) is not []
         captured = capsys.readouterr()
         assert "cookie detail fetch failed for meld 12904264" in captured.err
         assert "cookie unavailable" in captured.err
