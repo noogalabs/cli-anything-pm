@@ -2449,6 +2449,40 @@ def _list_photo_source(meld_id: str, endpoint: str, role: str, optional: bool = 
     return tagged, note
 
 
+# Fields `pm ... inspect` intends to expose, enumerated from what CONSUMERS READ
+# rather than from what upstream happens to send.
+#
+# ALLOWLIST on purpose. inspect used to forward the raw upstream meld object
+# verbatim, so management authentication metadata rode out in ordinary --json
+# output (trent, 2026-08-09). A denylist of known-bad keys would fix the fields
+# we can see today and fail silently the first time upstream adds one — and for
+# a pass-through object that is a matter of when, not if.
+#
+# Failing closed means a NEW upstream field is invisible until someone
+# deliberately adds it here. That is the intended cost.
+_MELD_EXPOSED_FIELDS = (
+    "id", "reference_id", "status", "priority", "brief_description",
+    "description", "created", "updated", "completed",
+    "unit", "property", "tenant", "owner",
+    "assigned_to", "in_house_servicers", "managementappointment",
+    "completion_notes", "maintenance_notes",
+    "estimated_cost", "actual_cost", "invoice_status",
+    "work_entries",
+)
+
+
+def _expose_meld(meld: dict) -> dict:
+    """Project the upstream meld onto the allowlist. Unknown fields are DROPPED.
+
+    Deliberately not a redaction of named secrets: the defect was that inspect
+    forwarded an object it did not construct, so the fix is to stop forwarding
+    and start selecting.
+    """
+    if not isinstance(meld, dict):
+        return meld
+    return {k: meld[k] for k in _MELD_EXPOSED_FIELDS if k in meld}
+
+
 @with_recapture_retry
 def inspect_meld(meld_id: str) -> dict:
     """Aggregate meld detail, photos, notes, work entries, and comments."""
@@ -2461,7 +2495,7 @@ def inspect_meld(meld_id: str) -> dict:
     vendor_photos, vendor_note = _list_photo_source(meld_id, "vendor-files", "vendor", optional=True)
 
     result = {
-        "meld": meld,
+        "meld": _expose_meld(meld),
         "photos": {
             "manager": manager_photos,
             "tenant": tenant_photos,

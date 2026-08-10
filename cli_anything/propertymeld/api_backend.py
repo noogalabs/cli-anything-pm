@@ -10,6 +10,7 @@ Endpoint notes:
   - X-Multitenant-Id header required on all requests.
 """
 import json
+import time
 import ssl
 import sys
 import urllib.request
@@ -189,10 +190,26 @@ def list_work_orders(
             _warn_include_tech_unavailable(f"cookie list fetch failed: {exc}")
             rich = []
             detail_fetcher = lambda _meld_id: {}
+            # Same rule as the detail path: a failed fetch marks the assignment
+            # fields rather than emptying them.
+            from .markers import fetch_failed
+            for row in results:
+                for field in _ASSIGNMENT_FIELDS:
+                    row[field] = fetch_failed(field, "cookie_list_fetch_failed", str(exc))
         else:
             if results and not rich:
                 _warn_include_tech_unavailable("cookie list returned no rows")
-        _merge_assignment_fields(results, rich, detail_fetcher)
+            _merge_assignment_fields(results, rich, detail_fetcher)
+    # work_entries is NOT carried per row: populating it here is an N+1 against
+    # an endpoint that times out about a third of the time, which would make
+    # some rows true and others silently short. Uniformly absent-and-marked
+    # beats partially-and-invisibly wrong.
+    from .markers import not_carried
+    for row in results:
+        row["work_entries"] = not_carried(
+            "work_entries", "work-orders list",
+            "use `pm work-orders work-entries list <meld_id>` or `get <meld_id>`",
+        )
     return results
 
 
@@ -365,6 +382,8 @@ def get_work_order(meld_id: str, include_tech: bool = False) -> dict:
     result = _api_get(f"/meld/{meld_id}/")
     if include_tech:
         from . import http_backend
+        from .markers import fetch_failed
+        failure = None
         try:
             rich = http_backend.get_work_order_rich(meld_id)
         except (Exception, SystemExit) as exc:
@@ -372,9 +391,47 @@ def get_work_order(meld_id: str, include_tech: bool = False) -> dict:
                 f"cookie detail fetch failed for meld {meld_id}: {exc}"
             )
             rich = {}
+            failure = str(exc)
         for field in _ASSIGNMENT_FIELDS:
-            result[field] = rich.get(field) or []
+            if failure is not None:
+                # A failed fetch must NOT become []. These fields answer
+                # "who is assigned to this work order", and an empty list reads
+                # as "nobody assigned" on the emergency-intake path — a fetch
+                # failure wearing the costume of a fact.
+                result[field] = fetch_failed(field, "cookie_detail_fetch_failed", failure)
+            else:
+                result[field] = rich.get(field) or []
+
+    # work_entries: the upstream detail payload carries the KEY with a null
+    # value, so every `or []` consumer read it as "no entries". Populate it from
+    # the dedicated endpoint, which is the only source that carries truth.
+    result["work_entries"] = _fetch_work_entries_or_marker(meld_id)
     return result
+
+
+def _fetch_work_entries_or_marker(meld_id: str):
+    """Real entries, or a fetch-failed MARKER. Never null, never [].
+
+    The dedicated endpoint was measured at roughly a one-in-three timeout rate
+    (blue, 2026-08-09), so this retries with backoff. When it still fails the
+    field carries a marker: writing [] here would rebuild the exact defect this
+    change removes, and would do it behind a field that now looks
+    correctly-populated-from-source.
+    """
+    from . import http_backend
+    from .markers import fetch_failed
+    last = ""
+    for attempt in range(3):
+        try:
+            entries = http_backend.list_work_entries(meld_id)
+            if isinstance(entries, list):
+                return entries
+            last = f"unexpected payload type {type(entries).__name__}"
+        except (Exception, SystemExit) as exc:
+            last = str(exc)
+        if attempt < 2:
+            time.sleep(1.5 * (attempt + 1))
+    return fetch_failed("work_entries", "dedicated_endpoint_unavailable", last)
 
 
 def list_properties(limit: int = 100) -> list:
