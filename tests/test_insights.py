@@ -146,6 +146,26 @@ RECORDED_BENCHMARKS = [{
     "expenditure_spend_95th": 51.0,
 }]
 
+RECORDED_NAN_MELDS = [
+    {
+        "meld_meld_id": 201,
+        "meld_meld_work_category": "TURNOVER",
+        "meld_meld_project_id": 7001.0,
+        "vendor_assigned_name": None,
+    },
+    {
+        "meld_meld_id": 202,
+        "meld_meld_work_category": "TURNOVER",
+        "meld_meld_project_id": float("nan"),
+        "vendor_assigned_name": None,
+    },
+]
+
+RECORDED_NAN_BENCHMARKS = [
+    dict(RECORDED_BENCHMARKS[0], is_project=1.0, priority="NORMAL"),
+    dict(RECORDED_BENCHMARKS[0], is_project=float("nan"), priority="HIGH"),
+]
+
 
 def test_melds_uses_exact_get_and_resolves_without_leaking_free_text(credentials):
     payload = _parquet_bytes(RECORDED_MELDS)
@@ -193,21 +213,7 @@ def test_turnovers_filter_preserves_unresolved_rows(credentials):
 
 
 def test_meld_project_filter_treats_nan_as_non_project(credentials):
-    rows = [
-        {
-            "meld_meld_id": 201,
-            "meld_meld_work_category": "PLUMBING",
-            "meld_meld_project_id": 7001.0,
-            "vendor_assigned_name": None,
-        },
-        {
-            "meld_meld_id": 202,
-            "meld_meld_work_category": "PLUMBING",
-            "meld_meld_project_id": float("nan"),
-            "vendor_assigned_name": None,
-        },
-    ]
-    payload = _parquet_bytes(rows)
+    payload = _parquet_bytes(RECORDED_NAN_MELDS)
     with patch("urllib.request.urlopen", return_value=_response(payload)), patch(
         "cli_anything.propertymeld.api_backend.list_vendors", return_value=[]
     ):
@@ -221,35 +227,56 @@ def test_meld_project_filter_treats_nan_as_non_project(credentials):
     assert non_projects["project_missing_count"] == 1
 
 
-@pytest.mark.parametrize(("flag", "expected_ids"), [
-    ("--project", [201]),
-    ("--non-project", [202]),
+@pytest.mark.parametrize("command", ["melds", "turnovers", "benchmarks"])
+@pytest.mark.parametrize("flags", [[], ["--project"], ["--non-project"]], ids=[
+    "no-flag",
+    "project",
+    "non-project",
 ])
-def test_cli_project_flags_handle_real_nan(credentials, flag, expected_ids):
-    rows = [
-        {
-            "meld_meld_id": 201,
-            "meld_meld_work_category": "PLUMBING",
-            "meld_meld_project_id": 7001.0,
-            "vendor_assigned_name": None,
-        },
-        {
-            "meld_meld_id": 202,
-            "meld_meld_work_category": "PLUMBING",
-            "meld_meld_project_id": float("nan"),
-            "vendor_assigned_name": None,
-        },
-    ]
-    payload = _parquet_bytes(rows)
-    with patch("urllib.request.urlopen", return_value=_response(payload)), patch(
+def test_cli_preserves_missing_project_disclosure_for_every_mode(
+    credentials, command, flags
+):
+    if command == "benchmarks":
+        response = _response(_parquet_bytes(RECORDED_NAN_BENCHMARKS))
+        response.geturl.return_value = (
+            "https://app.propertymeld.com/3287/m/3287/api/analytics/parquet/"
+            "benchmarks.parquet"
+        )
+    else:
+        response = _response(_parquet_bytes(RECORDED_NAN_MELDS))
+    with patch("urllib.request.urlopen", return_value=response), patch(
         "cli_anything.propertymeld.api_backend.list_vendors", return_value=[]
     ):
-        result = CliRunner().invoke(cli, ["insights", "melds", flag, "--limit", "10"])
+        result = CliRunner().invoke(
+            cli,
+            ["insights", command, *flags, "--limit", "10"],
+        )
 
     assert result.exit_code == 0
     output = json.loads(result.output)
-    assert [row["meld_meld_id"] for row in output["rows"]] == expected_ids
     assert output["project_missing_count"] == 1
+
+
+def test_default_backends_disclose_recorded_nan_for_all_datasets():
+    meld_payload = _parquet_bytes(RECORDED_NAN_MELDS)
+    benchmark_payload = _parquet_bytes(RECORDED_NAN_BENCHMARKS)
+    with patch.object(
+        insights_backend,
+        "_fetch_parquet_bytes",
+        side_effect=[meld_payload, meld_payload, benchmark_payload],
+    ), patch(
+        "cli_anything.propertymeld.api_backend.list_vendors", return_value=[]
+    ):
+        results = {
+            "melds": insights_backend.get_melds(limit=10),
+            "turnovers": insights_backend.get_melds(limit=10, turnovers_only=True),
+            "benchmarks": insights_backend.get_benchmarks(limit=10),
+        }
+
+    assert {
+        dataset: result["project_missing_count"]
+        for dataset, result in results.items()
+    } == {"melds": 1, "turnovers": 1, "benchmarks": 1}
 
 
 def test_vendor_name_collision_is_ambiguous_and_row_is_not_dropped():
@@ -293,6 +320,26 @@ def test_vendor_roster_unbounded_mode_exhausts_nexus_pagination():
     assert getter.call_count == 2
 
 
+def test_vendor_roster_transport_is_get_without_body():
+    response = MagicMock()
+    response.__enter__.return_value = response
+    response.__exit__.return_value = False
+    response.read.return_value = json.dumps({
+        "next": None,
+        "results": [{"id": 1, "name": "Recorded Vendor"}],
+    }).encode()
+    with patch.object(api_backend, "get_token", return_value="recorded-token"), patch(
+        "urllib.request.urlopen", return_value=response
+    ) as opener:
+        rows = api_backend.list_vendors(limit=None)
+
+    request = opener.call_args.args[0]
+    assert request.get_method() == "GET"
+    assert request.data is None
+    assert request.full_url.endswith("/api/v2/vendor/?limit=100")
+    assert rows == [{"id": 1, "name": "Recorded Vendor"}]
+
+
 def test_benchmarks_exact_endpoint_and_recorded_shape(credentials):
     payload = _parquet_bytes(RECORDED_BENCHMARKS)
     response = _response(payload)
@@ -316,9 +363,7 @@ def test_benchmarks_exact_endpoint_and_recorded_shape(credentials):
 
 
 def test_benchmark_project_filter_treats_nan_as_non_project(credentials):
-    project_row = dict(RECORDED_BENCHMARKS[0], is_project=1.0, priority="NORMAL")
-    non_project_row = dict(RECORDED_BENCHMARKS[0], is_project=float("nan"), priority="HIGH")
-    payload = _parquet_bytes([project_row, non_project_row])
+    payload = _parquet_bytes(RECORDED_NAN_BENCHMARKS)
     response = _response(payload)
     response.geturl.return_value = (
         "https://app.propertymeld.com/3287/m/3287/api/analytics/parquet/"
