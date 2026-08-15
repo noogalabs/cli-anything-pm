@@ -54,6 +54,21 @@ pm tenants invite --unit-id 1870266 --first-name Jane --last-name Resident --ema
 pm tenants edit-contact 4427861 --cell 4235550100 --primary-email tenant@example.com
 ```
 
+### Read-only Insights analytics
+
+```bash
+pm insights melds --limit 100
+pm insights turnovers --project --limit 100
+pm insights benchmarks --work-category TURNOVER --limit 100
+```
+
+Insights commands fetch only the fixed authenticated Parquet GET endpoints and
+emit a safe JSON projection. Meld and turnover rows join
+`vendor_assigned_name` to the complete Nexus vendor roster. Each row retains
+the source name and reports `resolved`, `unresolved`, `ambiguous`, or
+`not_applicable`; unresolved and ambiguous rows are never discarded. Session
+expiry fails closed instead of invoking the write-capable recapture path.
+
 ## Architecture
 
 Dual backend:
@@ -63,3 +78,19 @@ Dual backend:
 ## Contributing
 
 This is a CLI-Anything harness. Follow the [CLI-Anything contribution guide](https://github.com/HKUDS/CLI-Anything) for CLI-Hub submission.
+
+### Building the wheel
+
+Build release wheels from the repository root with:
+
+```bash
+python setup.py bdist_wheel
+```
+
+The build command recreates both its source-copy staging directory and its final
+wheel payload directory before copying modules. Generated `build/` and `dist/`
+trees are ignored and must not be committed. The test suite verifies that the
+complete `cli_anything/` wheel payload contains exactly the declared Python
+source members with byte-for-byte parity and no extra file type. It then
+installs the wheel in a fresh virtual environment and exercises the public
+`pm insights` command tree.
