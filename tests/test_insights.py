@@ -379,6 +379,21 @@ RECORDED_MINIMAL_BENCHMARKS = [{
     "completed_month": "2026-08-01T00:00:00Z",
 }]
 
+REQUIRED_CLI_INPUT_ROSTER = (
+    ("melds", "meld_meld_id"),
+    ("melds", "meld_meld_work_category"),
+    ("melds", "vendor_assigned_name"),
+    ("turnovers", "meld_meld_id"),
+    ("turnovers", "meld_meld_work_category"),
+    ("turnovers", "vendor_assigned_name"),
+    ("benchmarks", "unit_count"),
+    ("benchmarks", "priority"),
+    ("benchmarks", "work_category"),
+    ("benchmarks", "region"),
+    ("benchmarks", "is_project"),
+    ("benchmarks", "completed_month"),
+)
+
 
 def _expected_cli_meld_rows():
     return [
@@ -653,6 +668,48 @@ def test_cli_schema_is_invariant_for_minimal_supported_parquet(
     assert optional
     assert {field: row[field] for field in optional} == {
         field: None for field in optional
+    }
+
+
+@pytest.mark.parametrize(
+    "command,missing_member",
+    REQUIRED_CLI_INPUT_ROSTER,
+    ids=[
+        f"{command}-missing-{member}"
+        for command, member in REQUIRED_CLI_INPUT_ROSTER
+    ],
+)
+def test_cli_fails_closed_and_names_each_missing_required_member(
+    credentials, command, missing_member
+):
+    source = (
+        RECORDED_MINIMAL_BENCHMARKS[0]
+        if command == "benchmarks"
+        else RECORDED_MINIMAL_MELDS[0]
+    )
+    row = dict(source)
+    del row[missing_member]
+    response = _response(_parquet_bytes([row]))
+    if command == "benchmarks":
+        response.geturl.return_value = (
+            "https://app.propertymeld.com/3287/m/3287/api/analytics/parquet/"
+            "benchmarks.parquet"
+        )
+    with patch("urllib.request.urlopen", return_value=response), patch(
+        "cli_anything.propertymeld.api_backend.list_vendors",
+        return_value=CLI_VENDOR_ROSTER[:1],
+    ):
+        result = CliRunner().invoke(
+            cli,
+            ["insights", command, "--limit", "10"],
+        )
+
+    assert result.exit_code == 1
+    assert json.loads(result.output) == {
+        "error": (
+            "Insights parquet schema is missing required columns: "
+            f"{missing_member}"
+        )
     }
 
 
