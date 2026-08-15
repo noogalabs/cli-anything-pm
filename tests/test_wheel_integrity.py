@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,14 +19,44 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _run(command, *, cwd, env=None):
-    return subprocess.run(
-        [str(part) for part in command],
+    command = [str(part) for part in command]
+    result = subprocess.run(
+        command,
         cwd=cwd,
         env=env,
-        check=True,
         capture_output=True,
         text=True,
     )
+    if result.returncode:
+        pytest.fail(
+            f"command exited {result.returncode}: {command!r}"
+            f"\n--- stdout ---\n{result.stdout}"
+            f"\n--- stderr ---\n{result.stderr}",
+            pytrace=False,
+        )
+    return result
+
+
+def test_run_surfaces_captured_streams_on_failure(tmp_path):
+    with pytest.raises(pytest.fail.Exception) as failure:
+        _run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys; "
+                    "print('captured-build-stdout'); "
+                    "print('captured-build-stderr', file=sys.stderr); "
+                    "raise SystemExit(7)"
+                ),
+            ],
+            cwd=tmp_path,
+        )
+
+    message = str(failure.value)
+    assert "command exited 7" in message
+    assert "captured-build-stdout" in message
+    assert "captured-build-stderr" in message
 
 
 def test_generated_build_trees_are_ignored_and_untracked():
@@ -79,6 +110,30 @@ def built_wheel(tmp_path_factory):
     )
     future = time.time() + 3600
     os.utime(stale_cli, (future, future))
+
+    retained_dist = workspace / "retained-dist"
+    retained_build = _run(
+        [
+            sys.executable,
+            "setup.py",
+            "bdist_wheel",
+            "--keep-temp",
+            "--dist-dir",
+            retained_dist,
+        ],
+        cwd=source_tree,
+    )
+    staging_match = re.search(r"^installing to (.+)$", retained_build.stdout, re.MULTILINE)
+    assert staging_match is not None
+    bdist_staging = Path(staging_match.group(1))
+    if not bdist_staging.is_absolute():
+        bdist_staging = source_tree / bdist_staging
+    stale_only = bdist_staging / "cli_anything/propertymeld/stale_only.py"
+    stale_only.parent.mkdir(parents=True, exist_ok=True)
+    stale_only.write_text(
+        'SENTINEL = "stale-bdist-leak"\n',
+        encoding="utf-8",
+    )
 
     dist_dir = workspace / "dist"
     _run(
@@ -140,3 +195,18 @@ def test_installed_wheel_exposes_complete_insights_cli(built_wheel):
     )
     assert str(venv_dir) in location.stdout
     assert str(REPO_ROOT) not in location.stdout
+
+    absence = _run(
+        [
+            python,
+            "-c",
+            (
+                "import importlib.util; "
+                "print(importlib.util.find_spec("
+                "'cli_anything.propertymeld.stale_only'))"
+            ),
+        ],
+        cwd=workspace,
+        env=env,
+    )
+    assert absence.stdout.strip() == "None"

@@ -4,6 +4,11 @@ from pathlib import Path
 from setuptools import find_packages, setup
 from setuptools.command.build_py import build_py
 
+try:
+    from setuptools.command.bdist_wheel import bdist_wheel
+except ImportError:  # setuptools < 70.1 delegates this command to wheel
+    from wheel.bdist_wheel import bdist_wheel
+
 
 class CleanBuildPy(build_py):
     """Prevent a prior build's modules from leaking into a new wheel."""
@@ -15,13 +20,26 @@ class CleanBuildPy(build_py):
         super().run()
 
 
+class FreshBdistWheel(bdist_wheel):
+    """Recreate the complete final wheel payload before installing into it."""
+
+    def run(self):
+        bdist_dir = Path(self.bdist_dir)
+        if bdist_dir.exists():
+            shutil.rmtree(bdist_dir)
+        super().run()
+
+
 setup(
     name="cli-anything-pm",
     version="0.1.0",
     packages=find_packages(),
     include_package_data=True,
     package_data={"cli_anything.propertymeld.recapture": ["*.py"]},
-    cmdclass={"build_py": CleanBuildPy},
+    cmdclass={
+        "build_py": CleanBuildPy,
+        "bdist_wheel": FreshBdistWheel,
+    },
     install_requires=[
         "click>=8.0",
         "playwright>=1.40",
