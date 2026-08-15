@@ -17,8 +17,8 @@ import sys
 
 import click
 
-from . import api_backend, http_backend
-from .utils import output_json, resolve_meld_id
+from . import api_backend, http_backend, insights_backend
+from .utils import output_json, print_error, resolve_meld_id
 
 
 @click.group()
@@ -26,6 +26,70 @@ from .utils import output_json, resolve_meld_id
 def cli():
     """Property Meld CLI — read work orders, properties, vendors; assign techs."""
     pass
+
+
+# ── insights group (strictly read-only) ───────────────────────────────────────
+
+@cli.group("insights")
+def insights():
+    """Read PropertyMeld Insights analytics as clean JSON."""
+    pass
+
+
+def _output_insights(callable_, **kwargs):
+    try:
+        result = callable_(**kwargs)
+    except insights_backend.InsightsError as exc:
+        print_error(str(exc))
+        raise click.exceptions.Exit(1) from exc
+    output_json(result)
+
+
+@insights.command("melds")
+@click.option("--limit", type=click.IntRange(1, 10000), default=100, show_default=True)
+@click.option("--work-category", default=None, help="Exact work category filter.")
+@click.option("--project/--non-project", default=None, help="Filter project status.")
+def insights_melds(limit, work_category, project):
+    """Return safe meld analytics with canonical vendor IDs."""
+    _output_insights(
+        insights_backend.get_melds,
+        limit=limit,
+        work_category=work_category,
+        project=project,
+        turnovers_only=False,
+    )
+
+
+@insights.command("turnovers")
+@click.option("--limit", type=click.IntRange(1, 10000), default=100, show_default=True)
+@click.option("--project/--non-project", default=None, help="Filter project status.")
+def insights_turnovers(limit, project):
+    """Return TURNOVER analytics with canonical vendor IDs."""
+    _output_insights(
+        insights_backend.get_melds,
+        limit=limit,
+        work_category=None,
+        project=project,
+        turnovers_only=True,
+    )
+
+
+@insights.command("benchmarks")
+@click.option("--limit", type=click.IntRange(1, 10000), default=100, show_default=True)
+@click.option("--work-category", default=None, help="Exact work category filter.")
+@click.option("--priority", default=None, help="Exact priority filter.")
+@click.option("--region", default=None, help="Exact region filter.")
+@click.option("--project/--non-project", default=None, help="Filter project status.")
+def insights_benchmarks(limit, work_category, priority, region, project):
+    """Return PropertyMeld benchmark percentile rows."""
+    _output_insights(
+        insights_backend.get_benchmarks,
+        limit=limit,
+        work_category=work_category,
+        priority=priority,
+        region=region,
+        project=project,
+    )
 
 
 # ── work-orders group ──────────────────────────────────────────────────────────

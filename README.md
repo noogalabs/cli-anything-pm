@@ -54,6 +54,21 @@ pm tenants invite --unit-id 1870266 --first-name Jane --last-name Resident --ema
 pm tenants edit-contact 4427861 --cell 4235550100 --primary-email tenant@example.com
 ```
 
+### Read-only Insights analytics
+
+```bash
+pm insights melds --limit 100
+pm insights turnovers --project --limit 100
+pm insights benchmarks --work-category TURNOVER --limit 100
+```
+
+Insights commands fetch only the fixed authenticated Parquet GET endpoints and
+emit a safe JSON projection. Meld and turnover rows join
+`vendor_assigned_name` to the complete Nexus vendor roster. Each row retains
+the source name and reports `resolved`, `unresolved`, `ambiguous`, or
+`not_applicable`; unresolved and ambiguous rows are never discarded. Session
+expiry fails closed instead of invoking the write-capable recapture path.
+
 ## Architecture
 
 Dual backend:

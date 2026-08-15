@@ -36,7 +36,8 @@ def _api_get(path: str, params: Optional[dict] = None) -> Any:
             "X-Multitenant-Id": MULTITENANT_ID,
             "User-Agent": UA,
             "Accept": "application/json",
-        }
+        },
+        method="GET",
     )
 
     try:
@@ -388,18 +389,23 @@ def list_properties(limit: int = 100) -> list:
     return _paginate_until("/property/", limit)
 
 
-def list_vendors(limit: int = 100) -> list:
+def list_vendors(limit: Optional[int] = 100) -> list:
     """List vendors up to `limit`. See list_properties for pagination notes."""
     return _paginate_until("/vendor/", limit)
 
 
-def _paginate_until(path: str, limit: int) -> list:
-    """Walk DRF `next` links until `limit` items collected or chain exhausted."""
-    page_size = max(1, min(limit, 100))
+def _paginate_until(path: str, limit: Optional[int]) -> list:
+    """Walk DRF `next` links until `limit` items collected or chain exhausted.
+
+    ``limit=None`` deliberately exhausts the server-owned pagination chain.
+    Insights vendor identity joins use that shape so a later-page canonical
+    vendor can never be mislabeled unresolved by a client-side roster cap.
+    """
+    page_size = 100 if limit is None else max(1, min(limit, 100))
     next_path: Optional[str] = path
     params: Optional[dict] = {"limit": page_size}
     results: list = []
-    while next_path and len(results) < limit:
+    while next_path and (limit is None or len(results) < limit):
         data = _api_get(next_path, params)
         page_items = data.get("results", data) if isinstance(data, dict) else data
         if not isinstance(page_items, list):
@@ -416,7 +422,7 @@ def _paginate_until(path: str, limit: int) -> list:
             params = None  # the `next` URL already has limit + cursor baked in
         else:
             break
-    return results[:limit]
+    return results if limit is None else results[:limit]
 
 
 def probe() -> dict:
