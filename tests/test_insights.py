@@ -364,6 +364,21 @@ CLI_VENDOR_ROSTER = [
     {"id": 92002, "name": " same   vendor "},
 ]
 
+RECORDED_MINIMAL_MELDS = [{
+    "meld_meld_id": 401,
+    "meld_meld_work_category": "TURNOVER",
+    "vendor_assigned_name": "DBH Construction",
+}]
+
+RECORDED_MINIMAL_BENCHMARKS = [{
+    "unit_count": "251-500",
+    "priority": "NORMAL",
+    "work_category": "TURNOVER",
+    "region": "SOUTHEAST",
+    "is_project": True,
+    "completed_month": "2026-08-01T00:00:00Z",
+}]
+
 
 def _expected_cli_meld_rows():
     return [
@@ -446,11 +461,16 @@ def _expected_cli_payload(command):
     }
 
 
-def _assert_complete_cli_schema(command, output):
+def _assert_cli_row_schema(command, output):
     schema = CLI_OUTPUT_SCHEMA[command]
     assert set(output) == set(schema["top_level"])
     assert output["columns"] == list(schema["row"])
     assert set().union(*(set(row) for row in output["rows"])) == set(schema["row"])
+
+
+def _assert_complete_cli_schema(command, output):
+    _assert_cli_row_schema(command, output)
+    schema = CLI_OUTPUT_SCHEMA[command]
     if command == "benchmarks":
         return
     summary = output["vendor_resolution"]
@@ -469,6 +489,25 @@ def _assert_complete_cli_schema(command, output):
     assert set().union(*(set(match) for match in matches)) == set(
         schema["vendor_match"]
     )
+
+
+def _invoke_recorded_cli(command, rows, *, roster=(), extra_args=()):
+    response = _response(_parquet_bytes(rows))
+    if command == "benchmarks":
+        response.geturl.return_value = (
+            "https://app.propertymeld.com/3287/m/3287/api/analytics/parquet/"
+            "benchmarks.parquet"
+        )
+    with patch("urllib.request.urlopen", return_value=response), patch(
+        "cli_anything.propertymeld.api_backend.list_vendors",
+        return_value=list(roster),
+    ):
+        result = CliRunner().invoke(
+            cli,
+            ["insights", command, *extra_args, "--limit", "10"],
+        )
+    assert result.exit_code == 0
+    return json.loads(result.output)
 
 
 def test_melds_uses_exact_get_and_resolves_without_leaking_free_text(credentials):
@@ -586,6 +625,107 @@ def test_cli_preserves_every_named_output_member_from_recorded_parquet(
     output = json.loads(result.output)
     _assert_complete_cli_schema(command, output)
     assert output == _expected_cli_payload(command)
+
+
+@pytest.mark.parametrize("command", ["melds", "turnovers", "benchmarks"])
+def test_cli_schema_is_invariant_for_minimal_supported_parquet(
+    credentials, command
+):
+    if command == "benchmarks":
+        rows = RECORDED_MINIMAL_BENCHMARKS
+        required = {
+            "unit_count", "priority", "work_category", "region", "is_project",
+            "completed_month",
+        }
+        roster = ()
+    else:
+        rows = RECORDED_MINIMAL_MELDS
+        required = {
+            "meld_meld_id", "meld_meld_work_category", "vendor_assigned_name",
+            "vendor_resolution",
+        }
+        roster = CLI_VENDOR_ROSTER[:1]
+
+    output = _invoke_recorded_cli(command, rows, roster=roster)
+    _assert_cli_row_schema(command, output)
+    row = output["rows"][0]
+    optional = set(CLI_OUTPUT_SCHEMA[command]["row"]) - required
+    assert optional
+    assert {field: row[field] for field in optional} == {
+        field: None for field in optional
+    }
+
+
+@pytest.mark.parametrize("command", ["melds", "turnovers"])
+def test_cli_vendor_counts_zero_fill_resolved_only_result(credentials, command):
+    output = _invoke_recorded_cli(
+        command,
+        RECORDED_MINIMAL_MELDS,
+        roster=CLI_VENDOR_ROSTER[:1],
+    )
+
+    assert output["vendor_resolution"] == {
+        "counts": {
+            "resolved": 1,
+            "unresolved": 0,
+            "ambiguous": 0,
+            "not_applicable": 0,
+        },
+        "unresolved_names": [],
+        "ambiguous_names": [],
+    }
+    assert output["rows"][0]["vendor_resolution"]["status"] == "resolved"
+
+
+@pytest.mark.parametrize("command", ["melds", "turnovers"])
+def test_cli_vendor_counts_zero_fill_unresolved_only_result(credentials, command):
+    rows = [dict(RECORDED_MINIMAL_MELDS[0], vendor_assigned_name="Unknown Vendor")]
+    output = _invoke_recorded_cli(command, rows)
+
+    assert output["vendor_resolution"] == {
+        "counts": {
+            "resolved": 0,
+            "unresolved": 1,
+            "ambiguous": 0,
+            "not_applicable": 0,
+        },
+        "unresolved_names": ["Unknown Vendor"],
+        "ambiguous_names": [],
+    }
+    assert output["rows"][0]["vendor_resolution"]["status"] == "unresolved"
+
+
+@pytest.mark.parametrize("command", ["melds", "turnovers"])
+def test_cli_vendor_counts_zero_fill_empty_result(credentials, command):
+    if command == "melds":
+        rows = RECORDED_MINIMAL_MELDS
+        extra_args = ("--work-category", "PLUMBING")
+    else:
+        rows = [
+            dict(RECORDED_MINIMAL_MELDS[0], meld_meld_work_category="PLUMBING")
+        ]
+        extra_args = ()
+    output = _invoke_recorded_cli(
+        command,
+        rows,
+        roster=CLI_VENDOR_ROSTER[:1],
+        extra_args=extra_args,
+    )
+
+    assert output["columns"] == list(CLI_OUTPUT_SCHEMA[command]["row"])
+    assert output["matched_count"] == 0
+    assert output["returned_count"] == 0
+    assert output["rows"] == []
+    assert output["vendor_resolution"] == {
+        "counts": {
+            "resolved": 0,
+            "unresolved": 0,
+            "ambiguous": 0,
+            "not_applicable": 0,
+        },
+        "unresolved_names": [],
+        "ambiguous_names": [],
+    }
 
 
 def test_default_backends_disclose_recorded_nan_for_all_datasets():
