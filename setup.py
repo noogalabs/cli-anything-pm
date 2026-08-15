@@ -6,7 +6,12 @@ setup(
     packages=find_packages(),
     include_package_data=True,
     package_data={"cli_anything.propertymeld.recapture": ["*.py"]},
-    install_requires=["click>=8.0", "playwright>=1.40", "requests>=2.31"],
+    install_requires=[
+        "click>=8.0",
+        "playwright>=1.40",
+        "requests>=2.31",
+        "pyarrow>=25.0,<26",
+    ],
     entry_points={
         "console_scripts": ["pm=cli_anything.propertymeld.cli:cli"],
         "snapcli.platforms": ["pm=cli_anything.propertymeld.cli:cli"],
