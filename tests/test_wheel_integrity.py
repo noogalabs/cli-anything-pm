@@ -16,6 +16,8 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+STALE_PYTHON_MEMBER = "cli_anything/propertymeld/stale_only.py"
+STALE_PAYLOAD_MEMBER = "cli_anything/propertymeld/stale_payload.txt"
 
 
 def _run(command, *, cwd, env=None):
@@ -128,10 +130,15 @@ def built_wheel(tmp_path_factory):
     bdist_staging = Path(staging_match.group(1))
     if not bdist_staging.is_absolute():
         bdist_staging = source_tree / bdist_staging
-    stale_only = bdist_staging / "cli_anything/propertymeld/stale_only.py"
+    stale_only = bdist_staging / STALE_PYTHON_MEMBER
     stale_only.parent.mkdir(parents=True, exist_ok=True)
     stale_only.write_text(
         'SENTINEL = "stale-bdist-leak"\n',
+        encoding="utf-8",
+    )
+    stale_payload = bdist_staging / STALE_PAYLOAD_MEMBER
+    stale_payload.write_text(
+        "stale-non-python-payload\n",
         encoding="utf-8",
     )
 
@@ -145,7 +152,7 @@ def built_wheel(tmp_path_factory):
     return source_tree, wheels[0], workspace
 
 
-def test_wheel_python_modules_match_source_bytes(built_wheel):
+def test_wheel_payload_matches_declared_source_bytes(built_wheel):
     source_tree, wheel_path, _ = built_wheel
     expected = {
         path.relative_to(source_tree).as_posix(): path.read_bytes()
@@ -156,9 +163,11 @@ def test_wheel_python_modules_match_source_bytes(built_wheel):
         actual = {
             name: archive.read(name)
             for name in archive.namelist()
-            if name.startswith("cli_anything/") and name.endswith(".py")
+            if name.startswith("cli_anything/") and not name.endswith("/")
         }
 
+    assert STALE_PYTHON_MEMBER not in actual
+    assert STALE_PAYLOAD_MEMBER not in actual
     assert actual.keys() == expected.keys()
     assert actual == expected
 
@@ -210,3 +219,18 @@ def test_installed_wheel_exposes_complete_insights_cli(built_wheel):
         env=env,
     )
     assert absence.stdout.strip() == "None"
+
+    installed_payload = _run(
+        [
+            python,
+            "-c",
+            (
+                "from pathlib import Path; import cli_anything; "
+                "package = Path(cli_anything.__file__).parent; "
+                "print((package / 'propertymeld/stale_payload.txt').exists())"
+            ),
+        ],
+        cwd=workspace,
+        env=env,
+    )
+    assert installed_payload.stdout.strip() == "False"

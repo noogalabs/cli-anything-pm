@@ -89,7 +89,8 @@ python setup.py bdist_wheel
 
 The build command recreates both its source-copy staging directory and its final
 wheel payload directory before copying modules. Generated `build/` and `dist/`
-trees are ignored and must not be committed. The test suite verifies
-byte-for-byte parity between every packaged Python module and its source file,
-then installs the wheel in a fresh virtual environment and exercises the public
+trees are ignored and must not be committed. The test suite verifies that the
+complete `cli_anything/` wheel payload contains exactly the declared Python
+source members with byte-for-byte parity and no extra file type. It then
+installs the wheel in a fresh virtual environment and exercises the public
 `pm insights` command tree.
