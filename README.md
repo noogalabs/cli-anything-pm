@@ -78,3 +78,17 @@ Dual backend:
 ## Contributing
 
 This is a CLI-Anything harness. Follow the [CLI-Anything contribution guide](https://github.com/HKUDS/CLI-Anything) for CLI-Hub submission.
+
+### Building the wheel
+
+Build release wheels from the repository root with:
+
+```bash
+python setup.py bdist_wheel
+```
+
+The build command clears its Python staging directory before copying source
+modules. Generated `build/` and `dist/` trees are ignored and must not be
+committed. The test suite verifies byte-for-byte parity between every packaged
+Python module and its source file, then installs the wheel in a fresh virtual
+environment and exercises the public `pm insights` command tree.
