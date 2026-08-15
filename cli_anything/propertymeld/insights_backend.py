@@ -307,7 +307,9 @@ def resolve_vendor_names(
 def _project_matches(value: Any, project: Optional[bool]) -> bool:
     if project is None:
         return True
-    is_project = bool(value)
+    is_project = value is not None and not (
+        isinstance(value, float) and not math.isfinite(value)
+    ) and bool(value)
     return is_project is project
 
 
@@ -393,7 +395,7 @@ def get_benchmarks(
         if _string_matches(row.get("work_category"), work_category)
         and _string_matches(row.get("priority"), priority)
         and _string_matches(row.get("region"), region)
-        and (project is None or bool(row.get("is_project")) is project)
+        and _project_matches(row.get("is_project"), project)
     ]
     returned = _sanitize_nonfinite(filtered[:limit])
     return {

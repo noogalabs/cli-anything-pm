@@ -192,6 +192,33 @@ def test_turnovers_filter_preserves_unresolved_rows(credentials):
     assert all(row["vendor_resolution"]["status"] == "unresolved" for row in result["rows"])
 
 
+def test_meld_project_filter_treats_nan_as_non_project(credentials):
+    rows = [
+        {
+            "meld_meld_id": 201,
+            "meld_meld_work_category": "PLUMBING",
+            "meld_meld_project_id": 7001.0,
+            "vendor_assigned_name": None,
+        },
+        {
+            "meld_meld_id": 202,
+            "meld_meld_work_category": "PLUMBING",
+            "meld_meld_project_id": float("nan"),
+            "vendor_assigned_name": None,
+        },
+    ]
+    payload = _parquet_bytes(rows)
+    with patch("urllib.request.urlopen", return_value=_response(payload)), patch(
+        "cli_anything.propertymeld.api_backend.list_vendors", return_value=[]
+    ):
+        projects = insights_backend.get_melds(limit=10, project=True)
+        non_projects = insights_backend.get_melds(limit=10, project=False)
+
+    assert [row["meld_meld_id"] for row in projects["rows"]] == [201]
+    assert [row["meld_meld_id"] for row in non_projects["rows"]] == [202]
+    assert non_projects["rows"][0]["meld_meld_project_id"] is None
+
+
 def test_vendor_name_collision_is_ambiguous_and_row_is_not_dropped():
     rows = [{"meld_meld_id": 1, "vendor_assigned_name": "Same Vendor"}]
     vendors = [
@@ -253,6 +280,24 @@ def test_benchmarks_exact_endpoint_and_recorded_shape(credentials):
     assert request.full_url.endswith("/api/analytics/parquet/benchmarks.parquet")
     assert result["returned_count"] == 1
     assert result["rows"][0]["sor_50th"] == 3.0
+
+
+def test_benchmark_project_filter_treats_nan_as_non_project(credentials):
+    project_row = dict(RECORDED_BENCHMARKS[0], is_project=1.0, priority="NORMAL")
+    non_project_row = dict(RECORDED_BENCHMARKS[0], is_project=float("nan"), priority="HIGH")
+    payload = _parquet_bytes([project_row, non_project_row])
+    response = _response(payload)
+    response.geturl.return_value = (
+        "https://app.propertymeld.com/3287/m/3287/api/analytics/parquet/"
+        "benchmarks.parquet"
+    )
+    with patch("urllib.request.urlopen", return_value=response):
+        projects = insights_backend.get_benchmarks(limit=10, project=True)
+        non_projects = insights_backend.get_benchmarks(limit=10, project=False)
+
+    assert [row["priority"] for row in projects["rows"]] == ["NORMAL"]
+    assert [row["priority"] for row in non_projects["rows"]] == ["HIGH"]
+    assert non_projects["rows"][0]["is_project"] is None
 
 
 def test_unknown_dataset_refuses_before_credentials_or_network():
