@@ -304,13 +304,21 @@ def resolve_vendor_names(
     return enriched, summary
 
 
+def _project_state(value: Any) -> Optional[bool]:
+    if value is None or (
+        isinstance(value, float) and not math.isfinite(value)
+    ):
+        return None
+    return bool(value)
+
+
 def _project_matches(value: Any, project: Optional[bool]) -> bool:
     if project is None:
         return True
-    is_project = value is not None and not (
-        isinstance(value, float) and not math.isfinite(value)
-    ) and bool(value)
-    return is_project is project
+    state = _project_state(value)
+    if state is None:
+        return project is False
+    return state is project
 
 
 def _string_matches(value: Any, expected: Optional[str]) -> bool:
@@ -355,11 +363,19 @@ def get_melds(
         required_columns=_MELD_REQUIRED,
     )
     category = "TURNOVER" if turnovers_only else work_category
-    filtered = [
+    eligible = [
         row
         for row in rows
         if _string_matches(row.get("meld_meld_work_category"), category)
-        and _project_matches(row.get("meld_meld_project_id"), project)
+    ]
+    missing_projects = sum(
+        _project_state(row.get("meld_meld_project_id")) is None
+        for row in eligible
+    )
+    filtered = [
+        row
+        for row in eligible
+        if _project_matches(row.get("meld_meld_project_id"), project)
     ]
     returned = _sanitize_nonfinite(filtered[:limit])
     vendors = api_backend.list_vendors(limit=None)
@@ -370,6 +386,7 @@ def get_melds(
         "columns": columns + ["vendor_resolution"],
         "matched_count": len(filtered),
         "returned_count": len(enriched),
+        "project_missing_count": missing_projects,
         "vendor_resolution": resolution,
         "rows": enriched,
     }
@@ -389,13 +406,21 @@ def get_benchmarks(
         allowed_columns=_BENCHMARK_COLUMNS,
         required_columns=_BENCHMARK_REQUIRED,
     )
-    filtered = [
+    eligible = [
         row
         for row in rows
         if _string_matches(row.get("work_category"), work_category)
         and _string_matches(row.get("priority"), priority)
         and _string_matches(row.get("region"), region)
-        and _project_matches(row.get("is_project"), project)
+    ]
+    missing_projects = sum(
+        _project_state(row.get("is_project")) is None
+        for row in eligible
+    )
+    filtered = [
+        row
+        for row in eligible
+        if _project_matches(row.get("is_project"), project)
     ]
     returned = _sanitize_nonfinite(filtered[:limit])
     return {
@@ -404,5 +429,6 @@ def get_benchmarks(
         "columns": columns,
         "matched_count": len(filtered),
         "returned_count": len(returned),
+        "project_missing_count": missing_projects,
         "rows": returned,
     }

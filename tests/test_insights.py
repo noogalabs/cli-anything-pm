@@ -217,6 +217,39 @@ def test_meld_project_filter_treats_nan_as_non_project(credentials):
     assert [row["meld_meld_id"] for row in projects["rows"]] == [201]
     assert [row["meld_meld_id"] for row in non_projects["rows"]] == [202]
     assert non_projects["rows"][0]["meld_meld_project_id"] is None
+    assert projects["project_missing_count"] == 1
+    assert non_projects["project_missing_count"] == 1
+
+
+@pytest.mark.parametrize(("flag", "expected_ids"), [
+    ("--project", [201]),
+    ("--non-project", [202]),
+])
+def test_cli_project_flags_handle_real_nan(credentials, flag, expected_ids):
+    rows = [
+        {
+            "meld_meld_id": 201,
+            "meld_meld_work_category": "PLUMBING",
+            "meld_meld_project_id": 7001.0,
+            "vendor_assigned_name": None,
+        },
+        {
+            "meld_meld_id": 202,
+            "meld_meld_work_category": "PLUMBING",
+            "meld_meld_project_id": float("nan"),
+            "vendor_assigned_name": None,
+        },
+    ]
+    payload = _parquet_bytes(rows)
+    with patch("urllib.request.urlopen", return_value=_response(payload)), patch(
+        "cli_anything.propertymeld.api_backend.list_vendors", return_value=[]
+    ):
+        result = CliRunner().invoke(cli, ["insights", "melds", flag, "--limit", "10"])
+
+    assert result.exit_code == 0
+    output = json.loads(result.output)
+    assert [row["meld_meld_id"] for row in output["rows"]] == expected_ids
+    assert output["project_missing_count"] == 1
 
 
 def test_vendor_name_collision_is_ambiguous_and_row_is_not_dropped():
@@ -298,6 +331,8 @@ def test_benchmark_project_filter_treats_nan_as_non_project(credentials):
     assert [row["priority"] for row in projects["rows"]] == ["NORMAL"]
     assert [row["priority"] for row in non_projects["rows"]] == ["HIGH"]
     assert non_projects["rows"][0]["is_project"] is None
+    assert projects["project_missing_count"] == 1
+    assert non_projects["project_missing_count"] == 1
 
 
 def test_unknown_dataset_refuses_before_credentials_or_network():
