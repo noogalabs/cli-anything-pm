@@ -167,6 +167,310 @@ RECORDED_NAN_BENCHMARKS = [
 ]
 
 
+RECORDED_CLI_MELDS = [
+    {
+        "meld_meld_id": 301,
+        "meld_meld_created": "2026-08-04T10:00:00Z",
+        "meld_meld_status": "COMPLETED",
+        "meld_meld_work_category": "TURNOVER",
+        "meld_meld_project_id": 8001.0,
+        "vendor_assigned_name": "DBH Construction",
+        "inhouse_servicer_name": "Primary Technician",
+        "meld_meld_coordinator_id": 90025,
+        "meld_meld_coordinator_name": "Coordinator One",
+        "meld_meld_assigned_to_accepted_for_vendor": 31.0,
+        "meld_meld_accepted_to_scheduled_for_vendor": 61.0,
+        "meld_meld_assigned_to_scheduled": 91.0,
+        "meld_meld_assigned_to_completed": 181.0,
+        "meld_meld_tenant_rating": 5,
+        "invoice_amount": 251.0,
+        "expenditure_amount": 76.0,
+        "total_worklog_hours": 2.5,
+        "vendor_chat_response_seconds": 46,
+    },
+    {
+        "meld_meld_id": 302,
+        "meld_meld_created": "2026-08-05T10:00:00Z",
+        "meld_meld_status": "COMPLETED",
+        "meld_meld_work_category": "TURNOVER",
+        "meld_meld_project_id": float("nan"),
+        "vendor_assigned_name": "Unknown Vendor",
+        "inhouse_servicer_name": "Secondary Technician",
+        "meld_meld_coordinator_id": 57164,
+        "meld_meld_coordinator_name": "Coordinator Two",
+        "meld_meld_assigned_to_accepted_for_vendor": 32.0,
+        "meld_meld_accepted_to_scheduled_for_vendor": 62.0,
+        "meld_meld_assigned_to_scheduled": 92.0,
+        "meld_meld_assigned_to_completed": 182.0,
+        "meld_meld_tenant_rating": 4,
+        "invoice_amount": 252.0,
+        "expenditure_amount": 77.0,
+        "total_worklog_hours": 3.5,
+        "vendor_chat_response_seconds": 47,
+    },
+    {
+        "meld_meld_id": 303,
+        "meld_meld_created": "2026-08-06T10:00:00Z",
+        "meld_meld_status": "PENDING_ASSIGNMENT",
+        "meld_meld_work_category": "TURNOVER",
+        "meld_meld_project_id": 8003.0,
+        "vendor_assigned_name": "Same Vendor",
+        "inhouse_servicer_name": "Third Technician",
+        "meld_meld_coordinator_id": 57165,
+        "meld_meld_coordinator_name": "Coordinator Three",
+        "meld_meld_assigned_to_accepted_for_vendor": 33.0,
+        "meld_meld_accepted_to_scheduled_for_vendor": 63.0,
+        "meld_meld_assigned_to_scheduled": 93.0,
+        "meld_meld_assigned_to_completed": 183.0,
+        "meld_meld_tenant_rating": 3,
+        "invoice_amount": 253.0,
+        "expenditure_amount": 78.0,
+        "total_worklog_hours": 4.5,
+        "vendor_chat_response_seconds": 48,
+    },
+    {
+        "meld_meld_id": 304,
+        "meld_meld_created": "2026-08-07T10:00:00Z",
+        "meld_meld_status": "IN_PROGRESS",
+        "meld_meld_work_category": "TURNOVER",
+        "meld_meld_project_id": 8004.0,
+        "vendor_assigned_name": None,
+        "inhouse_servicer_name": "Fourth Technician",
+        "meld_meld_coordinator_id": 57166,
+        "meld_meld_coordinator_name": "Coordinator Four",
+        "meld_meld_assigned_to_accepted_for_vendor": 34.0,
+        "meld_meld_accepted_to_scheduled_for_vendor": 64.0,
+        "meld_meld_assigned_to_scheduled": 94.0,
+        "meld_meld_assigned_to_completed": 184.0,
+        "meld_meld_tenant_rating": 2,
+        "invoice_amount": 254.0,
+        "expenditure_amount": 79.0,
+        "total_worklog_hours": 5.5,
+        "vendor_chat_response_seconds": 49,
+    },
+]
+
+RECORDED_CLI_BENCHMARKS = [
+    dict(RECORDED_BENCHMARKS[0], is_project=1.0),
+    {
+        **RECORDED_BENCHMARKS[0],
+        "unit_count": "501-1000",
+        "priority": "HIGH",
+        "work_category": "PLUMBING",
+        "region": "MIDWEST",
+        "is_project": float("nan"),
+        "completed_month": "2026-08-01T00:00:00Z",
+        "sor_5th": 6.0,
+        "sor_25th": 7.0,
+        "sor_50th": 8.0,
+        "sor_75th": 9.0,
+        "sor_95th": 10.0,
+        "res_sat_5th": 6.0,
+        "res_sat_25th": 7.0,
+        "res_sat_50th": 8.0,
+        "res_sat_75th": 9.0,
+        "res_sat_95th": 10.0,
+        "invoice_spend_5th": 60.0,
+        "invoice_spend_25th": 70.0,
+        "invoice_spend_50th": 80.0,
+        "invoice_spend_75th": 90.0,
+        "invoice_spend_95th": 100.0,
+        "expenditure_spend_5th": 61.0,
+        "expenditure_spend_25th": 71.0,
+        "expenditure_spend_50th": 81.0,
+        "expenditure_spend_75th": 91.0,
+        "expenditure_spend_95th": 101.0,
+    },
+]
+
+
+# Fleet lesson 007: a schema criterion over three commands is checked by
+# enumerating every consumer-readable member for each command by name.
+CLI_OUTPUT_SCHEMA = {
+    "melds": {
+        "top_level": (
+            "dataset", "source", "columns", "matched_count", "returned_count",
+            "project_missing_count", "vendor_resolution", "rows",
+        ),
+        "row": (
+            "meld_meld_id", "meld_meld_created", "meld_meld_status",
+            "meld_meld_work_category", "meld_meld_project_id",
+            "vendor_assigned_name", "inhouse_servicer_name",
+            "meld_meld_coordinator_id", "meld_meld_coordinator_name",
+            "meld_meld_assigned_to_accepted_for_vendor",
+            "meld_meld_accepted_to_scheduled_for_vendor",
+            "meld_meld_assigned_to_scheduled", "meld_meld_assigned_to_completed",
+            "meld_meld_tenant_rating", "invoice_amount", "expenditure_amount",
+            "total_worklog_hours", "vendor_chat_response_seconds",
+            "vendor_resolution",
+        ),
+        "vendor_summary": ("counts", "unresolved_names", "ambiguous_names"),
+        "vendor_counts": (
+            "resolved", "unresolved", "ambiguous", "not_applicable",
+        ),
+        "row_vendor_resolution": (
+            "status", "source_name", "vendor_id", "vendor_name", "matches",
+        ),
+        "vendor_match": ("vendor_id", "vendor_name"),
+    },
+    "turnovers": {
+        "top_level": (
+            "dataset", "source", "columns", "matched_count", "returned_count",
+            "project_missing_count", "vendor_resolution", "rows",
+        ),
+        "row": (
+            "meld_meld_id", "meld_meld_created", "meld_meld_status",
+            "meld_meld_work_category", "meld_meld_project_id",
+            "vendor_assigned_name", "inhouse_servicer_name",
+            "meld_meld_coordinator_id", "meld_meld_coordinator_name",
+            "meld_meld_assigned_to_accepted_for_vendor",
+            "meld_meld_accepted_to_scheduled_for_vendor",
+            "meld_meld_assigned_to_scheduled", "meld_meld_assigned_to_completed",
+            "meld_meld_tenant_rating", "invoice_amount", "expenditure_amount",
+            "total_worklog_hours", "vendor_chat_response_seconds",
+            "vendor_resolution",
+        ),
+        "vendor_summary": ("counts", "unresolved_names", "ambiguous_names"),
+        "vendor_counts": (
+            "resolved", "unresolved", "ambiguous", "not_applicable",
+        ),
+        "row_vendor_resolution": (
+            "status", "source_name", "vendor_id", "vendor_name", "matches",
+        ),
+        "vendor_match": ("vendor_id", "vendor_name"),
+    },
+    "benchmarks": {
+        "top_level": (
+            "dataset", "source", "columns", "matched_count", "returned_count",
+            "project_missing_count", "rows",
+        ),
+        "row": (
+            "unit_count", "priority", "work_category", "region", "is_project",
+            "completed_month", "sor_5th", "sor_25th", "sor_50th", "sor_75th",
+            "sor_95th", "res_sat_5th", "res_sat_25th", "res_sat_50th",
+            "res_sat_75th", "res_sat_95th", "invoice_spend_5th",
+            "invoice_spend_25th", "invoice_spend_50th", "invoice_spend_75th",
+            "invoice_spend_95th", "expenditure_spend_5th",
+            "expenditure_spend_25th", "expenditure_spend_50th",
+            "expenditure_spend_75th", "expenditure_spend_95th",
+        ),
+    },
+}
+
+
+CLI_VENDOR_ROSTER = [
+    {"id": 91159, "name": "DBH Construction"},
+    {"id": 92001, "name": "Same Vendor"},
+    {"id": 92002, "name": " same   vendor "},
+]
+
+
+def _expected_cli_meld_rows():
+    return [
+        {
+            **RECORDED_CLI_MELDS[0],
+            "vendor_resolution": {
+                "status": "resolved",
+                "source_name": "DBH Construction",
+                "vendor_id": 91159,
+                "vendor_name": "DBH Construction",
+            },
+        },
+        {
+            **RECORDED_CLI_MELDS[1],
+            "meld_meld_project_id": None,
+            "vendor_resolution": {
+                "status": "unresolved",
+                "source_name": "Unknown Vendor",
+                "vendor_id": None,
+                "vendor_name": None,
+            },
+        },
+        {
+            **RECORDED_CLI_MELDS[2],
+            "vendor_resolution": {
+                "status": "ambiguous",
+                "source_name": "Same Vendor",
+                "vendor_id": None,
+                "vendor_name": None,
+                "matches": [
+                    {"vendor_id": 92001, "vendor_name": "Same Vendor"},
+                    {"vendor_id": 92002, "vendor_name": "same   vendor"},
+                ],
+            },
+        },
+        {
+            **RECORDED_CLI_MELDS[3],
+            "vendor_resolution": {
+                "status": "not_applicable",
+                "source_name": None,
+                "vendor_id": None,
+                "vendor_name": None,
+            },
+        },
+    ]
+
+
+def _expected_cli_payload(command):
+    if command in {"melds", "turnovers"}:
+        return {
+            "dataset": command,
+            "source": "analytics/parquet/raw_meld_data.parquet",
+            "columns": list(CLI_OUTPUT_SCHEMA[command]["row"]),
+            "matched_count": 4,
+            "returned_count": 4,
+            "project_missing_count": 1,
+            "vendor_resolution": {
+                "counts": {
+                    "ambiguous": 1,
+                    "not_applicable": 1,
+                    "resolved": 1,
+                    "unresolved": 1,
+                },
+                "unresolved_names": ["Unknown Vendor"],
+                "ambiguous_names": ["Same Vendor"],
+            },
+            "rows": _expected_cli_meld_rows(),
+        }
+    return {
+        "dataset": "benchmarks",
+        "source": "analytics/parquet/benchmarks.parquet",
+        "columns": list(CLI_OUTPUT_SCHEMA["benchmarks"]["row"]),
+        "matched_count": 2,
+        "returned_count": 2,
+        "project_missing_count": 1,
+        "rows": [
+            dict(RECORDED_CLI_BENCHMARKS[0]),
+            {**RECORDED_CLI_BENCHMARKS[1], "is_project": None},
+        ],
+    }
+
+
+def _assert_complete_cli_schema(command, output):
+    schema = CLI_OUTPUT_SCHEMA[command]
+    assert set(output) == set(schema["top_level"])
+    assert output["columns"] == list(schema["row"])
+    assert set().union(*(set(row) for row in output["rows"])) == set(schema["row"])
+    if command == "benchmarks":
+        return
+    summary = output["vendor_resolution"]
+    assert set(summary) == set(schema["vendor_summary"])
+    assert set(summary["counts"]) == set(schema["vendor_counts"])
+    resolutions = [row["vendor_resolution"] for row in output["rows"]]
+    assert set().union(*(set(resolution) for resolution in resolutions)) == set(
+        schema["row_vendor_resolution"]
+    )
+    matches = [
+        match
+        for resolution in resolutions
+        for match in resolution.get("matches", [])
+    ]
+    assert matches
+    assert set().union(*(set(match) for match in matches)) == set(
+        schema["vendor_match"]
+    )
+
+
 def test_melds_uses_exact_get_and_resolves_without_leaking_free_text(credentials):
     payload = _parquet_bytes(RECORDED_MELDS)
     roster = [{"id": 91159, "name": "DBH Construction"}]
@@ -255,6 +559,33 @@ def test_cli_preserves_missing_project_disclosure_for_every_mode(
     assert result.exit_code == 0
     output = json.loads(result.output)
     assert output["project_missing_count"] == 1
+
+
+@pytest.mark.parametrize("command", ["melds", "turnovers", "benchmarks"])
+def test_cli_preserves_every_named_output_member_from_recorded_parquet(
+    credentials, command
+):
+    if command == "benchmarks":
+        response = _response(_parquet_bytes(RECORDED_CLI_BENCHMARKS))
+        response.geturl.return_value = (
+            "https://app.propertymeld.com/3287/m/3287/api/analytics/parquet/"
+            "benchmarks.parquet"
+        )
+    else:
+        response = _response(_parquet_bytes(RECORDED_CLI_MELDS))
+    with patch("urllib.request.urlopen", return_value=response), patch(
+        "cli_anything.propertymeld.api_backend.list_vendors",
+        return_value=CLI_VENDOR_ROSTER,
+    ):
+        result = CliRunner().invoke(
+            cli,
+            ["insights", command, "--limit", "10"],
+        )
+
+    assert result.exit_code == 0
+    output = json.loads(result.output)
+    _assert_complete_cli_schema(command, output)
+    assert output == _expected_cli_payload(command)
 
 
 def test_default_backends_disclose_recorded_nan_for_all_datasets():
