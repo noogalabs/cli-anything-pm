@@ -97,6 +97,13 @@ _BENCHMARK_REQUIRED = frozenset({
     "completed_month",
 })
 
+_VENDOR_RESOLUTION_STATUSES = (
+    "resolved",
+    "unresolved",
+    "ambiguous",
+    "not_applicable",
+)
+
 _UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 _SSL_CONTEXT = ssl.create_default_context()
 
@@ -200,6 +207,7 @@ def _read_parquet_rows(
         ) from exc
 
     try:
+        declared = list(allowed_columns)
         source = pa.BufferReader(payload)
         available = set(parquet.read_schema(source).names)
         missing = sorted(required_columns - available)
@@ -208,14 +216,18 @@ def _read_parquet_rows(
                 "Insights parquet schema is missing required columns: "
                 + ", ".join(missing)
             )
-        selected = [column for column in allowed_columns if column in available]
+        selected = [column for column in declared if column in available]
         source.seek(0)
         table = parquet.read_table(source, columns=selected)
     except InsightsError:
         raise
     except Exception as exc:
         raise InsightsError(f"Cannot decode Insights parquet: {exc}") from exc
-    return table.to_pylist(), selected
+    rows = [
+        {column: row.get(column) for column in declared}
+        for row in table.to_pylist()
+    ]
+    return rows, declared
 
 
 def _normalize_vendor_name(value: Any) -> str:
@@ -297,7 +309,10 @@ def resolve_vendor_names(
         enriched.append(row)
 
     summary = {
-        "counts": dict(sorted(counts.items())),
+        "counts": {
+            status: counts[status]
+            for status in _VENDOR_RESOLUTION_STATUSES
+        },
         "unresolved_names": sorted(unresolved, key=str.casefold),
         "ambiguous_names": sorted(ambiguous, key=str.casefold),
     }
