@@ -566,16 +566,38 @@ class TestWorkOrdersLifecycleCLI:
         assert result.exit_code == 0
         mock_fn.assert_called_once_with("12819946", ["12820134", "12820186"])
 
-    def test_complete_with_notes(self, runner):
-        with patch("cli_anything.propertymeld.http_backend.complete_meld",
-                   return_value={"id": 1001, "status": "COMPLETE"}) as mock_fn:
-            result = runner.invoke(cli, ["work-orders", "complete",
-                                         "--meld-id", "12701108",
-                                         "--notes", "Replaced filter."])
-        assert result.exit_code == 0
+    def test_complete_with_notes_refuses_without_network_and_returns_context(self, runner):
+        """The CLI must not imply persistence after manager completion was disabled."""
+        fail_creds = lambda: pytest.fail("manager refusal must precede credentials")
+        fail_network = lambda *a, **k: pytest.fail("manager refusal must precede network")
+        with patch("cli_anything.propertymeld.http_backend._load_creds", fail_creds), \
+             patch("cli_anything.propertymeld.http_backend._http_get", fail_network), \
+             patch("cli_anything.propertymeld.http_backend._get_csrf_token", fail_network), \
+             patch("cli_anything.propertymeld.http_backend._http_patch", fail_network):
+            result = runner.invoke(cli, [
+                "work-orders", "complete",
+                "--meld-id", "12701108",
+                "--notes", "Replaced filter.",
+            ])
+        assert result.exit_code == 1
         data = json.loads(result.output)
-        assert data["status"] == "COMPLETE"
-        mock_fn.assert_called_once_with("12701108", completion_notes="Replaced filter.")
+        assert data["status"] is None
+        assert data["completion_notes"] == "Replaced filter."
+        assert "manager-side completion is disabled" in data["error"]
+        assert "in-house work through the tech-app checkout" in data["error"]
+        assert "vendor work through the vendor-side path" in data["error"]
+        assert "other manager work through the Property Meld web UI" in data["error"]
+
+    def test_complete_help_says_notes_are_not_persisted(self, runner):
+        result = runner.invoke(cli, ["work-orders", "complete", "--help"])
+        assert result.exit_code == 0
+        help_text = " ".join(result.output.split())
+        assert "Refuse manager completion" in help_text
+        assert "tech-app checkout for in-house work" in help_text
+        assert "vendor-side completion for vendor work" in help_text
+        assert "Property Meld web UI for other manager work" in help_text
+        assert "not persisted" in help_text
+        assert "Mark a meld complete" not in help_text
 
     def test_cancel_with_reason(self, runner):
         with patch("cli_anything.propertymeld.http_backend.cancel_meld",

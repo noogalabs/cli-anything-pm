@@ -1354,9 +1354,10 @@ def complete_meld(
             completion_notes,
             (
                 "manager-side completion is disabled because Property Meld provides no "
-                "atomic way to prevent a could-not-complete transition. Complete vendor "
-                "work through the vendor-side path with vendor_id and completion_date, "
-                "or use the Property Meld web UI."
+                "atomic way to prevent a could-not-complete transition. Complete in-house "
+                "work through the tech-app checkout, vendor work through the vendor-side "
+                "path with vendor_id and completion_date, or other manager work through "
+                "the Property Meld web UI."
             ),
         )
     creds = _load_creds()
