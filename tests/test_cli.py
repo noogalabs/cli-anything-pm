@@ -584,6 +584,9 @@ class TestWorkOrdersLifecycleCLI:
         assert data["status"] is None
         assert data["completion_notes"] == "Replaced filter."
         assert "manager-side completion is disabled" in data["error"]
+        assert "in-house work through the tech-app checkout" in data["error"]
+        assert "vendor work through the vendor-side path" in data["error"]
+        assert "other manager work through the Property Meld web UI" in data["error"]
 
     def test_complete_help_says_notes_are_not_persisted(self, runner):
         result = runner.invoke(cli, ["work-orders", "complete", "--help"])
