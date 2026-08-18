@@ -1315,10 +1315,10 @@ def complete_meld(
 ) -> dict:
     """Mark a meld complete. Side-aware: manager vs vendor PM uses different payload shapes.
 
-    Manager surface (default): meld must be in PENDING_COMPLETION. The CLI
-        checks that state before PATCH and fails loud without sending the
-        complete request otherwise.
-        Payload: {completion_notes?: str}.
+    Manager surface (default): disabled. Property Meld offers no atomic
+        conditional-write contract for this endpoint, so a client-side state
+        check can race an assignment and strand the meld in a could-not-complete
+        state. Use the Property Meld web UI instead.
 
     Vendor surface: operator-on-behalf-of-vendor; pass vendor_id of the assigned vendor.
         Payload (verified capture 2026-05-16 024240Z):
@@ -1343,90 +1343,43 @@ def complete_meld(
         if not completion_date:
             raise ValueError("completion_date required when side='vendor'")
     meld_id = _validate_meld_id(meld_id)
+    if side != "vendor":
+        # Person031's invariant is absolute: our tooling must never write a
+        # could-not-complete state. A preflight GET cannot hold custody through
+        # the third-party PATCH, so it cannot make that invariant atomic. When
+        # custody cannot be held through a mutation, do not mutate.
+        _complete_meld_fail(
+            meld_id,
+            None,
+            completion_notes,
+            (
+                "manager-side completion is disabled because Property Meld provides no "
+                "atomic way to prevent a could-not-complete transition. Complete vendor "
+                "work through the vendor-side path with vendor_id and completion_date, "
+                "or use the Property Meld web UI."
+            ),
+        )
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
 
-    if side == "vendor":
-        payload: dict = {
-            "is_complete": True,
-            "date": completion_date,
-            "reason": completion_notes or "",
-        }
-    else:
-        current = _http_get(f"melds/{meld_id}/", cookie_hdr)
-        current_status = _meld_status(current)
-        if current_status != "PENDING_COMPLETION":
-            _complete_meld_fail(
-                meld_id,
-                current_status,
-                completion_notes,
-                (
-                    f"meld {meld_id} is {current_status}, must be PENDING_COMPLETION to complete. "
-                    "Move it to PENDING_COMPLETION first, or relabel via the web UI."
-                ),
-            )
-        # In-house melds cannot be closed via the manager complete/ path: PM
-        # routes them to MAINTENANCE_COULD_NOT_COMPLETE. The differentiator is the
-        # completion ACTION, not meld state — the tech-app checkout completes an
-        # in-house meld, but manager complete/ strands it. Confirmed live
-        # 2026-06-23 (TQY8B7DB stranded WITH completed work-entries; identical
-        # state to a tech-app-completed meld). Fail loud BEFORE the PATCH so we
-        # never strand a meld.
-        if _meld_is_in_house(current):
-            _complete_meld_fail(
-                meld_id,
-                current_status,
-                completion_notes,
-                (
-                    f"meld {meld_id} is an in-house meld; the manager complete path "
-                    "strands it in MAINTENANCE_COULD_NOT_COMPLETE. Complete it via the "
-                    "tech-app checkout (tech checks out), or relabel via the web UI. "
-                    "(Vendor melds use the vendor complete path and are unaffected.)"
-                ),
-            )
-        payload = {}
-        if completion_notes:
-            payload["completion_notes"] = completion_notes
+    payload: dict = {
+        "is_complete": True,
+        "date": completion_date,
+        "reason": completion_notes or "",
+    }
 
     csrf_token = _get_csrf_token(cookie_hdr)
     result = _http_patch(
         f"melds/{meld_id}/complete/", payload, cookie_hdr, csrf_token,
         side=side, vendor_id=vendor_id,
     )
-    verified_status = None
-    if side != "vendor":
-        verified = _http_get(f"melds/{meld_id}/", cookie_hdr)
-        verified_status = _meld_status(verified)
-        if verified_status != "COMPLETED":
-            _complete_meld_fail(
-                meld_id,
-                verified_status,
-                completion_notes,
-                f"meld {meld_id} complete request did not reach COMPLETED; actual state is {verified_status}.",
-                result=result,
-            )
     return {
         "ok": True,
         "meld_id": meld_id,
         "completion_notes": completion_notes,
         "side": side,
         "result": result,
-        **({"status": verified_status} if verified_status is not None else {}),
     }
-
-
-def _meld_is_in_house(meld: Any) -> bool:
-    """True if the meld has an in-house servicer assignment.
-
-    In-house melds complete via the tech-app checkout; the manager complete/
-    path strands them in MAINTENANCE_COULD_NOT_COMPLETE (PM behavior confirmed
-    live 2026-06-23). Vendor melds have an empty `in_house_servicers` and carry a
-    `vendorassignment` instead, so they do not trip this guard.
-    """
-    if not isinstance(meld, dict):
-        return False
-    servicers = meld.get("in_house_servicers")
-    return isinstance(servicers, list) and len(servicers) > 0
 
 
 def _meld_status(meld: Any) -> Optional[str]:
