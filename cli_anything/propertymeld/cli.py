@@ -507,7 +507,11 @@ def merge_meld(destination_id, source_ids, meld_id, into_meld_id, as_json):
 )
 @click.option("--json", "as_json", is_flag=True, default=True)
 def complete_meld(meld_id, notes, as_json):
-    """Refuse manager-side completion; use vendor tooling or Property Meld web UI."""
+    """Refuse manager completion.
+
+    Use tech-app checkout for in-house work, vendor-side completion for vendor
+    work, or the Property Meld web UI for other manager work.
+    """
     meld_id = _normalize_meld_id(meld_id)
     result = http_backend.complete_meld(meld_id, completion_notes=notes)
     output_json(result)

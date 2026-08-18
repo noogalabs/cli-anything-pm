@@ -592,7 +592,10 @@ class TestWorkOrdersLifecycleCLI:
         result = runner.invoke(cli, ["work-orders", "complete", "--help"])
         assert result.exit_code == 0
         help_text = " ".join(result.output.split())
-        assert "Refuse manager-side completion" in help_text
+        assert "Refuse manager completion" in help_text
+        assert "tech-app checkout for in-house work" in help_text
+        assert "vendor-side completion for vendor work" in help_text
+        assert "Property Meld web UI for other manager work" in help_text
         assert "not persisted" in help_text
         assert "Mark a meld complete" not in help_text
 
