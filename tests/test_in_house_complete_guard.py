@@ -21,12 +21,13 @@ def _patch_base(monkeypatch):
     monkeypatch.setattr(hb, "_get_csrf_token", lambda cookie_hdr: "csrf-fake")
 
 
-def _meld(status="PENDING_COMPLETION", in_house=True):
+def _meld(status="PENDING_COMPLETION", in_house=True, vendor_requests=None):
     return {
         "id": 12793634,
         "status": status,
         "in_house_servicers": [{"id": 1, "agent": {"id": 2}}] if in_house else [],
-        "vendorassignment": [] if in_house else [{"id": 9}],
+        "vendor_assignment_requests": vendor_requests or [],
+        "vendorassignment": [],
     }
 
 
@@ -76,6 +77,48 @@ def test_non_in_house_manager_complete_proceeds(monkeypatch):
     out = hb.complete_meld("12793634")
     assert sent["called"] is True
     assert out["ok"] is True and out.get("status") == "COMPLETED"
+
+
+@pytest.mark.parametrize("vendor_requests", [
+    [{"id": 8000, "accepted": "2026-08-05T12:47:50Z", "rejected": None, "canceled": None}],
+    [{"id": 8001, "accepted": None, "rejected": "2026-08-06T12:00:00Z", "canceled": None}],
+    [{"id": 8002, "accepted": None, "rejected": None, "canceled": "2026-08-07T12:00:00Z"}],
+])
+def test_vendor_assignment_history_refuses_before_patch(monkeypatch, capsys, vendor_requests):
+    """VENDOR_COULD_NOT_COMPLETE is unreachable, not merely post-detected."""
+    _patch_base(monkeypatch)
+    monkeypatch.setattr(
+        hb, "_http_get",
+        lambda path, cookie: _meld(in_house=False, vendor_requests=vendor_requests),
+    )
+    monkeypatch.setattr(
+        hb, "_get_csrf_token",
+        lambda cookie: pytest.fail("csrf must not be fetched for vendor-associated manager completion"),
+    )
+    monkeypatch.setattr(
+        hb, "_http_patch",
+        lambda *a, **k: pytest.fail("complete PATCH must be unreachable"),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        hb.complete_meld("12793634", completion_notes="vendor reports done")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "VENDOR_COULD_NOT_COMPLETE" in err
+    assert "vendor-side path" in err
+    assert "vendor reports done" in err
+
+
+def test_legacy_vendorassignment_shape_refuses_before_patch(monkeypatch):
+    _patch_base(monkeypatch)
+    meld = _meld(in_house=False)
+    meld["vendorassignment"] = [{"id": 9}]
+    monkeypatch.setattr(hb, "_http_get", lambda path, cookie: meld)
+    monkeypatch.setattr(hb, "_get_csrf_token", lambda cookie: pytest.fail("no csrf"))
+    monkeypatch.setattr(hb, "_http_patch", lambda *a, **k: pytest.fail("no PATCH"))
+    with pytest.raises(SystemExit):
+        hb.complete_meld("12793634")
 
 
 # ── vendor path untouched (Dane's explicit regression) ─────────────────────────

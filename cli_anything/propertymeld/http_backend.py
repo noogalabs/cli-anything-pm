@@ -1384,6 +1384,24 @@ def complete_meld(
                     "(Vendor melds use the vendor complete path and are unaffected.)"
                 ),
             )
+        # The manager complete/ endpoint is not a vendor completion surface.
+        # On vendor-associated melds PM can route this action to
+        # VENDOR_COULD_NOT_COMPLETE instead of COMPLETED. David's fleet rule is
+        # stronger than detecting that state afterward: our tooling must make
+        # it unreachable. Refuse any vendor-assignment history before CSRF or
+        # PATCH; vendor completion belongs on side="vendor" with vendor_id/date.
+        if _meld_has_vendor_assignment(current):
+            _complete_meld_fail(
+                meld_id,
+                current_status,
+                completion_notes,
+                (
+                    f"meld {meld_id} has vendor assignment history; the manager complete path "
+                    "can strand it in VENDOR_COULD_NOT_COMPLETE and is disabled. Complete it "
+                    "through the vendor-side path with vendor_id and completion_date, or use "
+                    "the PropertyMeld web UI."
+                ),
+            )
         payload = {}
         if completion_notes:
             payload["completion_notes"] = completion_notes
@@ -1427,6 +1445,26 @@ def _meld_is_in_house(meld: Any) -> bool:
         return False
     servicers = meld.get("in_house_servicers")
     return isinstance(servicers, list) and len(servicers) > 0
+
+
+def _meld_has_vendor_assignment(meld: Any) -> bool:
+    """True when manager completion could act on a vendor-associated meld.
+
+    Real meld payloads use ``vendor_assignment_requests``. Older/captured
+    shapes may expose ``vendorassignment``; both fail closed because even a
+    rejected or canceled historical request makes the manager endpoint's
+    resulting state unsafe to predict. The vendor-side completion path remains
+    available and is the only CLI path allowed for vendor work.
+    """
+    if not isinstance(meld, dict):
+        return False
+    for field in ("vendor_assignment_requests", "vendorassignment"):
+        assignments = meld.get(field)
+        if isinstance(assignments, list) and assignments:
+            return True
+        if isinstance(assignments, dict) and assignments:
+            return True
+    return False
 
 
 def _meld_status(meld: Any) -> Optional[str]:
