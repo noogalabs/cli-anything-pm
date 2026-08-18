@@ -499,11 +499,19 @@ def merge_meld(destination_id, source_ids, meld_id, into_meld_id, as_json):
 
 
 @work_orders.command("complete")
-@click.option("--meld-id", required=True, help="Meld ID to mark complete")
-@click.option("--notes", default=None, help="Completion notes")
+@click.option("--meld-id", required=True, help="Meld ID to identify in the refusal output")
+@click.option(
+    "--notes",
+    default=None,
+    help="Optional context returned in the refusal output; it is not persisted",
+)
 @click.option("--json", "as_json", is_flag=True, default=True)
 def complete_meld(meld_id, notes, as_json):
-    """Mark a meld complete from the manager side (meld must be PENDING_COMPLETION)."""
+    """Refuse manager completion.
+
+    Use tech-app checkout for in-house work, vendor-side completion for vendor
+    work, or the Property Meld web UI for other manager work.
+    """
     meld_id = _normalize_meld_id(meld_id)
     result = http_backend.complete_meld(meld_id, completion_notes=notes)
     output_json(result)
