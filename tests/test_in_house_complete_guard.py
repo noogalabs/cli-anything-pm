@@ -6,8 +6,8 @@ differentiator — tech-app checkout works, manager complete/ strands). Confirme
 live: TQY8B7DB stranded WITH completed work-entries, same state as a
 tech-app-completed meld.
 
-Fix: complete_meld (manager side) fails loud BEFORE the PATCH when the meld is
-in-house; the vendor path and non-in-house manager-complete are untouched.
+Fix: complete_meld disables manager-side mutation entirely because a client
+cannot hold custody through the third-party PATCH; the vendor path is untouched.
 force-pending-completion is hard-guarded (it only ever yields in-house melds).
 """
 import pytest
@@ -55,28 +55,28 @@ def test_in_house_fail_message_names_the_real_fix(monkeypatch, capsys):
     with pytest.raises(SystemExit):
         hb.complete_meld("12793634")
     err = capsys.readouterr().err.lower()
-    assert "in-house" in err
-    assert "tech-app" in err or "tech app" in err
-    assert "web ui" in err or "web-ui" in err or "relabel" in err
+    assert "manager-side completion is disabled" in err
+    assert "vendor-side path" in err
+    assert "web ui" in err
 
 
-# ── guard is in-house-SPECIFIC: non-in-house manager-complete still works ───────
-def test_non_in_house_manager_complete_proceeds(monkeypatch):
-    _patch_base(monkeypatch)
-    # first _http_get returns the pre-complete meld (not in-house), verify returns COMPLETED
-    gets = iter([_meld(in_house=False), _meld(status="COMPLETED", in_house=False)])
-    monkeypatch.setattr(hb, "_http_get", lambda path, cookie: next(gets))
-    sent = {"called": False, "path": None}
+# ── no custody, no mutation: every manager completion is disabled ────────
+def test_unassigned_manager_complete_refuses_before_credentials_or_network(monkeypatch, capsys):
+    """Even the old happy path cannot race into a forbidden terminal state."""
+    monkeypatch.setattr(hb, "_load_creds", lambda: pytest.fail("manager refusal must precede credentials"))
+    monkeypatch.setattr(hb, "_http_get", lambda *a, **k: pytest.fail("manager refusal must not preflight"))
+    monkeypatch.setattr(hb, "_get_csrf_token", lambda *a, **k: pytest.fail("manager refusal must precede CSRF"))
+    monkeypatch.setattr(hb, "_http_patch", lambda *a, **k: pytest.fail("manager refusal must precede PATCH"))
 
-    def _patch(path, payload, cookie, csrf, **k):
-        sent["called"] = True
-        sent["path"] = path
-        return {"ok": True}
-    monkeypatch.setattr(hb, "_http_patch", _patch)
+    with pytest.raises(SystemExit) as exc:
+        hb.complete_meld("12793634", completion_notes="manager note")
 
-    out = hb.complete_meld("12793634")
-    assert sent["called"] is True
-    assert out["ok"] is True and out.get("status") == "COMPLETED"
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "manager-side completion is disabled" in err
+    assert "vendor-side path" in err
+    assert "Property Meld web UI" in err
+    assert "manager note" in err
 
 
 @pytest.mark.parametrize("vendor_requests", [
@@ -105,7 +105,7 @@ def test_vendor_assignment_history_refuses_before_patch(monkeypatch, capsys, ven
 
     assert exc.value.code == 1
     err = capsys.readouterr().err
-    assert "VENDOR_COULD_NOT_COMPLETE" in err
+    assert "could-not-complete" in err
     assert "vendor-side path" in err
     assert "vendor reports done" in err
 
