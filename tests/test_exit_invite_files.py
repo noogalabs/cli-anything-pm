@@ -48,7 +48,7 @@ class TestExitNonZeroOnBackendFailure:
                    return_value={"ok": False, "error": "tenant invite failed"}) as mock_fn:
             result = runner.invoke(cli, [
                 "tenants", "invite",
-                "--unit-id", "9000005",
+                "--unit-id", "9000025",
                 "--first-name", "Person038",
                 "--last-name", "Example",
                 "--email", "alex@example.com",

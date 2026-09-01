@@ -57,14 +57,14 @@ class TestMergeCapturedShape:
             return _FakeResp(body=b'{"message": "Melds merged successfully"}')
 
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
-        result = hb.merge_meld(destination_id="12819946", source_ids=["12820134"])
+        result = hb.merge_meld(destination_id="90000013", source_ids=["90000014"])
 
-        assert "/melds/12819946/merge/" in captured["url"], "URL must use destination id"
+        assert "/melds/90000013/merge/" in captured["url"], "URL must use destination id"
         assert captured["method"] == "POST"
-        assert captured["body"] == {"destination_id": 12819946, "source_ids": [12820134]}
+        assert captured["body"] == {"destination_id": 90000013, "source_ids": [90000014]}
         assert result["ok"] is True
-        assert result["destination_meld_id"] == 12819946
-        assert result["source_meld_ids"] == [12820134]
+        assert result["destination_meld_id"] == 90000013
+        assert result["source_meld_ids"] == [90000014]
         assert result["result"]["message"] == "Melds merged successfully"
 
     def test_multi_source_packs_into_source_ids_array(self, monkeypatch):
@@ -78,13 +78,13 @@ class TestMergeCapturedShape:
 
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
         result = hb.merge_meld(
-            destination_id="12819946",
-            source_ids=["12820134", "12820186"],
+            destination_id="90000013",
+            source_ids=["90000014", "90000015"],
         )
 
-        assert captured["body"]["destination_id"] == 12819946
-        assert captured["body"]["source_ids"] == [12820134, 12820186]
-        assert result["source_meld_ids"] == [12820134, 12820186]
+        assert captured["body"]["destination_id"] == 90000013
+        assert captured["body"]["source_ids"] == [90000014, 90000015]
+        assert result["source_meld_ids"] == [90000014, 90000015]
 
     def test_single_source_passed_as_scalar_is_coerced_to_list(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
@@ -95,8 +95,8 @@ class TestMergeCapturedShape:
             return _FakeResp(body=b'{"message": "ok"}')
 
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
-        hb.merge_meld(destination_id="12819946", source_ids="12820134")
-        assert captured["body"]["source_ids"] == [12820134]
+        hb.merge_meld(destination_id="90000013", source_ids="90000014")
+        assert captured["body"]["source_ids"] == [90000014]
 
     def test_empty_source_ids_raises(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
@@ -108,7 +108,7 @@ class TestMergeCapturedShape:
 
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
         with pytest.raises(ValueError):
-            hb.merge_meld(destination_id="12819946", source_ids=[])
+            hb.merge_meld(destination_id="90000013", source_ids=[])
         assert called == [], "no HTTP call should fire on empty source_ids"
 
     def test_legacy_kwargs_meld_id_and_into_meld_id_still_work(self, monkeypatch):
@@ -126,12 +126,12 @@ class TestMergeCapturedShape:
         hb.merge_meld(
             destination_id="ignored-placeholder",
             source_ids="ignored-placeholder",
-            meld_id="12820134",
-            into_meld_id="12819946",
+            meld_id="90000014",
+            into_meld_id="90000013",
         )
-        assert "/melds/12819946/merge/" in captured["url"]
-        assert captured["body"]["destination_id"] == 12819946
-        assert captured["body"]["source_ids"] == [12820134]
+        assert "/melds/90000013/merge/" in captured["url"]
+        assert captured["body"]["destination_id"] == 90000013
+        assert captured["body"]["source_ids"] == [90000014]
 
     def test_400_response_no_longer_translated_to_friendly_envelope(self, monkeypatch):
         """The old 'destination_not_pending_assignment' envelope was a symptom-
@@ -150,7 +150,7 @@ class TestMergeCapturedShape:
 
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
         with pytest.raises(SystemExit):
-            hb.merge_meld(destination_id="12819946", source_ids=["12820134"])
+            hb.merge_meld(destination_id="90000013", source_ids=["90000014"])
 
 
 def io_body(b):

@@ -55,12 +55,12 @@ class TestUpdateWorkEntry:
     def test_uses_top_level_path(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch)
-        hb.update_work_entry(3177515, description="painted", hours=2.5)
+        hb.update_work_entry(9000010, description="painted", hours=2.5)
         assert cap["method"] == "PATCH"
         # ASYMMETRY GUARD: top-level path, NOT /melds/{meld_id}/work-entries/{id}/
-        assert "/melds/work-entries/3177515/" in cap["url"]
+        assert "/melds/work-entries/9000010/" in cap["url"]
         body = json.loads(cap["body"])
-        assert body["id"] == 3177515
+        assert body["id"] == 9000010
         assert body["description"] == "painted"
         assert body["hours"] == 2.5
         # Fields not passed must not appear (partial PATCH)
@@ -79,24 +79,24 @@ class TestDeleteWorkEntry:
     def test_uses_top_level_path_and_204(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch, response_body=b"")
-        result = hb.delete_work_entry(3177515)
+        result = hb.delete_work_entry(9000010)
         assert cap["method"] == "DELETE"
         # ASYMMETRY GUARD
-        assert "/melds/work-entries/3177515/" in cap["url"]
+        assert "/melds/work-entries/9000010/" in cap["url"]
         url_after_api = cap["url"].split("/api/", 1)[1]
-        assert url_after_api == "melds/work-entries/3177515/"
-        assert result == {"ok": True, "entry_id": 3177515, "deleted": True}
+        assert url_after_api == "melds/work-entries/9000010/"
+        assert result == {"ok": True, "entry_id": 9000010, "deleted": True}
 
 
 class TestDeleteMeldFile:
     def test_uses_top_level_path(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch, response_body=b"")
-        result = hb.delete_meld_file(20254356)
+        result = hb.delete_meld_file(90000020)
         assert cap["method"] == "DELETE"
         # ASYMMETRY GUARD: top-level, NOT /melds/{meld_id}/files/{id}/
         url_after_api = cap["url"].split("/api/", 1)[1]
-        assert url_after_api == "melds/files/20254356/"
+        assert url_after_api == "melds/files/90000020/"
         assert result["deleted"] is True
 
 
@@ -104,10 +104,10 @@ class TestDeleteProject:
     def test_returns_204_envelope(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch, response_body=b"")
-        result = hb.delete_project(222964)
+        result = hb.delete_project(900007)
         assert cap["method"] == "DELETE"
-        assert "/projects/222964/" in cap["url"]
-        assert result == {"ok": True, "project_id": 222964, "deleted": True}
+        assert "/projects/900007/" in cap["url"]
+        assert result == {"ok": True, "project_id": 900007, "deleted": True}
 
 
 class TestListProjects:
@@ -116,11 +116,11 @@ class TestListProjects:
         calls = []
         pages = {
             "projects/?limit=3": {
-                "results": [{"id": 222001}, {"id": 222002}],
+                "results": [{"id": 900002}, {"id": 900003}],
                 "next": "https://app.propertymeld.test/1000/m/1000/api/projects/?cursor=abc&limit=100",
             },
             "projects/?cursor=abc&limit=100": {
-                "results": [{"id": 222003}],
+                "results": [{"id": 900004}],
                 "next": None,
             },
         }
@@ -132,7 +132,7 @@ class TestListProjects:
         monkeypatch.setattr(hb, "_http_get", fake_http_get)
         result = hb.list_projects(limit=3)
 
-        assert [r["id"] for r in result] == [222001, 222002, 222003]
+        assert [r["id"] for r in result] == [900002, 900003, 900004]
         assert calls == [
             "projects/?limit=3",
             "projects/?cursor=abc&limit=100",
@@ -230,10 +230,10 @@ class TestListProjects:
 
         def fake_http_get(path, cookie_hdr):
             calls.append(path)
-            return {"results": [{"id": 222001}]}
+            return {"results": [{"id": 900002}]}
 
         monkeypatch.setattr(hb, "_http_get", fake_http_get)
-        assert hb.list_projects(meld_id="90000014") == [{"id": 222001}]
+        assert hb.list_projects(meld_id="90000014") == [{"id": 900002}]
         assert calls == ["melds/90000014/projects/"]
 
 
@@ -241,27 +241,27 @@ class TestHoldMeldInvoice:
     def test_uses_hold_subpath_with_reason(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch)
-        hb.hold_meld_invoice(3863382, reason="needs revision")
+        hb.hold_meld_invoice(9000012, reason="needs revision")
         assert cap["method"] == "PATCH"
-        assert "/meld-invoices/3863382/hold/" in cap["url"]
+        assert "/meld-invoices/9000012/hold/" in cap["url"]
         body = json.loads(cap["body"])
         assert body == {"reason": "needs revision"}
 
     def test_empty_reason_raises(self):
         with pytest.raises(ValueError, match="reason is required"):
-            hb.hold_meld_invoice(3863382, reason="")
+            hb.hold_meld_invoice(9000012, reason="")
 
 
 class TestDeclineMeldInvoice:
     def test_uses_decline_subpath_with_reason(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch)
-        hb.decline_meld_invoice(3863382, reason="wrong job")
+        hb.decline_meld_invoice(9000012, reason="wrong job")
         assert cap["method"] == "PATCH"
-        assert "/meld-invoices/3863382/decline/" in cap["url"]
+        assert "/meld-invoices/9000012/decline/" in cap["url"]
         body = json.loads(cap["body"])
         assert body == {"reason": "wrong job"}
 
     def test_empty_reason_raises(self):
         with pytest.raises(ValueError, match="reason is required"):
-            hb.decline_meld_invoice(3863382, reason="")
+            hb.decline_meld_invoice(9000012, reason="")

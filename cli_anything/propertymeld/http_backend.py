@@ -1964,7 +1964,7 @@ def schedule_appointment(meld_id: str, dtstart: str, duration_hours: float = 2.0
     management_availability_segments list.
 
     Root cause of the prior HTTP 500 (diagnosed live 2026-06-03, demo
-    fixture meld 12937555): the old flow PUT an `availability_segment`
+    fixture meld 90000018): the old flow PUT an `availability_segment`
     payload to `management-appointments/{appt_id}/schedule/`. That endpoint
     is a SELECT-from-existing action — it has no availability segment to
     bind and the server-side handler 500s (null deref) for EVERY payload
@@ -2250,7 +2250,7 @@ def update_tenant_notes(tenant_id, notes: str) -> dict:
 
     Endpoint: PATCH /api/tenants/{tenant_id}/ with the FULL tenant body, mutating
     only `notes`. Verified shape from pm-tenant-notes-endpoint-capture-2026-05-18
-    (HAR capture against tenant 9000014, status 200, round-trip-reverted).
+    (HAR capture against tenant 9000026, status 200, round-trip-reverted).
 
     The endpoint is NOT thin-patch — `{"notes": "..."}` alone returns 400 because
     validators run on `first_name` / `last_name` even when not changed. We GET
@@ -2947,7 +2947,7 @@ def get_unit(unit_id) -> dict:
 #   GET /api/properties/{id}/            -> property object, EMBEDS units[]
 #   GET /api/properties/?limit=N         -> {count,next,previous,results[]}, each
 #                                           property EMBEDS units[]
-#   unit PK field:    units[].id  (int, e.g. 1754320)
+#   unit PK field:    units[].id  (int, e.g. 9000004)
 #   unit label field: units[].unit (str) + apartment/building/floor/suite/room
 # The list endpoints do NOT honour server-side filters (prop=, search=,
 # property_name= are all ignored — count is unchanged), so property-by-name
