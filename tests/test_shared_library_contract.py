@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -14,6 +15,8 @@ from cli_anything.propertymeld.config import (
     load_propertymeld_config,
     propertymeld_config,
 )
+
+SYNTHETIC_TENANT = "1000"
 
 
 def _leaf_commands(root: click.Group):
@@ -92,10 +95,10 @@ def test_missing_config_refuses_action_with_setup_guidance(monkeypatch):
 
 def test_dummy_config_drives_real_manager_and_vendor_routing():
     assert http_backend._build_url("melds/1/") == (
-        "https://app.propertymeld.com/1000/m/1000/api/melds/1/"
+        f"https://app.propertymeld.com/{SYNTHETIC_TENANT}/m/{SYNTHETIC_TENANT}/api/melds/1/"
     )
     assert http_backend._build_url("melds/1/", side="vendor", vendor_id="7") == (
-        "https://app.propertymeld.com/1000/v/7/api/melds/1/"
+        f"https://app.propertymeld.com/{SYNTHETIC_TENANT}/v/7/api/melds/1/"
     )
 
 
@@ -120,6 +123,41 @@ def _tracked_private_literal_matches(repo: Path, needles: tuple[str, ...]):
     return matches
 
 
+def _tracked_structural_private_matches(repo: Path):
+    """Find private-data shapes that do not require a secret vocabulary."""
+    patterns = (
+        re.compile(r"orgs[/]ascendops|Documents[/]AscendOps-Brain", re.IGNORECASE),
+        re.compile(r"https?://[^\s\"']*propertymeld\.com/\d+/", re.IGNORECASE),
+    )
+    five_digit_token = re.compile(r"(?<![A-Za-z0-9])\d{5}(?![A-Za-z0-9])")
+    # Five-digit literals are IDs unless explicitly classified otherwise.
+    # Today the only non-ID values are a synthetic postcode and the Insights
+    # command limit. New exceptions require a deliberate review here.
+    allowed_non_id_tokens = {"374" + "21", "100" + "00"}
+    matches = []
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    ).stdout.split(b"\0")
+    for relative in tracked:
+        if not relative:
+            continue
+        path = repo / relative.decode("utf-8")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, FileNotFoundError):
+            continue
+        has_forbidden_five_digit = any(
+            token not in allowed_non_id_tokens
+            for token in five_digit_token.findall(text)
+        )
+        if any(pattern.search(text) for pattern in patterns) or has_forbidden_five_digit:
+            matches.append(str(path.relative_to(repo)))
+    return matches
+
+
 def test_private_tenant_and_org_literals_are_absent_from_tracked_files():
     repo = Path(__file__).parents[1]
     raw = os.environ.get("PROPERTYMELD_PRIVATE_LITERALS")
@@ -132,6 +170,11 @@ def test_private_tenant_and_org_literals_are_absent_from_tracked_files():
     private_literals = tuple(decoded)
     assert private_literals and all(isinstance(item, str) and item for item in private_literals)
     assert _tracked_private_literal_matches(repo, private_literals) == []
+
+
+def test_structural_private_data_shapes_are_absent_from_tracked_files():
+    repo = Path(__file__).parents[1]
+    assert _tracked_structural_private_matches(repo) == []
 
 
 def test_supported_untracked_config_is_outside_source_census(tmp_path):

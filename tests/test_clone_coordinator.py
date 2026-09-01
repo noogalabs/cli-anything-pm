@@ -24,7 +24,7 @@ SOURCE_MELD = {
     "work_location": "kitchen",
     "work_type": "REPAIR",
     "priority": "MEDIUM",
-    "coordinator": {"id": 51001, "user": {"id": 1, "first_name": "Alex"}},
+    "coordinator": {"id": 5011, "user": {"id": 1, "first_name": "Alex"}},
     "unit": {"id": 222},
 }
 
@@ -39,18 +39,18 @@ class TestSetCoordinator:
         def fake_patch(path, payload, ck, csrf):
             captured["path"] = path
             captured["payload"] = payload
-            return {"id": 111, "coordinator": {"id": 51001}}
+            return {"id": 111, "coordinator": {"id": 5011}}
 
         monkeypatch.setattr(hb, "_http_patch_no_exit", fake_patch)
 
-        result = hb.set_coordinator(111, 51001)
+        result = hb.set_coordinator(111, 5011)
 
         assert result["ok"] is True
-        assert result["coordinator_id"] == 51001
+        assert result["coordinator_id"] == 5011
         assert captured["path"] == "melds/111/"
         # FULL ECHO: all PM-required fields present + coordinator as a bare int.
         p = captured["payload"]
-        assert p["coordinator"] == 51001
+        assert p["coordinator"] == 5011
         assert isinstance(p["coordinator"], int)
         for required in ("brief_description", "work_location", "work_category",
                          "work_type", "priority"):
@@ -65,7 +65,7 @@ class TestSetCoordinator:
         # PATCH must NOT be attempted if the fetch failed.
         monkeypatch.setattr(hb, "_http_patch_no_exit",
                             lambda *a, **k: pytest.fail("PATCH attempted despite fetch failure"))
-        result = hb.set_coordinator(111, 51001)
+        result = hb.set_coordinator(111, 5011)
         assert result["ok"] is False
         assert "could not fetch" in result["error"]
 
@@ -75,7 +75,7 @@ class TestSetCoordinator:
         # set_coordinator must use the NON-EXITING patch variant.
         monkeypatch.setattr(hb, "_http_patch_no_exit",
                             lambda *a, **k: {"error": "HTTP 400", "status_code": 400})
-        result = hb.set_coordinator(111, 51001)
+        result = hb.set_coordinator(111, 5011)
         assert result["ok"] is False
         assert "PATCH failed" in result["error"]
 
@@ -157,10 +157,10 @@ class TestCloneCoordinatorInheritance:
 
         assert result["ok"] is True
         assert result["new_meld_id"] == 999
-        # Source coordinator object {id:51001} -> extracted int 51001, set on new meld.
+        # Source coordinator object {id:5011} -> extracted int 5011, set on new meld.
         assert calls["meld_id"] == 999
-        assert calls["user_id"] == 51001
-        assert result["coordinator_id"] == 51001
+        assert calls["user_id"] == 5011
+        assert result["coordinator_id"] == 5011
 
     def test_explicit_override_wins_over_source(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
@@ -172,9 +172,9 @@ class TestCloneCoordinatorInheritance:
                             lambda meld_id, user_id: calls.update(user_id=user_id)
                             or {"ok": True, "coordinator_id": user_id})
 
-        result = hb.clone_meld(111, coordinator_id=88888)
-        assert calls["user_id"] == 88888
-        assert result["coordinator_id"] == 88888
+        result = hb.clone_meld(111, coordinator_id=8888)
+        assert calls["user_id"] == 8888
+        assert result["coordinator_id"] == 8888
 
     def test_no_coordinator_when_source_has_none_and_no_override(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
@@ -201,7 +201,7 @@ class TestCloneCoordinatorInheritance:
         assert result["ok"] is True
         assert result["new_meld_id"] == 999
         assert "coordinator_warning" in result
-        assert "51001" in result["coordinator_warning"]
+        assert "5011" in result["coordinator_warning"]
 
     def test_clone_coordinator_4xx_returns_id_and_warning_not_exit(self, monkeypatch):
         """The actual P2 (Codex + Aussie): a real coordinator PATCH 4xx AFTER a
@@ -226,7 +226,7 @@ class TestCloneCoordinatorInheritance:
         assert result["ok"] is True
         assert result["new_meld_id"] == 999  # clone id preserved
         assert "coordinator_warning" in result
-        assert "51001" in result["coordinator_warning"]
+        assert "5011" in result["coordinator_warning"]
 
     def test_clone_coordinator_FETCH_fails_returns_id_and_warning_not_exit(self, monkeypatch):
         """Second-boundary P2 (Codex re-review of the fix): set_coordinator does
@@ -253,4 +253,4 @@ class TestCloneCoordinatorInheritance:
         assert result["ok"] is True
         assert result["new_meld_id"] == 999  # clone id preserved despite fetch failure
         assert "coordinator_warning" in result
-        assert "51001" in result["coordinator_warning"]
+        assert "5011" in result["coordinator_warning"]

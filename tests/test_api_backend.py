@@ -150,7 +150,7 @@ class TestListWorkOrders:
             "cli_anything.propertymeld.http_backend.list_work_orders_rich"
         ) as mock_rich:
             with pytest.raises(SystemExit) as exc_info:
-                api_backend.list_work_orders(assigned_to_tech=51001)
+                api_backend.list_work_orders(assigned_to_tech=5011)
         assert exc_info.value.code == 2
         assert mock_open.call_count == 0
         assert mock_rich.call_count == 0
@@ -388,7 +388,7 @@ class TestListWorkOrders:
             {
                 "id": 1001,
                 "in_house_servicers": [
-                    {"id": 501, "agent": {"id": 51003, "first_name": "Silvano"}}
+                    {"id": 501, "agent": {"id": 5013, "first_name": "Tech C"}}
                 ],
                 "managementappointment": [{"id": 7001, "meld": 1001}],
                 "vendor_assignment_requests": [],
@@ -415,7 +415,7 @@ class TestListWorkOrders:
             results = api_backend.list_work_orders(include_tech=True, status="open")
 
         assert mock_rich.call_count == 1
-        assert results[0]["in_house_servicers"][0]["agent"]["id"] == 51003
+        assert results[0]["in_house_servicers"][0]["agent"]["id"] == 5013
         assert results[0]["managementappointment"][0]["id"] == 7001
         assert "vendor_assignment_requests" not in results[0]
         assert "vendorappointment" not in results[0]
@@ -479,14 +479,14 @@ class TestListWorkOrders:
         assert captured.out == ""
 
     def test_include_tech_preserves_existing_nexus_assignment_fields(self):
-        nexus_managementappointment = [{"id": 7001, "in_house_servicers": [51003]}]
+        nexus_managementappointment = [{"id": 7001, "in_house_servicers": [5013]}]
         with patch("urllib.request.urlopen") as mock_open, patch(
             "cli_anything.propertymeld.http_backend.list_work_orders_rich",
             return_value=[
                 {
                     "id": 1001,
                     "in_house_servicers": [
-                        {"id": 501, "agent": {"id": 51003, "first_name": "Silvano"}}
+                        {"id": 501, "agent": {"id": 5013, "first_name": "Tech C"}}
                     ],
                     "managementappointment": [{"id": 7001, "management_assignment": 4239872}],
                 }
@@ -498,7 +498,7 @@ class TestListWorkOrders:
             ]
             results = api_backend.list_work_orders(include_tech=True)
 
-        assert results[0]["in_house_servicers"][0]["agent"]["id"] == 51003
+        assert results[0]["in_house_servicers"][0]["agent"]["id"] == 5013
         assert results[0]["managementappointment"] == nexus_managementappointment
 
     def test_include_tech_detail_fallback_for_missing_list_item(self):
@@ -510,8 +510,8 @@ class TestListWorkOrders:
             return_value={
                 "id": 1001,
                 "in_house_servicers": [
-                    {"id": 501, "agent": {"id": 51003, "first_name": "Silvano"}},
-                    {"id": 502, "agent": {"id": 57542, "first_name": "Casey"}},
+                    {"id": 501, "agent": {"id": 5013, "first_name": "Tech C"}},
+                    {"id": 502, "agent": {"id": 5022, "first_name": "Tech B"}},
                 ],
                 "managementappointment": [],
             },
@@ -523,7 +523,7 @@ class TestListWorkOrders:
             results = api_backend.list_work_orders(include_tech=True)
 
         mock_detail.assert_called_once_with("1001")
-        assert [a["agent"]["id"] for a in results[0]["in_house_servicers"]] == [51003, 57542]
+        assert [a["agent"]["id"] for a in results[0]["in_house_servicers"]] == [5013, 5022]
 
 
 class TestGetWorkOrder:
@@ -554,7 +554,7 @@ class TestGetWorkOrder:
     def test_include_tech_merges_cookie_assignment_fields(self):
         rich = {
             "in_house_servicers": [
-                {"id": 5793013, "agent": {"id": 51003, "first_name": "silvano"}}
+                {"id": 5793013, "agent": {"id": 5013, "first_name": "tech c"}}
             ],
             "managementappointment": [
                 {
@@ -562,7 +562,7 @@ class TestGetWorkOrder:
                     "meld": 12904264,
                     "management_assignment": {
                         "in_house_servicers": [
-                            {"first_name": "silvano", "last_name": "servin"}
+                            {"first_name": "tech c", "last_name": "servin"}
                         ]
                     },
                 }
@@ -579,7 +579,7 @@ class TestGetWorkOrder:
             result = api_backend.get_work_order("12904264", include_tech=True)
 
         mock_rich.assert_called_once_with("12904264")
-        assert result["in_house_servicers"][0]["agent"]["id"] == 51003
+        assert result["in_house_servicers"][0]["agent"]["id"] == 5013
         assert result["managementappointment"][0]["management_assignment"]["in_house_servicers"][0]["last_name"] == "servin"
 
     def test_include_tech_warns_when_cookie_detail_fails(self, capsys):
@@ -661,7 +661,7 @@ class TestListAgents:
         with patch("cli_anything.propertymeld.http_backend._load_creds", return_value={}), \
              patch("cli_anything.propertymeld.http_backend._cookie_header", return_value="cookie"), \
              patch("cli_anything.propertymeld.http_backend._paginate_all",
-                   return_value=[{"id": 51002}, {"id": 51003}, {"id": 51004}]) as paginate_mock:
+                   return_value=[{"id": 5012}, {"id": 5013}, {"id": 5014}]) as paginate_mock:
             result = http_backend.list_agents()
         paginate_mock.assert_called_once_with("agents/?limit=100", "cookie")
         assert isinstance(result, list)
@@ -671,11 +671,11 @@ class TestListAgents:
         with patch("cli_anything.propertymeld.http_backend._load_creds", return_value={}), \
              patch("cli_anything.propertymeld.http_backend._cookie_header", return_value="cookie"), \
              patch("cli_anything.propertymeld.http_backend._paginate_all",
-                   return_value=[{"id": 51002}]):
+                   return_value=[{"id": 5012}]):
             result = http_backend.list_agents()
         assert isinstance(result, list)
         assert len(result) == 1
-        assert result[0]["id"] == 51002
+        assert result[0]["id"] == 5012
 
     def test_list_agents_returns_empty_list_on_empty(self):
         with patch("cli_anything.propertymeld.http_backend._load_creds", return_value={}), \
@@ -1034,16 +1034,16 @@ _FULL_UNIT_FIXTURE = {
 }
 
 _FULL_AGENT_FIXTURE = {
-    "id": 51001,
+    "id": 5011,
     "type": "ManagementAgent",
-    "composite_id": "2-51001",
+    "composite_id": "2-5011",
     "first_name": "Alex",
     "last_name": "Hunter",
     "title": "COORDINATOR",
     "department": "MAINTENANCE",
-    "selected_property_groups": [29374],
-    "denormalized_property_groups": [29374],
-    "property_groups": [29374],
+    "selected_property_groups": [2937],
+    "denormalized_property_groups": [2937],
+    "property_groups": [2937],
 }
 
 _FULL_TENANT_FIXTURE = {
@@ -1236,7 +1236,7 @@ class TestCreateMeldInProject:
                 work_type="TURN",
                 due_date="2026-05-16T02:52:41.393Z",
                 unit={"id": 1870266},
-                maintenance=[{"id": 51001, "type": "ManagementAgent"}],
+                maintenance=[{"id": 5011, "type": "ManagementAgent"}],
                 tenants=[{"id": 99}],
                 work_location="ffff",
                 notify_owner=False,
@@ -1247,7 +1247,7 @@ class TestCreateMeldInProject:
             assert result["meld_id"] == 12772803
             assert result["project_id"] == "222959"
             mgu.assert_called_once_with(1870266)
-            mga.assert_called_once_with(51001)
+            mga.assert_called_once_with(5011)
             mgt.assert_called_once_with(99)
             path, payload, _, _ = mp.call_args[0]
             assert path == "projects/222959/list-create-meld/"
@@ -1306,7 +1306,7 @@ class TestCreateMeldInProject:
                 work_type="TURN",
                 due_date="2026-05-16T00:00:00.000Z",
                 unit={"id": 1},
-                maintenance={"id": 51001},
+                maintenance={"id": 5011},
                 tenants=[{"id": 99}],
             )
 
@@ -1337,7 +1337,7 @@ class TestCreateMeldInProject:
                 work_type="TURN",
                 due_date="2026-05-16T00:00:00.000Z",
                 unit=_FULL_UNIT_FIXTURE,
-                maintenance=[{"id": 51001, "first_name": "Alex"}],
+                maintenance=[{"id": 5011, "first_name": "Alex"}],
             )
 
     def test_partial_tenant_raises_with_missing_keys(self):
@@ -1372,7 +1372,7 @@ class TestCreateMeldInProject:
                 work_type="TURN",
                 due_date="2026-05-16T00:00:00.000Z",
                 unit={"id": 1},
-                maintenance=[{"id": 51001}],
+                maintenance=[{"id": 5011}],
             )
 
             mgt.assert_not_called()
@@ -1402,7 +1402,7 @@ class TestCreateMeld:
             mcs.return_value = "csrf"
             mp.return_value = {"id": 12772803, "brief_description": "test"}
             mgu.return_value = _FULL_UNIT_FIXTURE
-            mga.return_value = [{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-51001", "type": "ManagementAgent"}]
+            mga.return_value = [{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-5011", "type": "ManagementAgent"}]
             mgt.return_value = _FULL_TENANT_FIXTURE
 
             result = http_backend.create_meld(
@@ -1412,7 +1412,7 @@ class TestCreateMeld:
                 work_type="TURN",
                 due_date="2026-05-16T02:52:41.393Z",
                 unit={"id": 1870266},
-                maintenance=[{"id": 51001, "type": "ManagementAgent"}],
+                maintenance=[{"id": 5011, "type": "ManagementAgent"}],
                 tenants=[{"id": 99}],
                 work_location="inside",
             )
@@ -1425,8 +1425,8 @@ class TestCreateMeld:
             path, payload, _, _ = mp.call_args[0]
             assert path == "melds/"
             assert payload["unit"] == _FULL_UNIT_FIXTURE
-            assert payload["maintenance"][0]["id"] == 51001
-            assert payload["maintenance"][0]["composite_id"] == "ManagementAgent-51001"
+            assert payload["maintenance"][0]["id"] == 5011
+            assert payload["maintenance"][0]["composite_id"] == "ManagementAgent-5011"
             assert payload["maintenance"][0]["type"] == "ManagementAgent"
             assert payload["tenants"] == [_FULL_TENANT_FIXTURE]
 
@@ -1438,7 +1438,7 @@ class TestCreateMeld:
             mcs.return_value = "csrf"
             mp.return_value = {"id": 99}
             mgu.return_value = _FULL_UNIT_FIXTURE
-            mga.return_value = [{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-51001", "type": "ManagementAgent"}]
+            mga.return_value = [{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-5011", "type": "ManagementAgent"}]
 
             http_backend.create_meld(
                 brief_description="b",
@@ -1447,7 +1447,7 @@ class TestCreateMeld:
                 work_type="TURN",
                 due_date="2026-05-16T00:00:00.000Z",
                 unit={"id": 1},
-                maintenance=[{"id": 51001}],
+                maintenance=[{"id": 5011}],
                 notify_owners=True,
             )
             _, payload, _, _ = mp.call_args[0]
@@ -1489,7 +1489,7 @@ class TestCreateMeld:
             mcs.return_value = "csrf"
             mp.return_value = {"id": 99}
             mgu.return_value = _FULL_UNIT_FIXTURE
-            mga.return_value = [{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-51001", "type": "ManagementAgent"}]
+            mga.return_value = [{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-5011", "type": "ManagementAgent"}]
 
             http_backend.create_meld(
                 brief_description="b",
@@ -1498,7 +1498,7 @@ class TestCreateMeld:
                 work_type="TURN",
                 due_date="2026-05-16T00:00:00.000Z",
                 unit={"id": 1},
-                maintenance=[{"id": 51001}],
+                maintenance=[{"id": 5011}],
             )
             _, payload, _, _ = mp.call_args[0]
             assert "project" not in payload
@@ -1519,7 +1519,7 @@ class TestCreateMeld:
                 work_type="PREVENTIVE_MAINTENANCE",
                 due_date="2026-05-16T00:00:00.000Z",
                 unit=_FULL_UNIT_FIXTURE,
-                maintenance=[{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-51001", "type": "ManagementAgent"}],
+                maintenance=[{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-5011", "type": "ManagementAgent"}],
                 tenants=[_FULL_TENANT_FIXTURE],
             )
 
@@ -1529,7 +1529,7 @@ class TestCreateMeld:
             _, payload, _, _ = mp.call_args[0]
             assert payload["unit"] == _FULL_UNIT_FIXTURE
             assert payload["maintenance"][0]["id"] == _FULL_AGENT_FIXTURE["id"]
-            assert payload["maintenance"][0]["composite_id"] == "ManagementAgent-51001"
+            assert payload["maintenance"][0]["composite_id"] == "ManagementAgent-5011"
             assert payload["maintenance"][0]["type"] == "ManagementAgent"
             assert payload["tenants"] == [_FULL_TENANT_FIXTURE]
 
@@ -1576,7 +1576,7 @@ class TestCreateMeld:
             mcs.return_value = "csrf"
             mp.return_value = {"id": 99}
             mgu.return_value = _FULL_UNIT_FIXTURE
-            mga.return_value = [{**_FULL_AGENT_FIXTURE, "id": 51001, "composite_id": "ManagementAgent-51001", "type": "ManagementAgent"}]
+            mga.return_value = [{**_FULL_AGENT_FIXTURE, "id": 5011, "composite_id": "ManagementAgent-5011", "type": "ManagementAgent"}]
 
             with pytest.raises(ValueError, match="maintenance id 999 not found"):
                 http_backend.create_meld(
@@ -1597,7 +1597,7 @@ class TestCreateMeld:
             mcs.return_value = "csrf"
             mp.return_value = {"id": 12772803, "brief_description": "test"}
             mgu.return_value = _FULL_UNIT_FIXTURE
-            mga.return_value = [{**_FULL_AGENT_FIXTURE, "id": 51001, "composite_id": "ManagementAgent-51001", "type": "ManagementAgent"}]
+            mga.return_value = [{**_FULL_AGENT_FIXTURE, "id": 5011, "composite_id": "ManagementAgent-5011", "type": "ManagementAgent"}]
             mgt.return_value = _FULL_TENANT_FIXTURE
 
             result = http_backend.create_meld(
@@ -1607,7 +1607,7 @@ class TestCreateMeld:
                 work_type="TURN",
                 due_date="2026-05-16T02:52:41.393Z",
                 unit={"id": 1870266},
-                maintenance=[{"id": "51001"}],
+                maintenance=[{"id": "5011"}],
                 tenants=[{"id": 99}],
                 work_location="inside",
             )
@@ -1615,7 +1615,7 @@ class TestCreateMeld:
             assert result["ok"] is True
             path, payload, _, _ = mp.call_args[0]
             assert path == "melds/"
-            assert payload["maintenance"][0]["id"] == 51001
+            assert payload["maintenance"][0]["id"] == 5011
 
 
 class TestUnitAndAgentHydration:
@@ -1640,10 +1640,10 @@ class TestUnitAndAgentHydration:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mg.return_value = _FULL_AGENT_FIXTURE
-            result = http_backend.get_management_agent(51001)
+            result = http_backend.get_management_agent(5011)
             assert result == _FULL_AGENT_FIXTURE
             path, _ = mg.call_args[0]
-            assert path == "agents/51001/"
+            assert path == "agents/5011/"
 
 
 class TestPatchMeldProjectLink:
@@ -1744,7 +1744,7 @@ class TestCreateProjectLiveShape:
                 project_type="TURN",
                 due_date="2026-05-22T04:00:00.000Z",
                 start_date="2026-05-13T23:59:59-04:00",
-                coordinators=[51001],
+                coordinators=[5011],
                 unit={"id": 1870266, "label": "123 Main St, Chattanooga, TN, 37421"},
             )
 
@@ -1754,7 +1754,7 @@ class TestCreateProjectLiveShape:
             assert path == "projects/"
             assert payload["name"] == "vendor assigning"
             assert payload["project_type"] == "TURN"
-            assert payload["coordinators"] == [51001]
+            assert payload["coordinators"] == [5011]
             assert payload["meld_location"] == "Unit"
             assert payload["prop"] is None
             assert payload["unit"] == {"id": 1870266, "label": "123 Main St, Chattanooga, TN, 37421"}
@@ -1777,7 +1777,7 @@ class TestUpdateProjectLiveShape:
         "description": "old description",
         "due_date": "2026-05-30T04:00:00Z",
         "start_date": "2026-05-14T03:00:00Z",
-        "coordinators": [{"id": 51001, "first_name": "Alex"}],
+        "coordinators": [{"id": 5011, "first_name": "Alex"}],
         "meld_location": "Unit",
         "prop": None,
         "unit": {"id": 1870266, "label": "123 Main St"},
@@ -1811,7 +1811,7 @@ class TestUpdateProjectLiveShape:
             assert payload["name"] == "renamed"
             assert payload["description"] == "new description"
             assert payload["project_type"] == "TURN"
-            assert payload["coordinators"] == [51001]  # coordinator dict flattened to id
+            assert payload["coordinators"] == [5011]  # coordinator dict flattened to id
             assert payload["unit"] == {"id": 1870266, "label": "123 Main St"}
             assert payload["meld_location"] == "Unit"
             assert payload["due_date"] == "2026-05-30T04:00:00Z"
@@ -1880,7 +1880,7 @@ class TestCloneMeldOverrides:
             "work_location": "Bathroom",
             "priority": "EMERGENCY",
             "tenant_presence_required": True,
-            "unit": {"id": 999999},
+            "unit": {"id": 9999},
         }
 
     def test_long_description_override(self):
@@ -2208,9 +2208,9 @@ _TENANT_CONTACT_FIXTURE = {
         "cell_phone": "(678) 923-5467",
         "business_phone": "",
         "created": "2026-05-31T02:59:07.878312Z",
-        "create_by": {"org_type": "m", "persona_id": 51001},
+        "create_by": {"org_type": "m", "persona_id": 5011},
         "updated": "2026-05-31T02:59:07.878360Z",
-        "update_by": {"org_type": "m", "persona_id": 51001},
+        "update_by": {"org_type": "m", "persona_id": 5011},
         "tenant_objs": [1000],
         "home_phone_ext": "",
         "cell_phone_ext": "",
@@ -2226,9 +2226,9 @@ _TENANT_CONTACT_FIXTURE = {
         "id": 13708659,
     },
     "created": "2026-05-31T02:59:07.891911Z",
-    "create_by": {"org_type": "m", "persona_id": 51001},
+    "create_by": {"org_type": "m", "persona_id": 5011},
     "updated": "2026-05-31T02:59:10.803742Z",
-    "update_by": {"org_type": "m", "persona_id": 51001},
+    "update_by": {"org_type": "m", "persona_id": 5011},
     "is_active": True,
     "first_name": "Alex",
     "middle_name": "",

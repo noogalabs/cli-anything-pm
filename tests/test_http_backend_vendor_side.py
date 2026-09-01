@@ -55,7 +55,7 @@ class TestCreateWorkEntry:
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch, response_body=b'{"id": 3177515}')
         result = hb.create_work_entry(
-            12720246, agent=51001, description="painted",
+            12720246, agent=5011, description="painted",
             long_description="I painted", hours=0.13,
             checkin="2026-05-16T02:52:00.000Z", checkout="2026-05-16T03:00:00.000Z",
         )
@@ -63,7 +63,7 @@ class TestCreateWorkEntry:
         # ASYMMETRY GUARD: NESTED path under meld
         assert "/melds/12720246/work-entries/" in cap["url"]
         body = json.loads(cap["body"])
-        assert body["agent"] == 51001
+        assert body["agent"] == 5011
         assert body["description"] == "painted"
         assert body["meld"] == 12720246
         assert body["hours"] == 0.13
@@ -86,10 +86,10 @@ class TestVendorAcceptAssignment:
     def test_routes_to_vendor_surface(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch)
-        hb.vendor_accept_assignment("61001", 8559205)
+        hb.vendor_accept_assignment("6011", 8559205)
         assert cap["method"] == "PATCH"
         # SURFACE GUARD: vendor side
-        assert "/v/61001/" in cap["url"]
+        assert "/v/6011/" in cap["url"]
         assert "/m/" not in cap["url"]
         assert "/assignments/8559205/accept/" in cap["url"]
         body = json.loads(cap["body"])
@@ -101,11 +101,11 @@ class TestVendorSetSchedule:
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch)
         hb.vendor_set_schedule(
-            "61001", 8559205,
+            "6011", 8559205,
             new_segments=[("2026-05-17T14:00:00.000Z", "2026-05-17T16:00:00.000Z")],
             segments_to_keep=[],
         )
-        assert "/v/61001/" in cap["url"]
+        assert "/v/6011/" in cap["url"]
         assert "/assignments/8559205/segments/" in cap["url"]
         body = json.loads(cap["body"])
         assert body["segments_to_keep"] == []
@@ -120,7 +120,7 @@ class TestVendorSetSchedule:
         _capture_urlopen(monkeypatch)
         with pytest.raises(ValueError, match="segments_to_keep is required"):
             hb.vendor_set_schedule(
-                "61001", 8559205,
+                "6011", 8559205,
                 new_segments=[("2026-05-17T14:00:00.000Z", "2026-05-17T16:00:00.000Z")],
             )
 
@@ -128,7 +128,7 @@ class TestVendorSetSchedule:
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch)
         seg = {"event": {"dtstart": "a", "dtend": "b", "type": "default", "_cid": "event_3"}}
-        hb.vendor_set_schedule("61001", 8559205, new_segments=[seg], segments_to_keep=[123])
+        hb.vendor_set_schedule("6011", 8559205, new_segments=[seg], segments_to_keep=[123])
         body = json.loads(cap["body"])
         assert body["segments_to_keep"] == [123]
         assert body["new_segments"] == [seg]
@@ -137,7 +137,7 @@ class TestVendorSetSchedule:
         _patch_creds_csrf(monkeypatch)
         _capture_urlopen(monkeypatch)
         with pytest.raises(ValueError, match="Unsupported segment shape"):
-            hb.vendor_set_schedule("61001", 8559205, new_segments=["bad"], segments_to_keep=[])
+            hb.vendor_set_schedule("6011", 8559205, new_segments=["bad"], segments_to_keep=[])
 
 
 class TestVendorCreateInvoice:
@@ -145,14 +145,14 @@ class TestVendorCreateInvoice:
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch, response_body=b'{"id": 3863382}')
         result = hb.vendor_create_invoice(
-            "61001", 12791157,
+            "6011", 12791157,
             line_items=[
                 {"quantity": 1, "unit_price": 125.00, "description": "first"},
                 {"quantity": 1, "unit_price": "250.00", "description": "second"},
             ],
         )
         assert cap["method"] == "POST"
-        assert "/v/61001/" in cap["url"]
+        assert "/v/6011/" in cap["url"]
         assert cap["url"].endswith("/meld-invoices/")
         body = json.loads(cap["body"])
         assert body["meld"] == 12791157
@@ -165,7 +165,7 @@ class TestVendorCreateInvoice:
 
     def test_empty_line_items_raises(self):
         with pytest.raises(ValueError, match="at least one entry"):
-            hb.vendor_create_invoice("61001", 12791157, line_items=[])
+            hb.vendor_create_invoice("6011", 12791157, line_items=[])
 
 
 class TestVendorIdRequired:
@@ -197,9 +197,9 @@ class TestVendorSubmitInvoice:
     def test_sends_submit_flag(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch)
-        hb.vendor_submit_invoice("61001", 3863382)
+        hb.vendor_submit_invoice("6011", 3863382)
         assert cap["method"] == "PATCH"
-        assert "/v/61001/" in cap["url"]
+        assert "/v/6011/" in cap["url"]
         assert "/meld-invoices/3863382/" in cap["url"]
         # No /hold/ or /decline/ — base submit endpoint
         assert "/hold/" not in cap["url"]
@@ -259,7 +259,7 @@ class TestVendorInvite:
             company="test company name",
             line1="123 test address example city ",
             postcode="37421",
-            phone="1234567891",
+            phone="12345667891",
         )
         assert result["ok"] is False
         assert result["already_exists"] is True

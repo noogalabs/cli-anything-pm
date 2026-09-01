@@ -303,7 +303,8 @@ _MANAGER_BODY = '<html><head><script>window.PM.csrf_token = "abc123DEF-456";</sc
 _LOGIN_200_BODY = '<html><body><form><input type="email" name="email"><input type="password" name="password"><button type="submit">Log in</button></form></body></html>'
 # An MFA challenge served as a 200.
 _MFA_200_BODY = '<html><body><input autocomplete="one-time-code" name="otp"></body></html>'
-MANAGER_URL = "https://app.propertymeld.com/1000/m/1000/melds/"
+SYNTHETIC_TENANT = "1000"
+MANAGER_URL = f"https://app.propertymeld.com/{SYNTHETIC_TENANT}/m/{SYNTHETIC_TENANT}/melds/"
 
 
 def _seed_creds(path):

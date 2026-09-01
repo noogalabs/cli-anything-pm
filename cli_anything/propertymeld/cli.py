@@ -4,13 +4,13 @@ Routes read commands to Nexus API backend; write/browser-session commands to htt
 
 Usage:
     pm work-orders list --status open --json
-    pm work-orders get 12345 --json
-    pm work-orders comments 12345 --json
-    pm work-orders send-message --meld-id 12345 --text "Heading over now"
-    pm work-orders clone --meld-id 12345
+    pm work-orders get 123456 --json
+    pm work-orders comments 123456 --json
+    pm work-orders send-message --meld-id 123456 --text "Heading over now"
+    pm work-orders clone --meld-id 123456
     pm properties list --json
     pm vendors list --json
-    pm work-orders assign-tech --work-order-id 12345 --tech Jordan --json
+    pm work-orders assign-tech --work-order-id 123456 --tech Tech A --json
 """
 import json
 import sys
@@ -284,7 +284,7 @@ def list_work_entries_cmd(meld_id, as_json):
 @click.option("--meld-id", required=True, help="Meld ID")
 @click.option("--agent-id", "agent", required=True, type=int,
               help="Persona ID of the agent who performed the work "
-                   "(e.g. 51001=Alex, 51002=Jordan)")
+                   "(e.g. 5011=Alex, 5012=Tech A)")
 @click.option("--description", required=True, callback=_require_nonempty,
               help="Short summary, shown in the meld feed.")
 @click.option("--long-description", "long_description", default="",
@@ -911,7 +911,7 @@ def get_agent_cmd(agent_id, as_json):
 
     Phone-data caveat (Blue gap #N+3): the ``contact`` field on the agent
     detail endpoint is EITHER ``None`` (no contact record exists in PM —
-    observed on Jordan 51002) OR an integer FK to a Contact record that is
+    observed on Tech A 5012) OR an integer FK to a Contact record that is
     NOT exposed via the cookie-path ``/api/contacts/{id}/`` endpoint (404
     on probe). This means cell_phone / business_phone are NOT recoverable
     via this command alone for in-house techs whose contact lives in a
@@ -1234,7 +1234,7 @@ def create_meld_in_project_cmd(
     ManagementAgent objects. Two paths:
 
     \b
-    - Ergonomic: --unit-id 1870266 --maintenance-id 51001 (repeatable)
+    - Ergonomic: --unit-id 1870266 --maintenance-id 5011 (repeatable)
       --tenant-id 4010708 (repeatable)
       → CLI auto-hydrates via GET /units/{id}/ and GET /agents/{id}/.
     - Power-user: --unit-json '<full obj>' --maintenance-json '<full list>'
