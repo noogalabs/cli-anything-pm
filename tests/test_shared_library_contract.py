@@ -1,8 +1,10 @@
 import json
+import os
 import subprocess
 from pathlib import Path
 
 import click
+import pytest
 from click.testing import CliRunner
 
 from cli_anything.propertymeld import http_backend
@@ -58,6 +60,25 @@ def test_runtime_index_matches_independently_derived_click_population():
     assert json.loads(result.output) == catalog
 
 
+@pytest.mark.parametrize(
+    ("args", "target"),
+    (
+        (("probe", "--json"), "cli_anything.propertymeld.api_backend.probe"),
+        (("insights", "melds", "--json"), "cli_anything.propertymeld.insights_backend.get_melds"),
+        (("insights", "turnovers", "--json"), "cli_anything.propertymeld.insights_backend.get_melds"),
+        (("insights", "benchmarks", "--json"), "cli_anything.propertymeld.insights_backend.get_benchmarks"),
+    ),
+)
+def test_new_json_contracts_emit_parseable_json(monkeypatch, args, target):
+    """The four added flags promise JSON behavior, not merely option presence."""
+    monkeypatch.setattr(target, lambda **_kwargs: {"status": "synthetic"})
+
+    result = CliRunner().invoke(cli, args)
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {"status": "synthetic"}
+
+
 def test_missing_config_refuses_action_with_setup_guidance(monkeypatch):
     monkeypatch.setenv("PROPERTYMELD_CONFIG", "/definitely/missing/propertymeld.json")
     propertymeld_config.cache_clear()
@@ -101,21 +122,30 @@ def _tracked_private_literal_matches(repo: Path, needles: tuple[str, ...]):
 
 def test_private_tenant_and_org_literals_are_absent_from_tracked_files():
     repo = Path(__file__).parents[1]
-    private_literals = ("32" + "87", "Ascend" + " Property Management")
+    raw = os.environ.get("PROPERTYMELD_PRIVATE_LITERALS")
+    if not raw:
+        pytest.skip(
+            "PROPERTYMELD_PRIVATE_LITERALS is absent; private-literal census is armed in CI via repository secret"
+        )
+    decoded = json.loads(raw)
+    assert isinstance(decoded, list)
+    private_literals = tuple(decoded)
+    assert private_literals and all(isinstance(item, str) and item for item in private_literals)
     assert _tracked_private_literal_matches(repo, private_literals) == []
 
 
 def test_supported_untracked_config_is_outside_source_census(tmp_path):
     repo = Path(__file__).parents[1]
     config = tmp_path / "propertymeld.json"
+    synthetic_id = str(900_000 + (abs(hash(str(tmp_path))) % 99_999))
     config.write_text(json.dumps({
-        "multitenant_id": "32" + "87",
-        "nexus_account_id": "338",
+        "multitenant_id": synthetic_id,
+        "nexus_account_id": "9001",
         "credentials_path": str(tmp_path / "session.json"),
     }))
 
-    assert load_propertymeld_config(config).multitenant_id == "32" + "87"
-    assert _tracked_private_literal_matches(repo, ("32" + "87",)) == []
+    assert load_propertymeld_config(config).multitenant_id == synthetic_id
+    assert _tracked_private_literal_matches(repo, (synthetic_id,)) == []
 
 
 def test_malformed_config_fails_closed_by_field(tmp_path):

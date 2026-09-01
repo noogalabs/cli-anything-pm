@@ -77,7 +77,7 @@ def _output_insights(callable_, **kwargs):
 @click.option("--limit", type=click.IntRange(1, 10000), default=100, show_default=True)
 @click.option("--work-category", default=None, help="Exact work category filter.")
 @click.option("--project/--non-project", default=None, help="Filter project status.")
-@click.option("--json", "as_json", is_flag=True, default=True)
+@click.option("--json", "as_json", is_flag=True, default=True, help="Output is always JSON.")
 def insights_melds(limit, work_category, project, as_json):
     """Return safe meld analytics with canonical vendor IDs."""
     _output_insights(
@@ -92,7 +92,7 @@ def insights_melds(limit, work_category, project, as_json):
 @insights.command("turnovers")
 @click.option("--limit", type=click.IntRange(1, 10000), default=100, show_default=True)
 @click.option("--project/--non-project", default=None, help="Filter project status.")
-@click.option("--json", "as_json", is_flag=True, default=True)
+@click.option("--json", "as_json", is_flag=True, default=True, help="Output is always JSON.")
 def insights_turnovers(limit, project, as_json):
     """Return TURNOVER analytics with canonical vendor IDs."""
     _output_insights(
@@ -110,7 +110,7 @@ def insights_turnovers(limit, project, as_json):
 @click.option("--priority", default=None, help="Exact priority filter.")
 @click.option("--region", default=None, help="Exact region filter.")
 @click.option("--project/--non-project", default=None, help="Filter project status.")
-@click.option("--json", "as_json", is_flag=True, default=True)
+@click.option("--json", "as_json", is_flag=True, default=True, help="Output is always JSON.")
 def insights_benchmarks(limit, work_category, priority, region, project, as_json):
     """Return PropertyMeld benchmark percentile rows."""
     _output_insights(
@@ -1037,7 +1037,7 @@ def list_api_keys(as_json):
 # ── probe ──────────────────────────────────────────────────────────────────────
 
 @cli.command()
-@click.option("--json", "as_json", is_flag=True, default=True)
+@click.option("--json", "as_json", is_flag=True, default=True, help="Output is always JSON.")
 def probe(as_json):
     """Health check — verify API credentials and connectivity."""
     result = api_backend.probe()
