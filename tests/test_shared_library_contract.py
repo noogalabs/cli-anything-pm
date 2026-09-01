@@ -125,7 +125,15 @@ def _tracked_private_literal_matches(repo: Path, needles: tuple[str, ...]):
 
 
 def _tracked_structural_private_matches(repo: Path):
-    """Find private-data shapes that do not require a secret vocabulary."""
+    """Find private-data shapes that do not require a secret vocabulary.
+
+    The numeric structural denominator is five-digit agent/coordinator IDs,
+    the private shape historically present in this corpus. Real IDs of every
+    length come from the authoritative roster/config secret and are checked by
+    ``_tracked_private_literal_matches``. Longer numeric fixtures here are
+    synthetic by construction; a collision with a real ID is still caught by
+    that sourced vocabulary.
+    """
     patterns = (
         re.compile(r"orgs[/]ascendops|Documents[/]AscendOps-Brain", re.IGNORECASE),
         re.compile(r"https?://[^\s\"']*propertymeld\.com/\d+/", re.IGNORECASE),
@@ -134,7 +142,7 @@ def _tracked_structural_private_matches(repo: Path):
     # Five-digit literals are IDs unless explicitly classified otherwise.
     # Today the only non-ID values are a synthetic postcode and the Insights
     # command limit. New exceptions require a deliberate review here.
-    allowed_non_id_tokens = {"374" + "21", "100" + "00"}
+    allowed_non_id_tokens = {"123" + "45", "100" + "00"}
     matches = []
     tracked = subprocess.run(
         ["git", "ls-files", "-z"],

@@ -1073,13 +1073,13 @@ _TENANT_INVITE_UNIT_FIXTURE = {
         "line_1": "123 Main St",
         "city": "Chattanooga",
         "county_province": "TN",
-        "postcode": "37421",
+        "postcode": "12345",
     },
     "prop": {
         "id": 1718387,
         "line_1": "123 Main St",
         "property_name": "",
-        "postcode": "37421",
+        "postcode": "12345",
         "city": "Chattanooga",
         "county_province": "TN",
     },
@@ -1745,7 +1745,7 @@ class TestCreateProjectLiveShape:
                 due_date="2026-05-22T04:00:00.000Z",
                 start_date="2026-05-13T23:59:59-04:00",
                 coordinators=[9036],
-                unit={"id": 9000005, "label": "123 Main St, Chattanooga, TN, 37421"},
+                unit={"id": 9000005, "label": "123 Main St, Chattanooga, TN, 12345"},
             )
 
             assert result["ok"] is True
@@ -1757,7 +1757,7 @@ class TestCreateProjectLiveShape:
             assert payload["coordinators"] == [9036]
             assert payload["meld_location"] == "Unit"
             assert payload["prop"] is None
-            assert payload["unit"] == {"id": 9000005, "label": "123 Main St, Chattanooga, TN, 37421"}
+            assert payload["unit"] == {"id": 9000005, "label": "123 Main St, Chattanooga, TN, 12345"}
             assert payload["description"] == ""
 
 
