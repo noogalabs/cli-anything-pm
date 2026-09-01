@@ -26,4 +26,6 @@ jobs:
           pip install pytest setuptools wheel
 
       - name: Run tests (pytest -x)
+        env:
+          PROPERTYMELD_VOCAB_SALT: ${{ secrets.PROPERTYMELD_VOCAB_SALT }}
         run: pytest tests/ -x

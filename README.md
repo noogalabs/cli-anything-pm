@@ -29,14 +29,18 @@ This catches the install-lag class of bug, where an operator's `pm` binary is mi
 
 ## Configuration
 
-Add to your agent's `.env`:
+Copy the tracked synthetic example to a private local path:
 
 ```bash
-PM_CLIENT_ID=your-client-id
-PM_CLIENT_SECRET=your-client-secret
-PM_MULTITENANT_ID=3287        # Your multitenant ID
-PM_CREDS_PATH=~/.claude/credentials/property-meld.json  # For browser backend
+cp config/propertymeld.example.json ~/.claude/credentials/propertymeld-config.json
+export PROPERTYMELD_CONFIG=~/.claude/credentials/propertymeld-config.json
+export PM_CLIENT_ID=your-client-id
+export PM_CLIENT_SECRET=your-client-secret
 ```
+
+Set `multitenant_id`, `nexus_account_id`, and `credentials_path` in the private
+JSON file. Missing or malformed routing fails closed when an action runs; all
+command help and the runtime command index remain available without config.
 
 Get API credentials from: Property Meld > Settings > API / Nexus API
 
@@ -45,13 +49,14 @@ Get API credentials from: Property Meld > Settings > API / Nexus API
 ```bash
 pm probe                                     # Verify setup
 pm work-orders list --status open --json    # List open work orders
-pm work-orders get 12345 --json             # Single work order
-pm work-orders comments 12345 --json        # Comments (browser)
-pm work-orders assign-tech --work-order-id 12345 --tech Person019 --json
-pm work-orders assign-vendor --work-order-id 12345 --vendor "Dyer HVAC" --json
-pm vendors invite --email vendor@example.com --first-name Fixture --last-name Person035 --company "Person035 Plumbing" --line1 "123 Main St" --postcode 37421 --phone 2025550110
-pm tenants invite --unit-id 9000005 --first-name Fixture --last-name Resident --email fixture.alpha@example.com --cell 2025550110
-pm tenants edit-contact 9000020 --cell 2025550110 --primary-email tenant@example.com
+pm work-orders get 900001 --json             # Single work order
+pm work-orders comments 900001 --json        # Comments (browser)
+pm work-orders assign-tech --work-order-id 900001 --tech Tech A --json
+pm work-orders assign-vendor --work-order-id 900001 --vendor "Fixture Service" --json
+pm vendors invite --email vendor@example.com --first-name Fixture --last-name Vendor --company "Fixture Service" --line1 "123 Main St" --postcode 12345 --phone 2025550110
+pm tenants invite --unit-id 9000025 --first-name Fixture --last-name Resident --email resident@example.com --cell 2025550110
+pm tenants edit-contact 9000026 --cell 2025550110 --primary-email tenant@example.com
+pm index --json                              # Runtime-derived command catalog
 ```
 
 ### Read-only Insights analytics

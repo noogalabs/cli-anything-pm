@@ -79,7 +79,7 @@ class TestWorkEntriesNeverEmptyOnFailure:
         monkeypatch.setattr(http_backend, "list_work_entries", boom)
         monkeypatch.setattr(api_backend.time, "sleep", lambda _s: None)
 
-        got = api_backend._fetch_work_entries_or_marker("12345")
+        got = api_backend._fetch_work_entries_or_marker("900001")
 
         assert is_marker(got), "failure produced a launderable empty value"
         assert marker_kind(got) == "fetch-failed"
@@ -91,7 +91,7 @@ class TestWorkEntriesNeverEmptyOnFailure:
         # would satisfy the failure test above.
         rows = [{"id": 1, "hours": 2.5}]
         monkeypatch.setattr(http_backend, "list_work_entries", lambda _m: rows)
-        got = api_backend._fetch_work_entries_or_marker("12345")
+        got = api_backend._fetch_work_entries_or_marker("900001")
         assert got == rows
         assert not is_marker(got)
 
@@ -105,12 +105,12 @@ class TestWorkEntriesNeverEmptyOnFailure:
         monkeypatch.setattr(http_backend, "list_work_entries", flaky)
         monkeypatch.setattr(api_backend.time, "sleep", lambda _s: None)
 
-        got = api_backend._fetch_work_entries_or_marker("12345")
+        got = api_backend._fetch_work_entries_or_marker("900001")
         assert got == [{"id": 9}]
         assert calls["n"] == 3, "did not retry the measured 1-in-3 timeout rate"
 
     def test_unexpected_payload_type_is_a_failure_not_a_result(self, monkeypatch):
         monkeypatch.setattr(http_backend, "list_work_entries", lambda _m: {"nope": 1})
         monkeypatch.setattr(api_backend.time, "sleep", lambda _s: None)
-        got = api_backend._fetch_work_entries_or_marker("12345")
+        got = api_backend._fetch_work_entries_or_marker("900001")
         assert marker_kind(got) == "fetch-failed"

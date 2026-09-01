@@ -24,7 +24,7 @@ Default (headless/auto) mode FAILS FAST on an MFA challenge: it exits 2 with
 ``{"error": "mfa_required"}`` so the agent routes to the manual relay. It does
 not block, because the auto caller kills the subprocess at 180s while the relay
 waits up to 360s. The opt-in ``--mfa-relay`` mode runs the file-poll relay
-(agent drops Person031's relayed SMS code into PM_MFA_CODE_FILE) for the manual,
+(agent drops Person038's relayed SMS code into PM_MFA_CODE_FILE) for the manual,
 human-in-the-loop path.
 
 Usage:
@@ -36,7 +36,7 @@ Usage:
 Env vars:
     PM_WEB_EMAIL         PropertyMeld login email (required)
     PM_WEB_PASSWORD      PropertyMeld login password (required)
-    PM_CREDS_PATH        Where to read/write cookies
+    PROPERTYMELD_CONFIG  Local tenant/account routing and cookie-file path
     PM_RECAPTURE_HEADED  Set to 1 to show the browser window (recommended for the
                          single careful live validation hit — lower bot profile)
     PM_MFA_CODE_FILE     File the agent drops the relayed MFA code into (--mfa-relay)
@@ -57,11 +57,13 @@ import shutil
 import sys
 import time
 
+from cli_anything.propertymeld.config import require_propertymeld_config
 
-CREDS_PATH = os.environ.get(
-    "PM_CREDS_PATH",
-    os.path.expanduser("~/.claude/credentials/property-meld.json"),
-)
+CREDS_PATH = None
+
+
+def _creds_path():
+    return str(CREDS_PATH or require_propertymeld_config().credentials_path)
 # Correct login URL: bare /login/ and /accounts/login/ are dead/misread pages;
 # /login/?next=/ is the one that actually serves the Django login form.
 LOGIN_URL = "https://app.propertymeld.com/login/?next=/"
@@ -399,9 +401,9 @@ def write_creds(cookies: list) -> None:
     login. We merge: read the old file, overwrite only ``cookies``, keep the rest.
     """
     old: dict = {}
-    if os.path.exists(CREDS_PATH):
+    if os.path.exists(_creds_path()):
         try:
-            with open(CREDS_PATH) as f:
+            with open(_creds_path()) as f:
                 loaded = json.load(f)
             if isinstance(loaded, dict):
                 old = loaded
@@ -415,14 +417,14 @@ def write_creds(cookies: list) -> None:
     # truncate and flush would otherwise leave property-meld.json zero-byte/corrupt
     # and lose the login. Write a sibling tmp, fsync, chmod, then os.replace (atomic
     # rename on the same filesystem). Mandated by the cortextos atomic-write rule.
-    os.makedirs(os.path.dirname(CREDS_PATH) or ".", exist_ok=True)
-    tmp_path = CREDS_PATH + ".tmp"
+    os.makedirs(os.path.dirname(_creds_path()) or ".", exist_ok=True)
+    tmp_path = _creds_path() + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(merged, f)
         f.flush()
         os.fsync(f.fileno())
     os.chmod(tmp_path, 0o600)
-    os.replace(tmp_path, CREDS_PATH)
+    os.replace(tmp_path, _creds_path())
 
 
 def main(argv=None) -> None:
@@ -443,15 +445,15 @@ def main(argv=None) -> None:
             print("Session still valid — no recapture needed.")
             sys.exit(0)
 
-    backup_path = CREDS_PATH + ".bak"
+    backup_path = _creds_path() + ".bak"
     backup_created = False
     try:
         cookies = recapture(email, password, mfa_relay=args.mfa_relay)
         if not cookies:
             raise RuntimeError("No propertymeld.com cookies were extracted.")
 
-        if os.path.exists(CREDS_PATH):
-            shutil.copy2(CREDS_PATH, backup_path)
+        if os.path.exists(_creds_path()):
+            shutil.copy2(_creds_path(), backup_path)
             backup_created = True
 
         write_creds(cookies)
@@ -459,7 +461,7 @@ def main(argv=None) -> None:
         # POST-write verification uses the WRITE path too — the whole point is
         # that the refreshed cookie actually works for writes, not just reads.
         if http_backend.session_cookie_valid():
-            print(f"Session recaptured successfully. Cookies written to {CREDS_PATH}")
+            print(f"Session recaptured successfully. Cookies written to {_creds_path()}")
             sys.exit(0)
 
         raise RuntimeError("Write-path session still invalid after writing refreshed cookies.")
@@ -479,7 +481,7 @@ def main(argv=None) -> None:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         sys.exit(1)
     finally:
-        if backup_created and os.path.exists(backup_path) and os.path.exists(CREDS_PATH):
+        if backup_created and os.path.exists(backup_path) and os.path.exists(_creds_path()):
             try:
                 os.remove(backup_path)
             except OSError:
@@ -488,7 +490,7 @@ def main(argv=None) -> None:
 
 def _restore(backup_path: str, backup_created: bool) -> None:
     if backup_created and os.path.exists(backup_path):
-        shutil.move(backup_path, CREDS_PATH)
+        shutil.move(backup_path, _creds_path())
 
 
 if __name__ == "__main__":

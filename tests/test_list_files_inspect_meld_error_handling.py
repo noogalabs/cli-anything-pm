@@ -9,7 +9,7 @@ Both functions read PM cookie-session endpoints and historically assumed a
    structured stderr envelope — never a bare traceback and never a silent
    empty-list-on-403.
 
-2. PM serving a permission-denied / forbidden interstitial as HTTP **200**
+2. PM exampleg a permission-denied / forbidden interstitial as HTTP **200**
    with an HTML body. `json.loads()` on that HTML raised an UNCAUGHT
    json.JSONDecodeError -> full traceback crash. The fix surfaces a clean
    error (status 403 inferred from the body, or a generic non-JSON envelope)

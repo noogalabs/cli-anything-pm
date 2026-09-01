@@ -22,6 +22,7 @@ from types import MappingProxyType
 from typing import Any, Iterable, Optional
 
 from . import api_backend
+from .config import require_propertymeld_config
 
 
 class InsightsError(RuntimeError):
@@ -109,10 +110,7 @@ _SSL_CONTEXT = ssl.create_default_context()
 
 
 def _credentials_path() -> str:
-    return os.environ.get(
-        "PM_CREDS_PATH",
-        os.path.expanduser("~/.claude/credentials/property-meld.json"),
-    )
+    return str(require_propertymeld_config().credentials_path)
 
 
 def _load_cookie_header() -> str:
@@ -146,9 +144,7 @@ def _dataset_url(dataset: str) -> str:
         endpoint = _ENDPOINTS[dataset]
     except KeyError as exc:
         raise InsightsError(f"Unsupported Insights dataset: {dataset}") from exc
-    multitenant = os.environ.get("PM_MULTITENANT_ID", "3287")
-    if not multitenant.isdigit():
-        raise InsightsError("PM_MULTITENANT_ID must be numeric")
+    multitenant = require_propertymeld_config().multitenant_id
     return (
         f"https://app.propertymeld.com/{multitenant}/m/{multitenant}/api/"
         f"{endpoint}"
@@ -158,13 +154,14 @@ def _dataset_url(dataset: str) -> str:
 def _fetch_parquet_bytes(dataset: str) -> bytes:
     """Fetch one allowlisted dataset with a literal GET request."""
     url = _dataset_url(dataset)
+    multitenant = require_propertymeld_config().multitenant_id
     request = urllib.request.Request(
         url,
         headers={
             "Cookie": _load_cookie_header(),
             "Accept": "application/vnd.apache.parquet, application/octet-stream",
             "User-Agent": _UA,
-            "Referer": f"https://app.propertymeld.com/{os.environ.get('PM_MULTITENANT_ID', '3287')}/m/{os.environ.get('PM_MULTITENANT_ID', '3287')}/insights/",
+            "Referer": f"https://app.propertymeld.com/{multitenant}/m/{multitenant}/insights/",
         },
         method="GET",
     )

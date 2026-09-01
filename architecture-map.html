@@ -141,7 +141,7 @@ const nodes = [
     tag:['overview','reads','writes','all'],
   }),
   N('we-group','entry','work-entries','nested group + legacy shim',70,272,240,52,'client',{
-    role:'Custom click.Group subclass that falls through to `list` when the first arg is not a known subcommand, preserving the old positional invocation.',
+    role:'Custom click.Group subclass that falls through to `list` when the first arg is not a known subcommand, preexampleg the old positional invocation.',
     plain:'A small menu inside the work-orders menu, for logging each on-site visit. It has a safety net so an older command shape ("work-entries 90000014") still works instead of erroring.',
     path:'cli_anything/propertymeld/cli.py:112',
     notes:['line:122 resolve_command override = back-compat (Codex PR #7 catch)','Subcommands: list/create/update/delete'],
@@ -384,7 +384,7 @@ const nodes = [
     role:'Property Meld Nexus partner API over OAuth2 client-credentials; serves shallow reads at app.propertymeld.com/api/v2 with X-Multitenant-Id.',
     plain:'Property Meld\'s official read-only API. Logs in with a key and returns slimmed-down lists. This is where every standard list and lookup ends up.',
     path:'(external — app.propertymeld.com/api/v2)',
-    notes:['Token: POST /api/v2/oauth/token/','43-field shallow shape; omits nested relations','AscendOps convention: <=7 calls/day'],
+    notes:['Token: POST /api/v2/oauth/token/','43-field shallow shape; omits nested relations','Operator convention: <=7 calls/day'],
     tag:['overview','reads','schema','external','all'],
   }),
   N('ext-cookie','external','PM Cookie API','sessionid + CSRF · rich + writes',1510,212,240,88,'external',{

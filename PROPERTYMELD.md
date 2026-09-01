@@ -31,7 +31,7 @@ Property Meld uses OAuth2 client credentials (Nexus API).
 
 ## Browser Backend Session
 
-Comments, tech assignment, vendor assignment, vendor invites, tenant invites, and tenant contact edits require a browser session. Credentials stored at `PM_CREDS_PATH` (JSON with `username`, `password`, `cookies` fields). Cookies are refreshed automatically on session expiry.
+Comments, tech assignment, vendor assignment, vendor invites, tenant invites, and tenant contact edits require a browser session. The session file is selected by `credentials_path` in the private `PROPERTYMELD_CONFIG` JSON (with `username`, `password`, `cookies` fields). Cookies are refreshed automatically on session expiry.
 
 ## Vendor Person004 (CLI)
 
@@ -41,17 +41,17 @@ Create the vendor and send the portal invite in one manager-side call:
 pm vendors invite \
   --email vendor@example.com \
   --first-name Fixture \
-  --last-name Person035 \
-  --company "Person035 Plumbing" \
+  --last-name Vendor \
+  --company "Fixture Service" \
   --line1 "123 Main St" \
-  --postcode 37421 \
+  --postcode 12345 \
   --phone 2025550110
 ```
 
 Captured request shape:
 
 ```json
-{"email":"vendor@example.com","first_name":"Fixture","last_name":"Person035","name":"Person035 Plumbing","line_1":"123 Main St","state":"","postcode":"37421","phone":"2025550110"}
+{"email":"vendor@example.com","first_name":"Fixture","last_name":"Vendor","name":"Fixture Service","line_1":"123 Main St","state":"","postcode":"12345","phone":"2025550110"}
 ```
 
 PM returns HTTP 400 when the invite email already exists; the CLI surfaces that as `ok: false` with `already_exists` / `already_invited`.
@@ -62,7 +62,7 @@ Create a tenant on a unit and send the portal invite:
 
 ```bash
 pm tenants invite \
-  --unit-id 9000005 \
+  --unit-id 9000025 \
   --first-name Fixture \
   --last-name Resident \
   --email fixture.alpha@example.com \
@@ -78,7 +78,7 @@ manager UI request sends `units: [<full unit>]`, not a stripped id-only unit.
 Person003 tenant contact fields through the manager-side full-echo tenant PUT:
 
 ```bash
-pm tenants edit-contact 9000020 \
+pm tenants edit-contact 9000026 \
   --cell 2025550110 \
   --home 2025550111 \
   --business 2025550112 \
@@ -93,7 +93,7 @@ returns 403.
 
 ## Rate Limits
 
-No documented rate limit from Property Meld. AscendOps convention: max 7 Nexus API calls/day (morning report window only).
+Property Meld does not document a rate limit. Each installation must set its own operational call budget outside this shared repository.
 
 ## API Key Rotation (CLI)
 
@@ -112,14 +112,14 @@ pm api-keys list
 
 **Manual flow the CLI automates:**
 1. `app.propertymeld.com` → click user icon (top right) → Switch Account Type
-2. Select "Nexus Partner / Ascend Property Management"
-3. Navigate to Settings > API Keys (`/338/n/338/nexus/api-keys/`)
+2. Select the Nexus Partner entry for your organization.
+3. Navigate to Settings > API Keys (`/2000/n/2000/nexus/api-keys/`)
 4. Click "Create API Key"
 5. Copy Client ID and Client Secret (shown ONCE)
 6. Update Railway env vars: `PM_NEXUS_CLIENT_ID`, `PM_NEXUS_CLIENT_SECRET`
 7. `railway redeploy --yes` in `emergency-dispatch-middleware/`
 
 **Notes:**
-- Nexus account ID is `338`, management account is `3287`
+- Record the Nexus and management account IDs in your private config file.
 - Client secret is shown only once — always capture it immediately
 - After Railway redeploy, confirm via `railway logs | grep "Fetched PM melds"`

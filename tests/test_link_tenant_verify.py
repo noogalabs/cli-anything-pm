@@ -46,7 +46,7 @@ def _patch_creds_csrf(monkeypatch):
 # priority).
 _MELD_NO_TENANTS = json.dumps(
     {
-        "id": 12937555,
+        "id": 90000018,
         "tenants": [],
         "brief_description": "Leaky faucet",
         "work_location": "Kitchen",
@@ -57,18 +57,18 @@ _MELD_NO_TENANTS = json.dumps(
 ).encode()
 
 # Tenant GET: the fully-hydrated tenant object link_tenant_to_meld appends.
-_TENANT = json.dumps({"id": 4242, "first_name": "Fixture", "last_name": "Doe"}).encode()
+_TENANT = json.dumps({"id": 4242, "first_name": "Fixture", "last_name": "Alpha"}).encode()
 
 # PATCH response — 2xx body (PM echoes the meld; content irrelevant to the fix).
-_PATCH_2XX = json.dumps({"id": 12937555, "tenants": []}).encode()
+_PATCH_2XX = json.dumps({"id": 90000018, "tenants": []}).encode()
 
 
 def _wire(monkeypatch, *, verify_meld_body):
     """Install a urlopen that sequences responses:
-      1st GET melds/12937555/  -> initial body (_MELD_NO_TENANTS)
+      1st GET melds/90000018/  -> initial body (_MELD_NO_TENANTS)
       GET tenants/4242/        -> _TENANT
-      PATCH melds/12937555/    -> _PATCH_2XX
-      2nd GET melds/12937555/  -> verify_meld_body (persisted or not)
+      PATCH melds/90000018/    -> _PATCH_2XX
+      2nd GET melds/90000018/  -> verify_meld_body (persisted or not)
     """
     calls = []
     meld_get_count = {"n": 0}
@@ -79,7 +79,7 @@ def _wire(monkeypatch, *, verify_meld_body):
         calls.append({"method": method, "url": url, "body": req.data})
         if url.endswith("/tenants/4242/"):
             return _FakeResp(_TENANT)
-        if url.endswith("/melds/12937555/"):
+        if url.endswith("/melds/90000018/"):
             if method == "PATCH":
                 return _FakeResp(_PATCH_2XX)
             # GET: first call is the initial read, second is the verify re-GET.
@@ -100,11 +100,11 @@ class TestLinkTenantVerify:
         local merge."""
         _patch_creds_csrf(monkeypatch)
         verify_body = json.dumps(
-            {"id": 12937555, "tenants": [{"id": 4242}]}
+            {"id": 90000018, "tenants": [{"id": 4242}]}
         ).encode()
         calls = _wire(monkeypatch, verify_meld_body=verify_body)
 
-        result = hb.link_tenant_to_meld("12937555", 4242)
+        result = hb.link_tenant_to_meld("90000018", 4242)
 
         assert result["ok"] is True
         assert result["linked"] is True
@@ -113,7 +113,7 @@ class TestLinkTenantVerify:
         # The fix re-GETs the meld after the PATCH: two meld GETs total.
         meld_gets = [
             c for c in calls
-            if c["method"] == "GET" and c["url"].endswith("/melds/12937555/")
+            if c["method"] == "GET" and c["url"].endswith("/melds/90000018/")
         ]
         assert len(meld_gets) == 2
 
@@ -122,11 +122,11 @@ class TestLinkTenantVerify:
         tenants=[] -> the link did not persist -> RAISE RuntimeError pointing
         to the web-UI workaround. Must NOT return a linked:true dict."""
         _patch_creds_csrf(monkeypatch)
-        verify_body = json.dumps({"id": 12937555, "tenants": []}).encode()
+        verify_body = json.dumps({"id": 90000018, "tenants": []}).encode()
         _wire(monkeypatch, verify_meld_body=verify_body)
 
         with pytest.raises(RuntimeError) as exc:
-            hb.link_tenant_to_meld("12937555", 4242)
+            hb.link_tenant_to_meld("90000018", 4242)
 
         msg = str(exc.value).lower()
         assert "web ui" in msg or "web-ui" in msg

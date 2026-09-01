@@ -5,3 +5,8 @@ __pycache__/
 .pytest_cache/
 /build/
 /dist/
+
+# Private inputs for the value-free HMAC census. The generated digest list is
+# safe to commit; source exports and salt files never are.
+/private-exports/
+*.vocab-salt

@@ -44,7 +44,7 @@ WO_LIST_RESPONSE = {
 }
 SINGLE_WO_RESPONSE = {"id": 1001, "status": "open", "description": "Leak in unit 2B"}
 PROPERTIES_RESPONSE = {"count": 1, "results": [{"id": 5, "name": "123 Main St"}]}
-VENDORS_RESPONSE = {"count": 1, "results": [{"id": 10, "name": "Dyer HVAC"}]}
+VENDORS_RESPONSE = {"count": 1, "results": [{"id": 10, "name": "Fixture Service"}]}
 
 
 class TestListWorkOrders:
@@ -114,7 +114,7 @@ class TestListWorkOrders:
     def test_vendor_filter_uses_cookie_rows_not_ignored_nexus_param(self):
         rich_results = [
             {"id": 1001, "vendor_assignment_requests": [
-                {"vendor": {"id": 99, "name": "Dyer HVAC"}}
+                {"vendor": {"id": 99, "name": "Fixture Service"}}
             ]},
             {"id": 1002, "vendor_assignment_requests": [
                 {"vendor": {"id": 44, "name": "Other Vendor"}}
@@ -150,7 +150,7 @@ class TestListWorkOrders:
             "cli_anything.propertymeld.http_backend.list_work_orders_rich"
         ) as mock_rich:
             with pytest.raises(SystemExit) as exc_info:
-                api_backend.list_work_orders(assigned_to_tech=90025)
+                api_backend.list_work_orders(assigned_to_tech=9036)
         assert exc_info.value.code == 2
         assert mock_open.call_count == 0
         assert mock_rich.call_count == 0
@@ -197,7 +197,7 @@ class TestListWorkOrders:
         #                      documented in api_backend.list_work_orders).
         rich_results = [
             {"id": 1001, "tenants": []},
-            {"id": 1002, "tenants": [{"id": 5, "first_name": "Person033"}]},
+            {"id": 1002, "tenants": [{"id": 5, "first_name": "Fixture"}]},
             {"id": 1003, "tenants": None},
         ]
         with patch(
@@ -388,7 +388,7 @@ class TestListWorkOrders:
             {
                 "id": 1001,
                 "in_house_servicers": [
-                    {"id": 501, "agent": {"id": 90028, "first_name": "Person017"}}
+                    {"id": 501, "agent": {"id": 5013, "first_name": "Tech C"}}
                 ],
                 "managementappointment": [{"id": 7001, "meld": 1001}],
                 "vendor_assignment_requests": [],
@@ -399,7 +399,7 @@ class TestListWorkOrders:
                 "in_house_servicers": [],
                 "managementappointment": [],
                 "vendor_assignment_requests": [
-                    {"id": 9001, "vendor": {"id": 44, "name": "Dyer HVAC"}}
+                    {"id": 9001, "vendor": {"id": 44, "name": "Fixture Service"}}
                 ],
                 "vendorappointment": [{"id": 8001, "meld": 1002}],
             },
@@ -415,7 +415,7 @@ class TestListWorkOrders:
             results = api_backend.list_work_orders(include_tech=True, status="open")
 
         assert mock_rich.call_count == 1
-        assert results[0]["in_house_servicers"][0]["agent"]["id"] == 90028
+        assert results[0]["in_house_servicers"][0]["agent"]["id"] == 5013
         assert results[0]["managementappointment"][0]["id"] == 7001
         assert "vendor_assignment_requests" not in results[0]
         assert "vendorappointment" not in results[0]
@@ -479,16 +479,16 @@ class TestListWorkOrders:
         assert captured.out == ""
 
     def test_include_tech_preserves_existing_nexus_assignment_fields(self):
-        nexus_managementappointment = [{"id": 7001, "in_house_servicers": [90028]}]
+        nexus_managementappointment = [{"id": 7001, "in_house_servicers": [5013]}]
         with patch("urllib.request.urlopen") as mock_open, patch(
             "cli_anything.propertymeld.http_backend.list_work_orders_rich",
             return_value=[
                 {
                     "id": 1001,
                     "in_house_servicers": [
-                        {"id": 501, "agent": {"id": 90028, "first_name": "Person017"}}
+                        {"id": 501, "agent": {"id": 5013, "first_name": "Tech C"}}
                     ],
-                    "managementappointment": [{"id": 7001, "management_assignment": 4239872}],
+                    "managementappointment": [{"id": 7001, "management_assignment": 9000020}],
                 }
             ],
         ):
@@ -498,7 +498,7 @@ class TestListWorkOrders:
             ]
             results = api_backend.list_work_orders(include_tech=True)
 
-        assert results[0]["in_house_servicers"][0]["agent"]["id"] == 90028
+        assert results[0]["in_house_servicers"][0]["agent"]["id"] == 5013
         assert results[0]["managementappointment"] == nexus_managementappointment
 
     def test_include_tech_detail_fallback_for_missing_list_item(self):
@@ -510,8 +510,8 @@ class TestListWorkOrders:
             return_value={
                 "id": 1001,
                 "in_house_servicers": [
-                    {"id": 501, "agent": {"id": 90028, "first_name": "Person017"}},
-                    {"id": 502, "agent": {"id": 90027, "first_name": "Person030"}},
+                    {"id": 501, "agent": {"id": 5013, "first_name": "Tech C"}},
+                    {"id": 502, "agent": {"id": 5022, "first_name": "Tech B"}},
                 ],
                 "managementappointment": [],
             },
@@ -523,7 +523,7 @@ class TestListWorkOrders:
             results = api_backend.list_work_orders(include_tech=True)
 
         mock_detail.assert_called_once_with("1001")
-        assert [a["agent"]["id"] for a in results[0]["in_house_servicers"]] == [90028, 90027]
+        assert [a["agent"]["id"] for a in results[0]["in_house_servicers"]] == [5013, 5022]
 
 
 class TestGetWorkOrder:
@@ -554,15 +554,15 @@ class TestGetWorkOrder:
     def test_include_tech_merges_cookie_assignment_fields(self):
         rich = {
             "in_house_servicers": [
-                {"id": 5793013, "agent": {"id": 90028, "first_name": "silvano"}}
+                {"id": 9000027, "agent": {"id": 5013, "first_name": "tech c"}}
             ],
             "managementappointment": [
                 {
-                    "id": 4243145,
-                    "meld": 12904264,
+                    "id": 9000021,
+                    "meld": 90000017,
                     "management_assignment": {
                         "in_house_servicers": [
-                            {"first_name": "silvano", "last_name": "servin"}
+                            {"first_name": "tech c", "last_name": "example"}
                         ]
                     },
                 }
@@ -574,13 +574,13 @@ class TestGetWorkOrder:
         ) as mock_rich:
             mock_open.side_effect = [
                 make_response(TOKEN_RESPONSE),
-                make_response({"id": 12904264, "status": "PENDING_ASSIGNMENT"}),
+                make_response({"id": 90000017, "status": "PENDING_ASSIGNMENT"}),
             ]
-            result = api_backend.get_work_order("12904264", include_tech=True)
+            result = api_backend.get_work_order("90000017", include_tech=True)
 
-        mock_rich.assert_called_once_with("12904264")
-        assert result["in_house_servicers"][0]["agent"]["id"] == 90028
-        assert result["managementappointment"][0]["management_assignment"]["in_house_servicers"][0]["last_name"] == "servin"
+        mock_rich.assert_called_once_with("90000017")
+        assert result["in_house_servicers"][0]["agent"]["id"] == 5013
+        assert result["managementappointment"][0]["management_assignment"]["in_house_servicers"][0]["last_name"] == "example"
 
     def test_include_tech_warns_when_cookie_detail_fails(self, capsys):
         with patch("urllib.request.urlopen") as mock_open, patch(
@@ -589,9 +589,9 @@ class TestGetWorkOrder:
         ):
             mock_open.side_effect = [
                 make_response(TOKEN_RESPONSE),
-                make_response({"id": 12904264, "status": "PENDING_ASSIGNMENT"}),
+                make_response({"id": 90000017, "status": "PENDING_ASSIGNMENT"}),
             ]
-            result = api_backend.get_work_order("12904264", include_tech=True)
+            result = api_backend.get_work_order("90000017", include_tech=True)
 
         # CHANGED 2026-08-10: a failed cookie fetch must NOT produce []. These
         # fields answer "who is assigned", and an empty list reads as "nobody
@@ -600,7 +600,7 @@ class TestGetWorkOrder:
         assert marker_kind(result["in_house_servicers"]) == "fetch-failed"
         assert (result["in_house_servicers"] or []) is not []
         captured = capsys.readouterr()
-        assert "cookie detail fetch failed for meld 12904264" in captured.err
+        assert "cookie detail fetch failed for meld 90000017" in captured.err
         assert "cookie unavailable" in captured.err
         assert captured.out == ""
 
@@ -624,7 +624,7 @@ class TestListVendors:
                 make_response(VENDORS_RESPONSE),
             ]
             results = api_backend.list_vendors()
-        assert results[0]["name"] == "Dyer HVAC"
+        assert results[0]["name"] == "Fixture Service"
 
 
 class TestProbe:
@@ -661,7 +661,7 @@ class TestListAgents:
         with patch("cli_anything.propertymeld.http_backend._load_creds", return_value={}), \
              patch("cli_anything.propertymeld.http_backend._cookie_header", return_value="cookie"), \
              patch("cli_anything.propertymeld.http_backend._paginate_all",
-                   return_value=[{"id": 90026}, {"id": 90028}, {"id": 57545}]) as paginate_mock:
+                   return_value=[{"id": 9037}, {"id": 5013}, {"id": 5014}]) as paginate_mock:
             result = http_backend.list_agents()
         paginate_mock.assert_called_once_with("agents/?limit=100", "cookie")
         assert isinstance(result, list)
@@ -671,11 +671,11 @@ class TestListAgents:
         with patch("cli_anything.propertymeld.http_backend._load_creds", return_value={}), \
              patch("cli_anything.propertymeld.http_backend._cookie_header", return_value="cookie"), \
              patch("cli_anything.propertymeld.http_backend._paginate_all",
-                   return_value=[{"id": 90026}]):
+                   return_value=[{"id": 9037}]):
             result = http_backend.list_agents()
         assert isinstance(result, list)
         assert len(result) == 1
-        assert result[0]["id"] == 90026
+        assert result[0]["id"] == 9037
 
     def test_list_agents_returns_empty_list_on_empty(self):
         with patch("cli_anything.propertymeld.http_backend._load_creds", return_value={}), \
@@ -746,7 +746,7 @@ class TestScheduleVendorAppointment:
         "vendor_assignment_requests": [
             {
                 "id": 8000,
-                "vendor": {"id": 42, "name": "Dyer HVAC"},
+                "vendor": {"id": 42, "name": "Fixture Service"},
                 "accepted": "2026-05-13T12:59:15.615119Z",
                 "rejected": None,
                 "canceled": None,
@@ -867,8 +867,8 @@ class TestScheduleVendorAppointment:
             "id": 90000014,
             "status": "PENDING_TENANT_AVAILABILITY",
             "vendor_assignment_requests": [
-                {"id": 8000, "vendor": {"id": 10, "name": "First HVAC"}, "accepted": "2026-05-13T10:00:00Z", "rejected": None, "canceled": None},
-                {"id": 8001, "vendor": {"id": 42, "name": "Dyer HVAC"}, "accepted": "2026-05-13T11:00:00Z", "rejected": None, "canceled": None},
+                {"id": 8000, "vendor": {"id": 10, "name": "Fixture Primary"}, "accepted": "2026-05-13T10:00:00Z", "rejected": None, "canceled": None},
+                {"id": 8001, "vendor": {"id": 42, "name": "Fixture Service"}, "accepted": "2026-05-13T11:00:00Z", "rejected": None, "canceled": None},
             ],
             "vendorappointment": [
                 {"id": 7000, "meld": 90000014, "assignment_request": 8000},
@@ -901,8 +901,8 @@ class TestScheduleVendorAppointment:
             "id": 90000014,
             "status": "PENDING_ASSIGNMENT",
             "vendor_assignment_requests": [
-                {"id": 8000, "vendor": {"id": 10, "name": "First HVAC"}, "accepted": "2026-05-13T10:00:00Z", "rejected": None, "canceled": None},
-                {"id": 8001, "vendor": {"id": 42, "name": "Dyer HVAC"}, "accepted": None, "rejected": "2026-05-13T11:00:00Z", "canceled": None},
+                {"id": 8000, "vendor": {"id": 10, "name": "Fixture Primary"}, "accepted": "2026-05-13T10:00:00Z", "rejected": None, "canceled": None},
+                {"id": 8001, "vendor": {"id": 42, "name": "Fixture Service"}, "accepted": None, "rejected": "2026-05-13T11:00:00Z", "canceled": None},
             ],
             "vendorappointment": [
                 {"id": 7000, "meld": 90000014, "assignment_request": 8000},
@@ -936,7 +936,7 @@ class TestScheduleVendorAppointment:
             "id": 90000014,
             "status": "PENDING_TENANT_AVAILABILITY",
             "vendor_assignment_requests": [
-                {"id": 8000, "vendor": {"id": 42, "name": "Dyer HVAC"},
+                {"id": 8000, "vendor": {"id": 42, "name": "Fixture Service"},
                  "accepted": "2026-05-13T12:59:15Z", "rejected": None, "canceled": None},
             ],
             "vendorappointment": [
@@ -984,15 +984,15 @@ class TestAddMeldsToProject:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
-            mp.return_value = {"id": 222959, "melds": [{"id": 12772756, "project": 222959}]}
+            mp.return_value = {"id": 900005, "melds": [{"id": 90000005, "project": 900005}]}
 
-            result = http_backend.add_melds_to_project("222959", [12772756])
+            result = http_backend.add_melds_to_project("900005", [90000005])
 
             assert result["ok"] is True
-            assert result["project_id"] == "222959"
+            assert result["project_id"] == "900005"
             path, payload, _, _ = mp.call_args[0]
-            assert path == "projects/222959/add-melds/"
-            assert payload == {"melds": [{"project": "222959", "id": 12772756}]}
+            assert path == "projects/900005/add-melds/"
+            assert payload == {"melds": [{"project": "900005", "id": 90000005}]}
 
     def test_multi_meld(self):
         mock_creds_p, mock_cookie_p, mock_csrf_p, mock_put_p = self._patched()
@@ -1000,14 +1000,14 @@ class TestAddMeldsToProject:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
-            mp.return_value = {"id": 222959, "melds": []}
+            mp.return_value = {"id": 900005, "melds": []}
 
-            http_backend.add_melds_to_project("222959", [12772756, 12772757])
+            http_backend.add_melds_to_project("900005", [90000005, 90000006])
 
             _, payload, _, _ = mp.call_args[0]
             assert payload["melds"] == [
-                {"project": "222959", "id": 12772756},
-                {"project": "222959", "id": 12772757},
+                {"project": "900005", "id": 90000005},
+                {"project": "900005", "id": 90000006},
             ]
 
     def test_empty_meld_list_short_circuits(self):
@@ -1017,7 +1017,7 @@ class TestAddMeldsToProject:
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
 
-            result = http_backend.add_melds_to_project("222959", [])
+            result = http_backend.add_melds_to_project("900005", [])
 
             assert result["ok"] is False
             assert "no meld_ids" in result["error"]
@@ -1025,33 +1025,33 @@ class TestAddMeldsToProject:
 
 
 _FULL_UNIT_FIXTURE = {
-    "id": 9000005,
-    "display_address": {"id": 1718387, "line_1": "123 Main St", "city": "Chattanooga"},
+    "id": 9000025,
+    "display_address": {"id": 9000003, "line_1": "123 Main St", "city": "Chattanooga"},
     "building": None,
     "floor": None,
-    "prop": {"id": 1718387, "line_1": "123 Main St"},
-    "current_tenants": [{"id": 9000008, "first_name": "Demo", "last_name": "Resident"}],
+    "prop": {"id": 9000003, "line_1": "123 Main St"},
+    "current_tenants": [{"id": 9000020, "first_name": "Fixture", "last_name": "Fixture"}],
 }
 
 _FULL_AGENT_FIXTURE = {
-    "id": 90025,
+    "id": 9036,
     "type": "ManagementAgent",
-    "composite_id": "1-90011",
-    "first_name": "Person031",
-    "last_name": "Person020",
+    "composite_id": "8-9018",
+    "first_name": "Person038",
+    "last_name": "Example",
     "title": "COORDINATOR",
     "department": "MAINTENANCE",
-    "selected_property_groups": [29374],
-    "denormalized_property_groups": [29374],
-    "property_groups": [29374],
+    "selected_property_groups": [2937],
+    "denormalized_property_groups": [2937],
+    "property_groups": [2937],
 }
 
 _FULL_TENANT_FIXTURE = {
     "id": 99,
     "type": "Tenant",
     "composite_id": "3-99",
-    "first_name": "Resident",
-    "last_name": "Person032",
+    "first_name": "Fixture",
+    "last_name": "Epsilon",
     "prompt_for_mobile": False,
     "contact": {"email": "resident.epsilon@example.com", "phone": "2025550110"},
     "default_language": "en",
@@ -1060,7 +1060,7 @@ _FULL_TENANT_FIXTURE = {
 
 
 _TENANT_INVITE_UNIT_FIXTURE = {
-    "id": 9000005,
+    "id": 9000025,
     "prop_groups": [],
     "is_active": True,
     "unit": "",
@@ -1069,17 +1069,17 @@ _TENANT_INVITE_UNIT_FIXTURE = {
     "room": "",
     "department": "",
     "display_address": {
-        "id": 1718387,
+        "id": 9000003,
         "line_1": "123 Main St",
         "city": "Chattanooga",
         "county_province": "TN",
-        "postcode": "37421",
+        "postcode": "12345",
     },
     "prop": {
-        "id": 1718387,
+        "id": 9000003,
         "line_1": "123 Main St",
         "property_name": "",
-        "postcode": "37421",
+        "postcode": "12345",
         "city": "Chattanooga",
         "county_province": "TN",
     },
@@ -1106,18 +1106,18 @@ class TestTenantPerson004:
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
             mp.return_value = {
-                "id": 9000020,
-                "contact": {"id": 5429857, "cell_phone": "(202) 555-0105"},
+                "id": 9000026,
+                "contact": {"id": 9000025, "cell_phone": "(202) 555-0128"},
                 "invited": True,
-                "last_invite": {"id": 13708659, "email": "david@example.com"},
+                "last_invite": {"id": 90000019, "email": "alex@example.com"},
                 "notes": "notes section",
             }
 
             result = http_backend.invite_tenant(
-                unit_id="9000005",
-                first_name="Person031",
-                last_name="Person020",
-                email="david@example.com",
+                unit_id="9000025",
+                first_name="Person038",
+                last_name="Example",
+                email="alex@example.com",
                 cell_phone="2025550128",
                 home_phone="2025550130",
                 secondary_email="alt@example.com",
@@ -1125,21 +1125,21 @@ class TestTenantPerson004:
             )
 
             assert result["ok"] is True
-            assert result["tenant_id"] == 9000020
-            assert result["contact_id"] == 5429857
-            gu.assert_called_once_with(9000005)
+            assert result["tenant_id"] == 9000026
+            assert result["contact_id"] == 9000025
+            gu.assert_called_once_with(9000025)
             path, payload, _, _ = mp.call_args[0]
             assert path == "tenants/"
             assert payload == {
                 "contact": {
-                    "primary_email": "david@example.com",
+                    "primary_email": "alex@example.com",
                     "cell_phone": "2025550128",
                     "secondary_email": "alt@example.com",
                     "home_phone": "2025550130",
                 },
                 "units": [_TENANT_INVITE_UNIT_FIXTURE],
-                "first_name": "Person031",
-                "last_name": "Person020",
+                "first_name": "Person038",
+                "last_name": "Example",
                 "notes": "notes section",
                 "should_invite": True,
             }
@@ -1151,10 +1151,10 @@ class TestTenantPerson004:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
-            mp.return_value = {"id": 9000020, "contact": {}, "invited": False}
+            mp.return_value = {"id": 9000026, "contact": {}, "invited": False}
 
             result = http_backend.invite_tenant(
-                9000005, "Person031", "Person020", "david@example.com", "2025550128",
+                9000025, "Person038", "Example", "alex@example.com", "2025550128",
                 should_invite=False,
             )
 
@@ -1163,8 +1163,8 @@ class TestTenantPerson004:
             assert payload["should_invite"] is False
             assert payload["notes"] == ""
             assert payload["contact"] == {
-                "primary_email": "david@example.com",
-                "secondary_email": "david@example.com",
+                "primary_email": "alex@example.com",
+                "secondary_email": "alex@example.com",
                 "cell_phone": "2025550128",
                 "home_phone": "",
             }
@@ -1183,7 +1183,7 @@ class TestTenantPerson004:
             }
 
             result = http_backend.invite_tenant(
-                9000005, "Person031", "Person020", "david@example.com", "2025550132"
+                9000025, "Person038", "Example", "alex@example.com", "2025550132"
             )
 
             assert result["ok"] is False
@@ -1195,7 +1195,7 @@ class TestTenantPerson004:
         with patch("cli_anything.propertymeld.http_backend.get_unit", return_value="bad"):
             with pytest.raises(RuntimeError, match="non-dict"):
                 http_backend.invite_tenant(
-                    9000005, "Person031", "Person020", "david@example.com", "2025550128"
+                    9000025, "Person038", "Example", "alex@example.com", "2025550128"
                 )
 
 
@@ -1223,20 +1223,20 @@ class TestCreateMeldInProject:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
-            mp.return_value = {"id": 12772803, "brief_description": "test"}
+            mp.return_value = {"id": 90000007, "brief_description": "test"}
             mgu.return_value = _FULL_UNIT_FIXTURE
             mga.return_value = _FULL_AGENT_FIXTURE
             mgt.return_value = _FULL_TENANT_FIXTURE
 
             result = http_backend.create_meld_in_project(
-                project_id="222959",
+                project_id="900005",
                 brief_description="test",
                 description="test",
                 work_category="APPLIANCES",
                 work_type="TURN",
                 due_date="2026-05-16T02:52:41.393Z",
-                unit={"id": 9000005},
-                maintenance=[{"id": 90025, "type": "ManagementAgent"}],
+                unit={"id": 9000025},
+                maintenance=[{"id": 9036, "type": "ManagementAgent"}],
                 tenants=[{"id": 99}],
                 work_location="ffff",
                 notify_owner=False,
@@ -1244,14 +1244,14 @@ class TestCreateMeldInProject:
             )
 
             assert result["ok"] is True
-            assert result["meld_id"] == 12772803
-            assert result["project_id"] == "222959"
-            mgu.assert_called_once_with(9000005)
-            mga.assert_called_once_with(90025)
+            assert result["meld_id"] == 90000007
+            assert result["project_id"] == "900005"
+            mgu.assert_called_once_with(9000025)
+            mga.assert_called_once_with(9036)
             mgt.assert_called_once_with(99)
             path, payload, _, _ = mp.call_args[0]
-            assert path == "projects/222959/list-create-meld/"
-            assert payload["project"] == "222959"
+            assert path == "projects/900005/list-create-meld/"
+            assert payload["project"] == "900005"
             assert payload["notify_owners_string"] == "false"
             assert payload["notify_tenants_string"] == "true"
             assert payload["unit"] == _FULL_UNIT_FIXTURE
@@ -1268,7 +1268,7 @@ class TestCreateMeldInProject:
             mp.return_value = {"id": 99}
 
             http_backend.create_meld_in_project(
-                project_id="222959",
+                project_id="900005",
                 brief_description="b",
                 description="d",
                 work_category="INTERIOR",
@@ -1299,14 +1299,14 @@ class TestCreateMeldInProject:
             mgt.return_value = _FULL_TENANT_FIXTURE
 
             http_backend.create_meld_in_project(
-                project_id="222959",
+                project_id="900005",
                 brief_description="b",
                 description="d",
                 work_category="APPLIANCES",
                 work_type="TURN",
                 due_date="2026-05-16T00:00:00.000Z",
                 unit={"id": 1},
-                maintenance={"id": 90025},
+                maintenance={"id": 9036},
                 tenants=[{"id": 99}],
             )
 
@@ -1317,7 +1317,7 @@ class TestCreateMeldInProject:
     def test_partial_unit_raises_with_missing_keys(self):
         with pytest.raises(ValueError, match="display_address"):
             http_backend.create_meld_in_project(
-                project_id="222959",
+                project_id="900005",
                 brief_description="b",
                 description="d",
                 work_category="APPLIANCES",
@@ -1330,20 +1330,20 @@ class TestCreateMeldInProject:
     def test_partial_maintenance_raises_with_missing_keys(self):
         with pytest.raises(ValueError, match="selected_property_groups"):
             http_backend.create_meld_in_project(
-                project_id="222959",
+                project_id="900005",
                 brief_description="b",
                 description="d",
                 work_category="APPLIANCES",
                 work_type="TURN",
                 due_date="2026-05-16T00:00:00.000Z",
                 unit=_FULL_UNIT_FIXTURE,
-                maintenance=[{"id": 90025, "first_name": "Person031"}],
+                maintenance=[{"id": 9036, "first_name": "Person038"}],
             )
 
     def test_partial_tenant_raises_with_missing_keys(self):
         with pytest.raises(ValueError, match="contact"):
             http_backend.create_meld_in_project(
-                project_id="222959",
+                project_id="900005",
                 brief_description="b",
                 description="d",
                 work_category="APPLIANCES",
@@ -1351,7 +1351,7 @@ class TestCreateMeldInProject:
                 due_date="2026-05-16T00:00:00.000Z",
                 unit=_FULL_UNIT_FIXTURE,
                 maintenance=[_FULL_AGENT_FIXTURE],
-                tenants=[{"id": 99, "first_name": "Resident"}],
+                tenants=[{"id": 99, "first_name": "Fixture"}],
             )
 
     def test_empty_tenants_does_not_call_get(self):
@@ -1365,14 +1365,14 @@ class TestCreateMeldInProject:
             mga.return_value = _FULL_AGENT_FIXTURE
 
             http_backend.create_meld_in_project(
-                project_id="222959",
+                project_id="900005",
                 brief_description="b",
                 description="d",
                 work_category="APPLIANCES",
                 work_type="TURN",
                 due_date="2026-05-16T00:00:00.000Z",
                 unit={"id": 1},
-                maintenance=[{"id": 90025}],
+                maintenance=[{"id": 9036}],
             )
 
             mgt.assert_not_called()
@@ -1400,9 +1400,9 @@ class TestCreateMeld:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
-            mp.return_value = {"id": 12772803, "brief_description": "test"}
+            mp.return_value = {"id": 90000007, "brief_description": "test"}
             mgu.return_value = _FULL_UNIT_FIXTURE
-            mga.return_value = [{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-57163", "type": "ManagementAgent"}]
+            mga.return_value = [{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-5011", "type": "ManagementAgent"}]
             mgt.return_value = _FULL_TENANT_FIXTURE
 
             result = http_backend.create_meld(
@@ -1411,22 +1411,22 @@ class TestCreateMeld:
                 work_category="APPLIANCES",
                 work_type="TURN",
                 due_date="2026-05-16T02:52:41.393Z",
-                unit={"id": 9000005},
-                maintenance=[{"id": 90025, "type": "ManagementAgent"}],
+                unit={"id": 9000025},
+                maintenance=[{"id": 9036, "type": "ManagementAgent"}],
                 tenants=[{"id": 99}],
                 work_location="inside",
             )
 
             assert result["ok"] is True
-            assert result["meld_id"] == 12772803
-            mgu.assert_called_once_with(9000005)
+            assert result["meld_id"] == 90000007
+            mgu.assert_called_once_with(9000025)
             mga.assert_called_once_with(registered_only=False)
             mgt.assert_called_once_with(99)
             path, payload, _, _ = mp.call_args[0]
             assert path == "melds/"
             assert payload["unit"] == _FULL_UNIT_FIXTURE
-            assert payload["maintenance"][0]["id"] == 90025
-            assert payload["maintenance"][0]["composite_id"] == "ManagementAgent-57163"
+            assert payload["maintenance"][0]["id"] == 9036
+            assert payload["maintenance"][0]["composite_id"] == "ManagementAgent-5011"
             assert payload["maintenance"][0]["type"] == "ManagementAgent"
             assert payload["tenants"] == [_FULL_TENANT_FIXTURE]
 
@@ -1438,7 +1438,7 @@ class TestCreateMeld:
             mcs.return_value = "csrf"
             mp.return_value = {"id": 99}
             mgu.return_value = _FULL_UNIT_FIXTURE
-            mga.return_value = [{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-57163", "type": "ManagementAgent"}]
+            mga.return_value = [{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-5011", "type": "ManagementAgent"}]
 
             http_backend.create_meld(
                 brief_description="b",
@@ -1447,7 +1447,7 @@ class TestCreateMeld:
                 work_type="TURN",
                 due_date="2026-05-16T00:00:00.000Z",
                 unit={"id": 1},
-                maintenance=[{"id": 90025}],
+                maintenance=[{"id": 9036}],
                 notify_owners=True,
             )
             _, payload, _, _ = mp.call_args[0]
@@ -1461,7 +1461,7 @@ class TestCreateMeld:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
-            mp.return_value = {"id": 12772803, "status": "PENDING_ASSIGNMENT", "maintenance": []}
+            mp.return_value = {"id": 90000007, "status": "PENDING_ASSIGNMENT", "maintenance": []}
             mgu.return_value = _FULL_UNIT_FIXTURE
 
             result = http_backend.create_meld(
@@ -1489,7 +1489,7 @@ class TestCreateMeld:
             mcs.return_value = "csrf"
             mp.return_value = {"id": 99}
             mgu.return_value = _FULL_UNIT_FIXTURE
-            mga.return_value = [{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-57163", "type": "ManagementAgent"}]
+            mga.return_value = [{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-5011", "type": "ManagementAgent"}]
 
             http_backend.create_meld(
                 brief_description="b",
@@ -1498,7 +1498,7 @@ class TestCreateMeld:
                 work_type="TURN",
                 due_date="2026-05-16T00:00:00.000Z",
                 unit={"id": 1},
-                maintenance=[{"id": 90025}],
+                maintenance=[{"id": 9036}],
             )
             _, payload, _, _ = mp.call_args[0]
             assert "project" not in payload
@@ -1519,7 +1519,7 @@ class TestCreateMeld:
                 work_type="PREVENTIVE_MAINTENANCE",
                 due_date="2026-05-16T00:00:00.000Z",
                 unit=_FULL_UNIT_FIXTURE,
-                maintenance=[{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-57163", "type": "ManagementAgent"}],
+                maintenance=[{**_FULL_AGENT_FIXTURE, "composite_id": "ManagementAgent-5011", "type": "ManagementAgent"}],
                 tenants=[_FULL_TENANT_FIXTURE],
             )
 
@@ -1529,7 +1529,7 @@ class TestCreateMeld:
             _, payload, _, _ = mp.call_args[0]
             assert payload["unit"] == _FULL_UNIT_FIXTURE
             assert payload["maintenance"][0]["id"] == _FULL_AGENT_FIXTURE["id"]
-            assert payload["maintenance"][0]["composite_id"] == "ManagementAgent-57163"
+            assert payload["maintenance"][0]["composite_id"] == "ManagementAgent-5011"
             assert payload["maintenance"][0]["type"] == "ManagementAgent"
             assert payload["tenants"] == [_FULL_TENANT_FIXTURE]
 
@@ -1576,7 +1576,7 @@ class TestCreateMeld:
             mcs.return_value = "csrf"
             mp.return_value = {"id": 99}
             mgu.return_value = _FULL_UNIT_FIXTURE
-            mga.return_value = [{**_FULL_AGENT_FIXTURE, "id": 90025, "composite_id": "ManagementAgent-57163", "type": "ManagementAgent"}]
+            mga.return_value = [{**_FULL_AGENT_FIXTURE, "id": 9036, "composite_id": "ManagementAgent-5011", "type": "ManagementAgent"}]
 
             with pytest.raises(ValueError, match="maintenance id 999 not found"):
                 http_backend.create_meld(
@@ -1595,9 +1595,9 @@ class TestCreateMeld:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
-            mp.return_value = {"id": 12772803, "brief_description": "test"}
+            mp.return_value = {"id": 90000007, "brief_description": "test"}
             mgu.return_value = _FULL_UNIT_FIXTURE
-            mga.return_value = [{**_FULL_AGENT_FIXTURE, "id": 90025, "composite_id": "ManagementAgent-57163", "type": "ManagementAgent"}]
+            mga.return_value = [{**_FULL_AGENT_FIXTURE, "id": 9036, "composite_id": "ManagementAgent-5011", "type": "ManagementAgent"}]
             mgt.return_value = _FULL_TENANT_FIXTURE
 
             result = http_backend.create_meld(
@@ -1606,8 +1606,8 @@ class TestCreateMeld:
                 work_category="APPLIANCES",
                 work_type="TURN",
                 due_date="2026-05-16T02:52:41.393Z",
-                unit={"id": 9000005},
-                maintenance=[{"id": "90025"}],
+                unit={"id": 9000025},
+                maintenance=[{"id": "9036"}],
                 tenants=[{"id": 99}],
                 work_location="inside",
             )
@@ -1615,7 +1615,7 @@ class TestCreateMeld:
             assert result["ok"] is True
             path, payload, _, _ = mp.call_args[0]
             assert path == "melds/"
-            assert payload["maintenance"][0]["id"] == 90025
+            assert payload["maintenance"][0]["id"] == 9036
 
 
 class TestUnitAndAgentHydration:
@@ -1628,10 +1628,10 @@ class TestUnitAndAgentHydration:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mg.return_value = _FULL_UNIT_FIXTURE
-            result = http_backend.get_unit(9000005)
+            result = http_backend.get_unit(9000025)
             assert result == _FULL_UNIT_FIXTURE
             path, _ = mg.call_args[0]
-            assert path == "units/9000005/"
+            assert path == "units/9000025/"
 
     def test_get_management_agent_hits_correct_path(self):
         with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
@@ -1640,10 +1640,10 @@ class TestUnitAndAgentHydration:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mg.return_value = _FULL_AGENT_FIXTURE
-            result = http_backend.get_management_agent(90025)
+            result = http_backend.get_management_agent(9036)
             assert result == _FULL_AGENT_FIXTURE
             path, _ = mg.call_args[0]
-            assert path == "agents/90025/"
+            assert path == "agents/9036/"
 
 
 class TestPatchMeldProjectLink:
@@ -1651,7 +1651,7 @@ class TestPatchMeldProjectLink:
 
     # Current meld returned by the GET that feeds the full-echo payload.
     _CURRENT_MELD = {
-        "id": 12772756,
+        "id": 90000005,
         "brief_description": "b",
         "work_location": "loc",
         "work_category": "APPLIANCES",
@@ -1678,20 +1678,20 @@ class TestPatchMeldProjectLink:
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
             mg.return_value = dict(self._CURRENT_MELD)
-            mpt.return_value = {"id": 12772756, "project": 222959}
+            mpt.return_value = {"id": 90000005, "project": 900005}
 
-            result = http_backend.patch_meld_project_link("12772756", 222959)
+            result = http_backend.patch_meld_project_link("90000005", 900005)
 
             assert result["ok"] is True
-            assert result["meld_id"] == 12772756
-            assert result["project_id"] == 222959
+            assert result["meld_id"] == 90000005
+            assert result["project_id"] == 900005
             path, payload, _, _ = mpt.call_args[0]
-            assert path == "melds/12772756/"
+            assert path == "melds/90000005/"
             # Full-echo: every required field present (delta would 400 in prod),
             # plus the project being set. A regression to a delta payload fails here.
             for field in self._ECHO_FIELDS:
                 assert field in payload, f"full-echo payload missing {field}"
-            assert payload["project"] == 222959
+            assert payload["project"] == 900005
             assert "id" not in payload
 
     def test_detach_sends_null(self):
@@ -1702,9 +1702,9 @@ class TestPatchMeldProjectLink:
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
             mg.return_value = dict(self._CURRENT_MELD)
-            mpt.return_value = {"id": 12772756, "project": None}
+            mpt.return_value = {"id": 90000005, "project": None}
 
-            result = http_backend.patch_meld_project_link("12772756", None)
+            result = http_backend.patch_meld_project_link("90000005", None)
 
             assert result["ok"] is True
             assert result["project_id"] is None
@@ -1737,27 +1737,27 @@ class TestCreateProjectLiveShape:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
-            mp.return_value = {"id": 222962, "name": "vendor assigning"}
+            mp.return_value = {"id": 900006, "name": "vendor assigning"}
 
             result = http_backend.create_project(
                 name="vendor assigning",
                 project_type="TURN",
                 due_date="2026-05-22T04:00:00.000Z",
                 start_date="2026-05-13T23:59:59-04:00",
-                coordinators=[90025],
-                unit={"id": 9000005, "label": "123 Main St, Chattanooga, TN, 37421"},
+                coordinators=[9036],
+                unit={"id": 9000025, "label": "123 Main St, Chattanooga, TN, 12345"},
             )
 
             assert result["ok"] is True
-            assert result["project_id"] == 222962
+            assert result["project_id"] == 900006
             path, payload, _, _ = mp.call_args[0]
             assert path == "projects/"
             assert payload["name"] == "vendor assigning"
             assert payload["project_type"] == "TURN"
-            assert payload["coordinators"] == [90025]
+            assert payload["coordinators"] == [9036]
             assert payload["meld_location"] == "Unit"
             assert payload["prop"] is None
-            assert payload["unit"] == {"id": 9000005, "label": "123 Main St, Chattanooga, TN, 37421"}
+            assert payload["unit"] == {"id": 9000025, "label": "123 Main St, Chattanooga, TN, 12345"}
             assert payload["description"] == ""
 
 
@@ -1771,16 +1771,16 @@ class TestUpdateProjectLiveShape:
     """
 
     CURRENT_PROJECT = {
-        "id": 222959,
+        "id": 900005,
         "name": "original",
         "project_type": "TURN",
         "description": "old description",
         "due_date": "2026-05-30T04:00:00Z",
         "start_date": "2026-05-14T03:00:00Z",
-        "coordinators": [{"id": 90025, "first_name": "Person031"}],
+        "coordinators": [{"id": 9036, "first_name": "Person038"}],
         "meld_location": "Unit",
         "prop": None,
-        "unit": {"id": 9000005, "label": "123 Main St"},
+        "unit": {"id": 9000025, "label": "123 Main St"},
     }
 
     def test_happy_path_merges_caller_fields_with_full_echo(self):
@@ -1793,26 +1793,26 @@ class TestUpdateProjectLiveShape:
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
             mg.return_value = dict(self.CURRENT_PROJECT)
-            mp.return_value = {"id": 222959, "name": "renamed"}
+            mp.return_value = {"id": 900005, "name": "renamed"}
 
             result = http_backend.update_project(
-                project_id="222959",
+                project_id="900005",
                 name="renamed",
                 description="new description",
             )
 
             assert result["ok"] is True
-            assert result["project_id"] == "222959"
+            assert result["project_id"] == "900005"
             mg.assert_called_once()
             mp.assert_called_once()
             path, payload, _, _ = mp.call_args[0]
-            assert path == "projects/222959/"
+            assert path == "projects/900005/"
             # Full payload echo — required fields all present, caller fields override.
             assert payload["name"] == "renamed"
             assert payload["description"] == "new description"
             assert payload["project_type"] == "TURN"
-            assert payload["coordinators"] == [90025]  # coordinator dict flattened to id
-            assert payload["unit"] == {"id": 9000005, "label": "123 Main St"}
+            assert payload["coordinators"] == [9036]  # coordinator dict flattened to id
+            assert payload["unit"] == {"id": 9000025, "label": "123 Main St"}
             assert payload["meld_location"] == "Unit"
             assert payload["due_date"] == "2026-05-30T04:00:00Z"
             assert payload["start_date"] == "2026-05-14T03:00:00Z"
@@ -1828,9 +1828,9 @@ class TestUpdateProjectLiveShape:
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
             mg.return_value = dict(self.CURRENT_PROJECT)
-            mp.return_value = {"id": 222959}
+            mp.return_value = {"id": 900005}
 
-            result = http_backend.update_project(project_id="222959")
+            result = http_backend.update_project(project_id="900005")
 
             assert result["ok"] is True
             mp.assert_called_once()
@@ -1851,14 +1851,14 @@ class TestUpdateMeldNotes:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
-            mp.return_value = {"id": 12772720, "maintenance_notes": "test"}
+            mp.return_value = {"id": 90000004, "maintenance_notes": "test"}
 
-            result = http_backend.update_meld_notes("12772720", "test")
+            result = http_backend.update_meld_notes("90000004", "test")
 
             assert result["ok"] is True
-            assert result["meld_id"] == 12772720
+            assert result["meld_id"] == 90000004
             path, payload, _, _ = mp.call_args[0]
-            assert path == "v2/melds/12772720/notes/"
+            assert path == "v2/melds/90000004/notes/"
             assert payload == {"maintenance_notes": "test"}
 
 
@@ -1880,7 +1880,7 @@ class TestCloneMeldOverrides:
             "work_location": "Bathroom",
             "priority": "EMERGENCY",
             "tenant_presence_required": True,
-            "unit": {"id": 999999},
+            "unit": {"id": 9999},
         }
 
     def test_long_description_override(self):
@@ -1892,7 +1892,7 @@ class TestCloneMeldOverrides:
             mget.return_value = self._source()
             mp.return_value = {"id": 555, "reference_id": "TABCDE"}
 
-            http_backend.clone_meld("90000002", description="new long-form")
+            http_backend.clone_meld("90000015", description="new long-form")
 
             _, payload, _, _ = mp.call_args[0]
             assert payload["description"] == "new long-form"
@@ -1906,7 +1906,7 @@ class TestCloneMeldOverrides:
             mget.return_value = self._source()
             mp.return_value = {"id": 555, "reference_id": "TABCDE"}
 
-            http_backend.clone_meld("90000002", tenant_presence_required=False)
+            http_backend.clone_meld("90000015", tenant_presence_required=False)
 
             _, payload, _, _ = mp.call_args[0]
             assert payload["tenant_presence_required"] is False
@@ -1920,10 +1920,10 @@ class TestCloneMeldOverrides:
             mget.return_value = self._source()
             mp.return_value = {"id": 555, "reference_id": "TABCDE"}
 
-            http_backend.clone_meld("90000002", unit_id=9000005)
+            http_backend.clone_meld("90000015", unit_id=9000025)
 
             _, payload, _, _ = mp.call_args[0]
-            assert payload["unit"] == {"id": 9000005}
+            assert payload["unit"] == {"id": 9000025}
 
     def test_priority_override(self):
         mc_p, mch_p, mcs_p, mget_p, mp_p = self._patch_clone_io()
@@ -1934,18 +1934,18 @@ class TestCloneMeldOverrides:
             mget.return_value = self._source()
             mp.return_value = {"id": 555, "reference_id": "TABCDE"}
 
-            http_backend.clone_meld("90000002", priority="LOW")
+            http_backend.clone_meld("90000015", priority="LOW")
 
             _, payload, _, _ = mp.call_args[0]
             assert payload["priority"] == "LOW"
 
 
 _TENANT_FIXTURE = {
-    "id": 9000009,
-    "user": {"id": 9001, "first_name": "Resident", "last_name": "Person032", "email": "resident.epsilon@example.com"},
+    "id": 9000021,
+    "user": {"id": 9001, "first_name": "Fixture", "last_name": "Epsilon", "email": "resident.epsilon@example.com"},
     "contact": {"id": 4001, "home_phone": "+12025550114"},
     "is_active": True,
-    "management": 3287,
+    "management": 1000,
 }
 
 
@@ -1973,21 +1973,21 @@ class TestLinkTenantToMeld:
             self._stub_creds(mc, mch, mcs)
             existing = {"id": 9999, "first_name": "Other", "last_name": "Tenant"}
             mg.side_effect = [
-                {"id": "90000003", "tenants": [existing]},  # GET meld
+                {"id": "90000017", "tenants": [existing]},  # GET meld
                 _TENANT_FIXTURE,                              # GET tenant for hydration
                 # verify re-GET (post-PATCH persistence check): tenant now present
-                {"id": "90000003", "tenants": [existing, _TENANT_FIXTURE]},
+                {"id": "90000017", "tenants": [existing, _TENANT_FIXTURE]},
             ]
-            mp.return_value = {"id": "90000003", "tenants": [existing, _TENANT_FIXTURE]}
+            mp.return_value = {"id": "90000017", "tenants": [existing, _TENANT_FIXTURE]}
 
-            result = http_backend.link_tenant_to_meld("90000003", 9000009)
+            result = http_backend.link_tenant_to_meld("90000017", 9000021)
 
             assert result["ok"] is True
             assert result["linked"] is True
-            assert result["tenant_id"] == 9000009
+            assert result["tenant_id"] == 9000021
             assert result["tenant_count"] == 2
             path, payload, _, _ = mp.call_args[0]
-            assert path == "melds/90000003/"
+            assert path == "melds/90000017/"
             # Full-echo PATCH: required meld fields must be present (delta 400s in
             # prod, verified live 2026-05-29). A regression to a delta payload
             # (just {"id", "tenants"}) fails these assertions.
@@ -2004,9 +2004,9 @@ class TestLinkTenantToMeld:
              self._patches()[2] as mcs, self._patches()[3] as mg, \
              self._patches()[4] as mp:
             self._stub_creds(mc, mch, mcs)
-            mg.return_value = {"id": "90000003", "tenants": [_TENANT_FIXTURE]}
+            mg.return_value = {"id": "90000017", "tenants": [_TENANT_FIXTURE]}
 
-            result = http_backend.link_tenant_to_meld("90000003", 9000009)
+            result = http_backend.link_tenant_to_meld("90000017", 9000021)
 
             assert result["ok"] is True
             assert result.get("already_linked") is True
@@ -2029,10 +2029,10 @@ class TestLinkTenantToMeld:
              self._patches()[4] as mp:
             self._stub_creds(mc, mch, mcs)
             mg.return_value = {
-                "id": "90000003", "tenants": [{"id": "9000009"}]
+                "id": "90000017", "tenants": [{"id": "9000021"}]
             }
 
-            result = http_backend.link_tenant_to_meld("90000003", 9000009)
+            result = http_backend.link_tenant_to_meld("90000017", 9000021)
 
             assert result["ok"] is True
             assert result.get("already_linked") is True
@@ -2045,21 +2045,21 @@ class TestLinkTenantToMeld:
              self._patches()[4] as mp:
             self._stub_creds(mc, mch, mcs)
             mg.side_effect = [
-                {"id": "90000003", "tenants": []},
+                {"id": "90000017", "tenants": []},
                 _TENANT_FIXTURE,
                 # verify re-GET (post-PATCH persistence check) re-hits the meld
-                {"id": "90000003", "tenants": [_TENANT_FIXTURE]},
+                {"id": "90000017", "tenants": [_TENANT_FIXTURE]},
             ]
-            mp.return_value = {"id": "90000003", "tenants": [_TENANT_FIXTURE]}
+            mp.return_value = {"id": "90000017", "tenants": [_TENANT_FIXTURE]}
 
-            http_backend.link_tenant_to_meld("90000003", 9000009)
+            http_backend.link_tenant_to_meld("90000017", 9000021)
 
             get_paths = [c.args[0] for c in mg.call_args_list]
             assert get_paths == [
-                "melds/90000003/", "tenants/9000009/", "melds/90000003/"
+                "melds/90000017/", "tenants/9000021/", "melds/90000017/"
             ]
             patch_path = mp.call_args[0][0]
-            assert patch_path == "melds/90000003/"
+            assert patch_path == "melds/90000017/"
 
     def test_handles_missing_tenants_field_on_meld(self):
         with self._patches()[0] as mc, self._patches()[1] as mch, \
@@ -2067,14 +2067,14 @@ class TestLinkTenantToMeld:
              self._patches()[4] as mp:
             self._stub_creds(mc, mch, mcs)
             mg.side_effect = [
-                {"id": "90000003"},  # no tenants key at all
+                {"id": "90000017"},  # no tenants key at all
                 _TENANT_FIXTURE,
                 # verify re-GET (post-PATCH persistence check): tenant present
-                {"id": "90000003", "tenants": [_TENANT_FIXTURE]},
+                {"id": "90000017", "tenants": [_TENANT_FIXTURE]},
             ]
-            mp.return_value = {"id": "90000003", "tenants": [_TENANT_FIXTURE]}
+            mp.return_value = {"id": "90000017", "tenants": [_TENANT_FIXTURE]}
 
-            result = http_backend.link_tenant_to_meld("90000003", 9000009)
+            result = http_backend.link_tenant_to_meld("90000017", 9000021)
 
             assert result["linked"] is True
             assert result["tenant_count"] == 1
@@ -2095,18 +2095,18 @@ class TestLinkTenantToMeld:
              self._patches()[4] as mp:
             self._stub_creds(mc, mch, mcs)
             mg.side_effect = [
-                {"id": "90000003", "tenants": []},         # GET meld
+                {"id": "90000017", "tenants": []},         # GET meld
                 _TENANT_FIXTURE,                            # GET tenant hydration
                 # verify re-GET: PM returns the tenant id as a STRING
-                {"id": "90000003", "tenants": [{"id": "9000009"}]},
+                {"id": "90000017", "tenants": [{"id": "9000021"}]},
             ]
-            mp.return_value = {"id": "90000003", "tenants": [_TENANT_FIXTURE]}
+            mp.return_value = {"id": "90000017", "tenants": [_TENANT_FIXTURE]}
 
-            result = http_backend.link_tenant_to_meld("90000003", 9000009)
+            result = http_backend.link_tenant_to_meld("90000017", 9000021)
 
             assert result["ok"] is True
             assert result["linked"] is True
-            assert result["tenant_id"] == 9000009
+            assert result["tenant_id"] == 9000021
 
 
 class TestGetTenant:
@@ -2119,9 +2119,9 @@ class TestGetTenant:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mg.return_value = _TENANT_FIXTURE
-            result = http_backend.get_tenant(9000009)
+            result = http_backend.get_tenant(9000021)
             assert result == _TENANT_FIXTURE
-            assert mg.call_args[0][0] == "tenants/9000009/"
+            assert mg.call_args[0][0] == "tenants/9000021/"
 
 
 class TestUpdateUnitNotes:
@@ -2135,15 +2135,15 @@ class TestUpdateUnitNotes:
             mc.return_value = {"cookie": "x"}
             mch.return_value = "Cookie: session=xyz"
             mcs.return_value = "csrf"
-            mp.return_value = {"id": 1754419, "maintenance_notes": "Water shut-off in basement"}
+            mp.return_value = {"id": 9000006, "maintenance_notes": "Water shut-off in basement"}
 
-            result = http_backend.update_unit_notes(1754419, "Water shut-off in basement")
+            result = http_backend.update_unit_notes(9000006, "Water shut-off in basement")
 
             assert result["ok"] is True
-            assert result["unit_id"] == 1754419
+            assert result["unit_id"] == 9000006
             assert result["maintenance_notes"] == "Water shut-off in basement"
             path, payload, _, _ = mp.call_args[0]
-            assert path == "units/1754419/"
+            assert path == "units/9000006/"
             assert payload == {"maintenance_notes": "Water shut-off in basement"}
 
     def test_coerces_string_unit_id_to_int(self):
@@ -2156,10 +2156,10 @@ class TestUpdateUnitNotes:
             mcs.return_value = "csrf"
             mp.return_value = {"maintenance_notes": "x"}
 
-            result = http_backend.update_unit_notes("1754419", "x")
-            assert result["unit_id"] == 1754419  # int, not str
+            result = http_backend.update_unit_notes("9000006", "x")
+            assert result["unit_id"] == 9000006  # int, not str
             path, _, _, _ = mp.call_args[0]
-            assert path == "units/1754419/"
+            assert path == "units/9000006/"
 
     def test_empty_notes_clears_field(self):
         """Per pm-capture 2026-05-14T03:07:13, PATCH with empty string clears the field."""
@@ -2172,72 +2172,72 @@ class TestUpdateUnitNotes:
             mcs.return_value = "csrf"
             mp.return_value = {"maintenance_notes": ""}
 
-            http_backend.update_unit_notes(1754419, "")
+            http_backend.update_unit_notes(9000006, "")
             _, payload, _, _ = mp.call_args[0]
             assert payload == {"maintenance_notes": ""}
 
 
 _TENANT_NOTES_FIXTURE = {
-    "id": 9000014,
-    "first_name": "Resident",
-    "last_name": "Person016",
+    "id": 9000026,
+    "first_name": "Fixture",
+    "last_name": "Alpha",
     "middle_name": "",
     "notes": "",
     "is_active": True,
-    "management": 3287,
-    "user": {"id": 1934544, "email": "a@example.com"},
-    "contact": {"id": 5033775, "cell_phone": "(202) 555-0106"},
-    "leases": [{"unit_id": 1754357}],
+    "management": 1000,
+    "user": {"id": 9000008, "email": "a@example.com"},
+    "contact": {"id": 9000024, "cell_phone": "(202) 555-0136"},
+    "leases": [{"unit_id": 9000005}],
 }
 
 
 _TENANT_CONTACT_FIXTURE = {
-    "id": 9000020,
+    "id": 9000026,
     "user": {
-        "id": 9000009,
-        "email": "person002@example.invalid",
-        "first_name": "Person031",
-        "last_name": "Person020",
+        "id": 9000001,
+        "email": "alex@example.com",
+        "first_name": "Person038",
+        "last_name": "Example",
         "last_active_at": "2026-05-31T03:00:11.803163Z",
         "last_active_channel": "DIGITAL",
         "last_login": "2026-05-29T11:42:27.648293Z",
     },
     "contact": {
-        "id": 5429857,
-        "home_phone": "(678) 987-3214",
-        "cell_phone": "(202) 555-0105",
+        "id": 9000025,
+        "home_phone": "(202) 555-0130",
+        "cell_phone": "(202) 555-0128",
         "business_phone": "",
         "created": "2026-05-31T02:59:07.878312Z",
-        "create_by": {"org_type": "m", "persona_id": 90025},
+        "create_by": {"org_type": "m", "persona_id": 9036},
         "updated": "2026-05-31T02:59:07.878360Z",
-        "update_by": {"org_type": "m", "persona_id": 90025},
-        "tenant_objs": [3287],
+        "update_by": {"org_type": "m", "persona_id": 9036},
+        "tenant_objs": [1000],
         "home_phone_ext": "",
         "cell_phone_ext": "",
         "business_phone_ext": "",
-        "primary_email": "person002@example.invalid",
-        "secondary_email": "person002@example.invalid",
+        "primary_email": "alex@example.com",
+        "secondary_email": "alex@example.com",
         "tertiary_email": "",
     },
     "invited": True,
     "last_invite": {
         "created": "2026-05-31T02:59:07.939013Z",
-        "email": "person002@example.invalid",
-        "id": 13708659,
+        "email": "alex@example.com",
+        "id": 90000019,
     },
     "created": "2026-05-31T02:59:07.891911Z",
-    "create_by": {"org_type": "m", "persona_id": 90025},
+    "create_by": {"org_type": "m", "persona_id": 9036},
     "updated": "2026-05-31T02:59:10.803742Z",
-    "update_by": {"org_type": "m", "persona_id": 90025},
+    "update_by": {"org_type": "m", "persona_id": 9036},
     "is_active": True,
-    "first_name": "Person031",
+    "first_name": "Person038",
     "middle_name": "",
-    "last_name": "Person020",
+    "last_name": "Example",
     "notes": "notes section",
     "prompt_for_mobile": True,
     "default_language": "",
     "address": None,
-    "management": 3287,
+    "management": 1000,
     "leases": [],
     "links": [],
 }
@@ -2267,21 +2267,21 @@ class TestUpdateTenantNotes:
                 patch_returns={**_TENANT_NOTES_FIXTURE, "notes": "Access after 3pm"},
             )
 
-            result = http_backend.update_tenant_notes(9000014, "Access after 3pm")
+            result = http_backend.update_tenant_notes(9000026, "Access after 3pm")
 
             assert result["ok"] is True
-            assert result["tenant_id"] == 9000014
+            assert result["tenant_id"] == 9000026
             assert result["notes"] == "Access after 3pm"
             # GET path verified
-            assert mg.call_args[0][0] == "tenants/9000014/"
+            assert mg.call_args[0][0] == "tenants/9000026/"
             # PATCH path + full-body echo verified
             patch_path, patch_payload, _, _ = mp.call_args[0]
-            assert patch_path == "tenants/9000014/"
+            assert patch_path == "tenants/9000026/"
             # Full body sent — not a thin patch
-            assert patch_payload["first_name"] == "Resident"
-            assert patch_payload["last_name"] == "Person016"
-            assert patch_payload["id"] == 9000014
-            assert patch_payload["contact"]["cell_phone"] == "(202) 555-0106"
+            assert patch_payload["first_name"] == "Fixture"
+            assert patch_payload["last_name"] == "Alpha"
+            assert patch_payload["id"] == 9000026
+            assert patch_payload["contact"]["cell_phone"] == "(202) 555-0136"
             # Notes was mutated
             assert patch_payload["notes"] == "Access after 3pm"
 
@@ -2296,10 +2296,10 @@ class TestUpdateTenantNotes:
                 get_returns=dict(_TENANT_NOTES_FIXTURE),
                 patch_returns={**_TENANT_NOTES_FIXTURE, "notes": "x"},
             )
-            result = http_backend.update_tenant_notes("9000014", "x")
-            assert result["tenant_id"] == 9000014  # int, not str
-            assert mg.call_args[0][0] == "tenants/9000014/"
-            assert mp.call_args[0][0] == "tenants/9000014/"
+            result = http_backend.update_tenant_notes("9000026", "x")
+            assert result["tenant_id"] == 9000026  # int, not str
+            assert mg.call_args[0][0] == "tenants/9000026/"
+            assert mp.call_args[0][0] == "tenants/9000026/"
 
     def test_empty_notes_clears_field(self):
         """Empty string is a valid value — represents a deliberate clear."""
@@ -2313,7 +2313,7 @@ class TestUpdateTenantNotes:
                 get_returns={**_TENANT_NOTES_FIXTURE, "notes": "old value"},
                 patch_returns={**_TENANT_NOTES_FIXTURE, "notes": ""},
             )
-            http_backend.update_tenant_notes(9000014, "")
+            http_backend.update_tenant_notes(9000026, "")
             _, payload, _, _ = mp.call_args[0]
             assert payload["notes"] == ""
 
@@ -2331,7 +2331,7 @@ class TestUpdateTenantNotes:
                 get_returns=dict(_TENANT_NOTES_FIXTURE),
                 patch_returns={**_TENANT_NOTES_FIXTURE, "notes": "n"},
             )
-            http_backend.update_tenant_notes(9000014, "n")
+            http_backend.update_tenant_notes(9000026, "n")
             _, payload, _, _ = mp.call_args[0]
             # Every non-notes key from the GET response must be in the PATCH body
             for key in _TENANT_NOTES_FIXTURE:
@@ -2351,7 +2351,7 @@ class TestUpdateTenantNotes:
             mg.return_value = "not a dict — unexpected api response"
             import pytest
             with pytest.raises(RuntimeError, match="non-dict"):
-                http_backend.update_tenant_notes(9000014, "x")
+                http_backend.update_tenant_notes(9000026, "x")
             # We must not have attempted a PATCH if GET was malformed
             assert mp.call_count == 0
 
@@ -2378,34 +2378,34 @@ class TestUpdateTenantPerson001:
              patch("cli_anything.propertymeld.http_backend._http_patch") as mpatch:
             get_returns = json.loads(json.dumps(_TENANT_CONTACT_FIXTURE))
             put_returns = json.loads(json.dumps(_TENANT_CONTACT_FIXTURE))
-            put_returns["contact"]["cell_phone"] = "(678) 923-7654"
-            put_returns["contact"]["home_phone"] = "(678) 987-4123"
-            put_returns["contact"]["business_phone"] = "(423) 654-1234"
+            put_returns["contact"]["cell_phone"] = "(202) 555-0129"
+            put_returns["contact"]["home_phone"] = "(202) 555-0131"
+            put_returns["contact"]["business_phone"] = "(202) 555-0113"
             self._wire(mc, mch, mcs, mg, mp, get_returns=get_returns, put_returns=put_returns)
 
             result = http_backend.edit_tenant_contact(
-                9000020,
-                cell_phone="(678) 923-7654",
-                home_phone=" (678) 987-4123",
+                9000026,
+                cell_phone="(202) 555-0129",
+                home_phone=" (202) 555-0131",
                 business_phone="2025550113",
             )
 
             assert result["ok"] is True
-            assert result["tenant_id"] == 9000020
-            assert result["contact"]["business_phone"] == "(423) 654-1234"
+            assert result["tenant_id"] == 9000026
+            assert result["contact"]["business_phone"] == "(202) 555-0113"
             assert result["updated_fields"] == ["business_phone", "cell_phone", "home_phone"]
-            assert mg.call_args[0][0] == "tenants/9000020/"
+            assert mg.call_args[0][0] == "tenants/9000026/"
             put_path, put_payload, _, _ = mp.call_args[0]
-            assert put_path == "tenants/9000020/"
+            assert put_path == "tenants/9000026/"
             assert mpatch.call_count == 0
-            assert put_payload["id"] == 9000020
-            assert put_payload["first_name"] == "Person031"
+            assert put_payload["id"] == 9000026
+            assert put_payload["first_name"] == "Person038"
             assert put_payload["notes"] == "notes section"
-            assert put_payload["user"]["email"] == "person002@example.invalid"
-            assert put_payload["contact"]["cell_phone"] == "(678) 923-7654"
-            assert put_payload["contact"]["home_phone"] == " (678) 987-4123"
+            assert put_payload["user"]["email"] == "alex@example.com"
+            assert put_payload["contact"]["cell_phone"] == "(202) 555-0129"
+            assert put_payload["contact"]["home_phone"] == " (202) 555-0131"
             assert put_payload["contact"]["business_phone"] == "2025550113"
-            assert put_payload["contact"]["primary_email"] == "person002@example.invalid"
+            assert put_payload["contact"]["primary_email"] == "alex@example.com"
 
     def test_mutates_email_fields_and_preserves_other_tenant_keys(self):
         with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
@@ -2420,24 +2420,24 @@ class TestUpdateTenantPerson001:
             self._wire(mc, mch, mcs, mg, mp, get_returns=get_returns, put_returns=put_returns)
 
             http_backend.edit_tenant_contact(
-                "9000020",
+                "9000026",
                 primary_email="primary@example.com",
                 secondary_email="",
             )
 
-            assert mg.call_args[0][0] == "tenants/9000020/"
-            assert mp.call_args[0][0] == "tenants/9000020/"
+            assert mg.call_args[0][0] == "tenants/9000026/"
+            assert mp.call_args[0][0] == "tenants/9000026/"
             _, payload, _, _ = mp.call_args[0]
             for key in _TENANT_CONTACT_FIXTURE:
                 assert key in payload, f"PUT body dropped {key!r}"
             assert payload["contact"]["primary_email"] == "primary@example.com"
             assert payload["contact"]["secondary_email"] == ""
             assert payload["contact"]["tertiary_email"] == ""
-            assert payload["contact"]["cell_phone"] == "(202) 555-0105"
+            assert payload["contact"]["cell_phone"] == "(202) 555-0128"
 
     def test_requires_at_least_one_field(self):
         with pytest.raises(ValueError, match="at least one"):
-            http_backend.edit_tenant_contact(9000020)
+            http_backend.edit_tenant_contact(9000026)
 
     def test_raises_when_contact_missing(self):
         with patch("cli_anything.propertymeld.http_backend._load_creds") as mc, \
@@ -2449,5 +2449,5 @@ class TestUpdateTenantPerson001:
             get_returns["contact"] = None
             self._wire(mc, mch, mcs, mg, mp, get_returns=get_returns, put_returns={})
             with pytest.raises(RuntimeError, match="contact object"):
-                http_backend.edit_tenant_contact(9000020, cell_phone="2025550110")
+                http_backend.edit_tenant_contact(9000026, cell_phone="2025550110")
             assert mp.call_count == 0

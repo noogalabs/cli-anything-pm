@@ -3,7 +3,7 @@
 These drive the REAL error boundary that produced the live HTTP 500:
 - The OLD flow PUT to /management-appointments/{appt_id}/schedule/ with an
   `availability_segment` payload. That endpoint 500s server-side for every
-  shape (diagnosed live 2026-06-03, demo fixture meld 12937555).
+  shape (diagnosed live 2026-06-03, demo fixture meld 90000018).
 - The FIXED flow PATCHes /melds/{meld_id}/accept/ with
   `management_availability_segments`, which 200s and books the window.
 
@@ -49,12 +49,12 @@ def _patch_creds_csrf(monkeypatch):
 # function reads back for its return contract).
 _ACCEPT_200 = json.dumps(
     {
-        "id": 12937555,
+        "id": 90000018,
         "management_availability_segments": [
             {
-                "id": 2878830,
+                "id": 9000009,
                 "event": {
-                    "id": 42578110,
+                    "id": 90000022,
                     "dtstart": "2026-06-10T18:00:00Z",
                     "dtend": "2026-06-10T20:00:00Z",
                 },
@@ -65,14 +65,14 @@ _ACCEPT_200 = json.dumps(
 ).encode()
 
 _MELD_WITH_APPT = json.dumps(
-    {"managementappointment": [{"id": 4255991, "availability_segment": None}]}
+    {"managementappointment": [{"id": 9000022, "availability_segment": None}]}
 ).encode()
 
 _ZOMBIE_MELD_WITH_APPT = json.dumps(
     {
         "status": "PENDING_MORE_MANAGEMENT_AVAILABILITY",
         "tenants": [],
-        "managementappointment": [{"id": 4255991, "availability_segment": None}],
+        "managementappointment": [{"id": 9000022, "availability_segment": None}],
     }
 ).encode()
 
@@ -80,15 +80,15 @@ _PENDING_COMPLETION_MELD = json.dumps(
     {
         "status": "PENDING_COMPLETION",
         "tenants": [],
-        "managementappointment": [{"id": 4255991, "availability_segment": None}],
+        "managementappointment": [{"id": 9000022, "availability_segment": None}],
     }
 ).encode()
 
 _OCCUPIED_ZOMBIE_MELD = json.dumps(
     {
         "status": "PENDING_MORE_MANAGEMENT_AVAILABILITY",
-        "tenants": [{"id": 9000020, "name": "Synthetic Person 004"}],
-        "managementappointment": [{"id": 4255991, "availability_segment": None}],
+        "tenants": [{"id": 9000026, "name": "SyntheticOne"}],
+        "managementappointment": [{"id": 9000022, "availability_segment": None}],
     }
 ).encode()
 
@@ -109,9 +109,9 @@ def _wire(monkeypatch, *, meld_body=_MELD_WITH_APPT, accept_body=_ACCEPT_200):
             raise urllib.error.HTTPError(url, 500, "Server Error", {}, io.BytesIO(_PM_500_HTML))
         if url.endswith("/accept/"):
             return _FakeResp(accept_body)
-        if method == "GET" and url.endswith("/melds/12937555/work-entries/"):
+        if method == "GET" and url.endswith("/melds/90000018/work-entries/"):
             return _FakeResp(json.dumps({"results": []}).encode())
-        if method == "GET" and url.endswith("/melds/12937555/"):
+        if method == "GET" and url.endswith("/melds/90000018/"):
             if len(meld_bodies) > 1:
                 return _FakeResp(meld_bodies.pop(0))
             return _FakeResp(meld_bodies[0])
@@ -129,7 +129,7 @@ class TestScheduleAppointmentFlow:
         calls = _wire(monkeypatch)
 
         result = hb.schedule_appointment(
-            "12937555", "2026-06-10T14:00:00-04:00", duration_hours=2.0
+            "90000018", "2026-06-10T14:00:00-04:00", duration_hours=2.0
         )
 
         # No call ever hit the dead schedule endpoint (it would have raised 500).
@@ -141,11 +141,11 @@ class TestScheduleAppointmentFlow:
         accept_calls = [c for c in calls if c["url"].endswith("/accept/")]
         assert len(accept_calls) == 1
         assert accept_calls[0]["method"] == "PATCH"
-        assert "/melds/12937555/accept/" in accept_calls[0]["url"]
+        assert "/melds/90000018/accept/" in accept_calls[0]["url"]
 
         assert result["ok"] is True
-        assert result["meld_id"] == 12937555
-        assert result["appointment_id"] == 4255991
+        assert result["meld_id"] == 90000018
+        assert result["appointment_id"] == 9000022
         assert result["duration_hours"] == 2.0
         # dtstart echoed back from the booked segment.
         assert result["dtstart"] == "2026-06-10T18:00:00Z"
@@ -158,7 +158,7 @@ class TestScheduleAppointmentFlow:
         calls = _wire(monkeypatch)
 
         hb.schedule_appointment(
-            "12937555", "2026-06-10T14:00:00-04:00", duration_hours=2.0
+            "90000018", "2026-06-10T14:00:00-04:00", duration_hours=2.0
         )
 
         accept = [c for c in calls if c["url"].endswith("/accept/")][0]
@@ -185,7 +185,7 @@ class TestScheduleAppointmentFlow:
         calls = _wire(monkeypatch, meld_body=empty)
 
         result = hb.schedule_appointment(
-            "12937555", "2026-06-10T14:00:00-04:00", duration_hours=2.0
+            "90000018", "2026-06-10T14:00:00-04:00", duration_hours=2.0
         )
 
         assert result == {
@@ -203,13 +203,13 @@ class TestScheduleAppointmentFlow:
         _patch_creds_csrf(monkeypatch)
         scheduled = json.dumps(
             {"managementappointment": [
-                {"id": 4255991, "availability_segment": {"id": 2878830}}
+                {"id": 9000022, "availability_segment": {"id": 9000009}}
             ]}
         ).encode()
         calls = _wire(monkeypatch, meld_body=scheduled)
 
         result = hb.schedule_appointment(
-            "12937555", "2026-06-10T14:00:00-04:00", duration_hours=2.0
+            "90000018", "2026-06-10T14:00:00-04:00", duration_hours=2.0
         )
 
         assert result["ok"] is False
@@ -227,7 +227,7 @@ class TestScheduleAppointmentFlow:
         _wire(monkeypatch)
         with pytest.raises(SystemExit):
             hb._http_put(
-                "management-appointments/4255991/schedule/",
+                "management-appointments/9000022/schedule/",
                 {"availability_segment": {}},
                 "sessionid=fake",
                 "csrf-fake",
@@ -257,7 +257,7 @@ class TestForcePendingCompletionDisabled:
             raise AssertionError("disabled command must not hit the network")
         monkeypatch.setattr(hb.urllib.request, "urlopen", _boom)
         result = hb.force_pending_completion(
-            "12937555", dtstart="2026-06-10T18:00:00Z", duration_hours=0.25
+            "90000018", dtstart="2026-06-10T18:00:00Z", duration_hours=0.25
         )
         assert result["ok"] is False
         assert result.get("deprecated") is True

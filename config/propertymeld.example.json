@@ -1,0 +1,5 @@
+{
+  "multitenant_id": "1000",
+  "nexus_account_id": "2000",
+  "credentials_path": "~/.claude/credentials/propertymeld-session.json"
+}

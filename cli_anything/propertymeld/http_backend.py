@@ -2,7 +2,7 @@
 Property Meld plain-HTTP backend — cookie-based session auth, no Playwright.
 
 Auth flow:
-  1. Load sessionid cookie from PM_CREDS_PATH JSON file.
+  1. Load sessionid cookie from the path in PROPERTYMELD_CONFIG.
   2. Fetch CSRF token from page HTML (window.PM.csrf_token) — cached per process.
   3. GET requests need only the sessionid cookie.
   4. POST/PUT/PATCH also need X-CSRFToken header.
@@ -25,19 +25,41 @@ import urllib.request
 import uuid
 from typing import Any, Callable, Optional
 
+from .config import require_propertymeld_config
 from .utils import _is_html_response, normalize_http_error
 
-CREDS_PATH = os.environ.get(
-    "PM_CREDS_PATH", os.path.expanduser("~/.claude/credentials/property-meld.json")
-)
-MULTITENANT = os.environ.get("PM_MULTITENANT_ID", "3287")
-NEXUS_ACCOUNT_ID = os.environ.get("PM_NEXUS_ACCOUNT_ID", "338")
-BASE = f"https://app.propertymeld.com/{MULTITENANT}/m/{MULTITENANT}"
-NEXUS_BASE = f"https://app.propertymeld.com/{NEXUS_ACCOUNT_ID}/n/{NEXUS_ACCOUNT_ID}"
+# Optional test overrides. Production resolves all routing and credential
+# custody from PROPERTYMELD_CONFIG at action time, never during import/help.
+CREDS_PATH: str | None = None
+MULTITENANT: str | None = None
+NEXUS_ACCOUNT_ID: str | None = None
+BASE: str | None = None
+NEXUS_BASE: str | None = None
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
 _csrf_cache: dict = {}
 _ssl_ctx = ssl.create_default_context()
+
+
+def _creds_path() -> str:
+    return str(CREDS_PATH or require_propertymeld_config().credentials_path)
+
+
+def _multitenant() -> str:
+    return str(MULTITENANT or require_propertymeld_config().multitenant_id)
+
+
+def _base() -> str:
+    return str(BASE or require_propertymeld_config().manager_base_url)
+
+
+def _nexus_account_id() -> str:
+    return str(NEXUS_ACCOUNT_ID or require_propertymeld_config().nexus_account_id)
+
+
+def _nexus_base() -> str:
+    account_id = _nexus_account_id()
+    return str(NEXUS_BASE or f"https://app.propertymeld.com/{account_id}/n/{account_id}")
 
 
 def _build_url(path: str, side: str = "manager", vendor_id: Optional[str] = None) -> str:
@@ -54,9 +76,10 @@ def _build_url(path: str, side: str = "manager", vendor_id: Optional[str] = None
     if side == "vendor":
         if not vendor_id:
             raise ValueError("vendor_id required for side='vendor'")
-        return f"{host}/{MULTITENANT}/v/{vendor_id}/api/{path}"
+        return f"{host}/{_multitenant()}/v/{vendor_id}/api/{path}"
     if side == "manager":
-        return f"{host}/{MULTITENANT}/m/{MULTITENANT}/api/{path}"
+        multitenant = _multitenant()
+        return f"{host}/{multitenant}/m/{multitenant}/api/{path}"
     raise ValueError(f"unknown side: {side!r}")
 
 
@@ -151,10 +174,10 @@ def with_recapture_retry(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 
 def _load_creds() -> dict:
-    if not os.path.exists(CREDS_PATH):
-        print(json.dumps({"error": f"Credentials file not found: {CREDS_PATH}"}), file=sys.stderr)
+    if not os.path.exists(_creds_path()):
+        print(json.dumps({"error": f"Credentials file not found: {_creds_path()}"}), file=sys.stderr)
         sys.exit(2)
-    with open(CREDS_PATH) as f:
+    with open(_creds_path()) as f:
         return json.load(f)
 
 
@@ -190,7 +213,7 @@ def session_cookie_valid(timeout: int = 15) -> bool:
     validates the Nexus API TOKEN (the READ path). A write-only outage — API/read
     up, UI cookie stale — is invisible to the token probe but caught here: we
     issue a non-mutating GET to the same ``/m/`` manager surface that writes use
-    (modeled on ``_get_csrf_token``'s GET to ``{BASE}/melds/``).
+    (modeled on ``_get_csrf_token``'s GET to ``{_base()}/melds/``).
 
     A 200 status is NOT sufficient: PM serves the login / MFA / interstitial page
     as an HTTP **200 with no redirect**, so a status-only check would FALSE-VALID
@@ -204,10 +227,10 @@ def session_cookie_valid(timeout: int = 15) -> bool:
     MFA form), or any network/parse error all return ``False`` so a caller
     proceeds to recapture. This helper never raises and never calls ``sys.exit``.
     """
-    if not os.path.exists(CREDS_PATH):
+    if not os.path.exists(_creds_path()):
         return False
     try:
-        with open(CREDS_PATH) as f:
+        with open(_creds_path()) as f:
             creds = json.load(f)
     except (OSError, ValueError):
         return False
@@ -217,7 +240,7 @@ def session_cookie_valid(timeout: int = 15) -> bool:
         return False
 
     req = urllib.request.Request(
-        f"{BASE}/melds/",
+        f"{_base()}/melds/",
         headers={"Cookie": cookie_hdr, "User-Agent": UA, "Accept": "text/html"},
     )
     try:
@@ -248,7 +271,7 @@ def _get_csrf_token(cookie_hdr: str) -> str:
         return _csrf_cache["token"]
 
     req = urllib.request.Request(
-        f"{BASE}/melds/",
+        f"{_base()}/melds/",
         headers={"Cookie": cookie_hdr, "User-Agent": UA, "Accept": "text/html"},
     )
     try:
@@ -474,7 +497,7 @@ def _http_get(path: str, cookie_hdr: str, *, side: str = "manager", vendor_id: O
             "Accept": "application/json",
             "X-Requested-With": "XMLHttpRequest",
             "User-Agent": UA,
-            "Referer": f"{BASE}/melds/",
+            "Referer": f"{_base()}/melds/",
         },
     )
     try:
@@ -511,7 +534,7 @@ def _http_get_no_exit(path: str, cookie_hdr: str, *, side: str = "manager", vend
             "Accept": "application/json",
             "X-Requested-With": "XMLHttpRequest",
             "User-Agent": UA,
-            "Referer": f"{BASE}/melds/",
+            "Referer": f"{_base()}/melds/",
         },
     )
     try:
@@ -585,7 +608,7 @@ def _http_post(path: str, payload: dict, cookie_hdr: str, csrf_token: str, *, si
             "X-CSRFToken": csrf_token,
             "X-Requested-With": "XMLHttpRequest",
             "User-Agent": UA,
-            "Referer": f"{BASE}/melds/",
+            "Referer": f"{_base()}/melds/",
         },
     )
     try:
@@ -621,7 +644,7 @@ def _http_post_no_exit(
             "X-CSRFToken": csrf_token,
             "X-Requested-With": "XMLHttpRequest",
             "User-Agent": UA,
-            "Referer": f"{BASE}/melds/",
+            "Referer": f"{_base()}/melds/",
         },
     )
     try:
@@ -643,7 +666,7 @@ def _get_nexus_csrf(cookie_hdr: str) -> str:
         return _csrf_cache["nexus_token"]
 
     req = urllib.request.Request(
-        f"{NEXUS_BASE}/nexus/api-keys/",
+        f"{_nexus_base()}/nexus/api-keys/",
         headers={"Cookie": cookie_hdr, "User-Agent": UA, "Accept": "text/html"},
     )
     try:
@@ -664,15 +687,15 @@ def _get_nexus_csrf(cookie_hdr: str) -> str:
 
 
 def _http_get_nexus(path: str, cookie_hdr: str) -> Any:
-    """GET from the Nexus Partner context (/338/n/338/api/...)."""
+    """GET from the Nexus Partner context (/2000/n/2000/api/...)."""
     req = urllib.request.Request(
-        f"{NEXUS_BASE}/api/{path}",
+        f"{_nexus_base()}/api/{path}",
         headers={
             "Cookie": cookie_hdr,
             "Accept": "application/json",
             "X-Requested-With": "XMLHttpRequest",
             "User-Agent": UA,
-            "Referer": f"{NEXUS_BASE}/nexus/api-keys/",
+            "Referer": f"{_nexus_base()}/nexus/api-keys/",
         },
     )
     try:
@@ -687,10 +710,10 @@ def _http_get_nexus(path: str, cookie_hdr: str) -> Any:
 
 
 def _http_post_nexus(path: str, payload: dict, cookie_hdr: str, csrf_token: str) -> Any:
-    """POST to the Nexus Partner context (/338/n/338/api/...)."""
+    """POST to the Nexus Partner context (/2000/n/2000/api/...)."""
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
-        f"{NEXUS_BASE}/api/{path}",
+        f"{_nexus_base()}/api/{path}",
         data=data,
         method="POST",
         headers={
@@ -700,7 +723,7 @@ def _http_post_nexus(path: str, payload: dict, cookie_hdr: str, csrf_token: str)
             "X-CSRFToken": csrf_token,
             "X-Requested-With": "XMLHttpRequest",
             "User-Agent": UA,
-            "Referer": f"{NEXUS_BASE}/nexus/api-keys/",
+            "Referer": f"{_nexus_base()}/nexus/api-keys/",
         },
     )
     try:
@@ -728,7 +751,7 @@ def _http_put(path: str, payload: dict, cookie_hdr: str, csrf_token: str, *, sid
             "X-CSRFToken": csrf_token,
             "X-Requested-With": "XMLHttpRequest",
             "User-Agent": UA,
-            "Referer": f"{BASE}/melds/",
+            "Referer": f"{_base()}/melds/",
         },
     )
     try:
@@ -756,7 +779,7 @@ def _http_patch(path: str, payload: dict, cookie_hdr: str, csrf_token: str, *, s
             "X-CSRFToken": csrf_token,
             "X-Requested-With": "XMLHttpRequest",
             "User-Agent": UA,
-            "Referer": f"{BASE}/melds/",
+            "Referer": f"{_base()}/melds/",
         },
     )
     try:
@@ -797,7 +820,7 @@ def _http_patch_no_exit(path: str, payload: dict, cookie_hdr: str, csrf_token: s
             "X-CSRFToken": csrf_token,
             "X-Requested-With": "XMLHttpRequest",
             "User-Agent": UA,
-            "Referer": f"{BASE}/melds/",
+            "Referer": f"{_base()}/melds/",
         },
     )
     try:
@@ -821,7 +844,7 @@ def _http_delete(path: str, cookie_hdr: str, csrf_token: str, *, side: str = "ma
             "X-CSRFToken": csrf_token,
             "X-Requested-With": "XMLHttpRequest",
             "User-Agent": UA,
-            "Referer": f"{BASE}/melds/",
+            "Referer": f"{_base()}/melds/",
         },
     )
     try:
@@ -862,13 +885,13 @@ def _http_get_optional_results(path: str, cookie_hdr: str, note_label: str) -> t
     transport asymmetry.
     """
     req = urllib.request.Request(
-        f"{BASE}/api/{path}",
+        f"{_base()}/api/{path}",
         headers={
             "Cookie": cookie_hdr,
             "Accept": "application/json",
             "X-Requested-With": "XMLHttpRequest",
             "User-Agent": UA,
-            "Referer": f"{BASE}/melds/",
+            "Referer": f"{_base()}/melds/",
         },
     )
     try:
@@ -1131,7 +1154,7 @@ def assign_tech(meld_id: str, tech_name: str) -> dict:
 
     Args:
         meld_id: Meld ID to assign the tech to.
-        tech_name: Partial name match (case-insensitive). e.g. "Person019" or "Synthetic Person 007".
+        tech_name: Partial name match (case-insensitive). e.g. "Tech A" or "Tech A".
     """
     meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
@@ -1199,7 +1222,7 @@ def rotate_api_key(key_name: Optional[str] = None) -> dict:
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     csrf_token = _get_nexus_csrf(cookie_hdr)
-    payload = {"friendly_name": key_name or "Ascend Property Management (via API)"}
+    payload = {"friendly_name": key_name or "Example Property Management (via API)"}
     result = _http_post_nexus("nexus/api-keys/", payload, cookie_hdr, csrf_token)
     oauth = result.get("oauth_app", {})
     return {
@@ -1227,7 +1250,7 @@ def merge_meld(destination_id: str, source_ids, meld_id=None, into_meld_id=None)
             into_meld_id and warned in the result. Will be removed.
 
     Endpoint shape captured from PM web UI 2026-05-20T01:14:45Z (capture doc:
-    orgs/ascendops/docs/pm-create-meld-in-and-merge-endpoint-capture-2026-05-19.md):
+    orgs/example/docs/pm-create-meld-in-and-merge-endpoint-capture-2026-05-19.md):
 
         POST /api/melds/{destination_id}/merge/
         body: { "destination_id": int, "source_ids": [int, ...] }
@@ -1276,7 +1299,7 @@ def merge_meld(destination_id: str, source_ids, meld_id=None, into_meld_id=None)
             "X-CSRFToken": csrf_token,
             "X-Requested-With": "XMLHttpRequest",
             "User-Agent": UA,
-            "Referer": f"{BASE}/melds/",
+            "Referer": f"{_base()}/melds/",
         },
     )
     try:
@@ -1344,7 +1367,7 @@ def complete_meld(
             raise ValueError("completion_date required when side='vendor'")
     meld_id = _validate_meld_id(meld_id)
     if side != "vendor":
-        # Person031's invariant is absolute: our tooling must never write a
+        # Person038's invariant is absolute: our tooling must never write a
         # could-not-complete state. A preflight GET cannot hold custody through
         # the third-party PATCH, so it cannot make that invariant atomic. When
         # custody cannot be held through a mutation, do not mutate.
@@ -1461,7 +1484,7 @@ def create_work_entry(
 def vendor_accept_assignment(vendor_id: str, assignment_id: int) -> dict:
     """Vendor accepts an assignment request (vendor-side).
 
-    PATCH /3287/v/{vendor_id}/api/assignments/{assignment_id}/accept/ —
+    PATCH /1000/v/{vendor_id}/api/assignments/{assignment_id}/accept/ —
     verified capture 2026-05-16 024240Z. Empty body.
     """
     if not vendor_id:
@@ -1490,7 +1513,7 @@ def vendor_set_schedule(
 ) -> dict:
     """Vendor sets schedule segments on an assignment (vendor-side).
 
-    PATCH /3287/v/{vendor_id}/api/assignments/{assignment_id}/segments/ —
+    PATCH /1000/v/{vendor_id}/api/assignments/{assignment_id}/segments/ —
     verified capture 2026-05-16 024240Z.
 
     Args:
@@ -1556,7 +1579,7 @@ def vendor_create_invoice(
 ) -> dict:
     """Vendor creates a draft invoice on a meld (vendor-side).
 
-    POST /3287/v/{vendor_id}/api/meld-invoices/ — verified capture
+    POST /1000/v/{vendor_id}/api/meld-invoices/ — verified capture
     2026-05-16 024240Z (201 Created). Returned in DRAFT status until
     vendor_submit_invoice is called.
 
@@ -1603,7 +1626,7 @@ def vendor_create_invoice(
 def vendor_submit_invoice(vendor_id: str, invoice_id: int) -> dict:
     """Vendor submits a draft invoice to the manager (vendor-side).
 
-    PATCH /3287/v/{vendor_id}/api/meld-invoices/{invoice_id}/ — verified
+    PATCH /1000/v/{vendor_id}/api/meld-invoices/{invoice_id}/ — verified
     capture 2026-05-16 024240Z. Sends {submit_to_manager: true}.
     """
     if not vendor_id:
@@ -1941,7 +1964,7 @@ def schedule_appointment(meld_id: str, dtstart: str, duration_hours: float = 2.0
     management_availability_segments list.
 
     Root cause of the prior HTTP 500 (diagnosed live 2026-06-03, demo
-    fixture meld 12937555): the old flow PUT an `availability_segment`
+    fixture meld 90000018): the old flow PUT an `availability_segment`
     payload to `management-appointments/{appt_id}/schedule/`. That endpoint
     is a SELECT-from-existing action — it has no availability segment to
     bind and the server-side handler 500s (null deref) for EVERY payload
@@ -2049,8 +2072,8 @@ def _filter_tenants(tenants: list, search: str) -> list:
         first = (t.get("first_name") or "").lower()
         last = (t.get("last_name") or "").lower()
         # Collapse runs of whitespace — real PM data has tenants with
-        # trailing-space first_names (e.g. "Resident " / "Person039") that would
-        # otherwise produce "erica  mapp" and miss a "resident beta" needle.
+        # trailing-space first_names (e.g. "Resident " / "Beta") that would
+        # otherwise produce "fixture  beta" and miss a "fixture beta" needle.
         full_name = " ".join(f"{first} {last}".split())
         email = (t.get("email") or "").lower()
         if needle in full_name or needle in email:
@@ -2067,14 +2090,14 @@ def list_tenants(search: Optional[str] = None, limit: int = 100) -> list:
     """List tenants, optionally filtered client-side by name, email, or phone.
 
     The /api/tenants/ list response is FLAT — phone is a top-level ``phone``
-    string (e.g. ``"(202) 555-0106"``) and email is top-level ``email``.
+    string (e.g. ``"(202) 555-0136"``) and email is top-level ``email``.
     There is NO nested ``contact`` or ``user`` object on the list shape (the
     detail endpoint ``/api/tenants/{id}/`` does return the nested objects;
     see ``get_tenant``).
 
     Search semantics (case-insensitive):
       * Name: matched against the combined ``"first_name last_name"`` string
-        so multi-word queries like ``"Resident Beta"`` work.
+        so multi-word queries like ``"Fixture Beta"`` work.
       * Email: substring match against top-level ``email``.
       * Phone: BOTH the needle and the stored phone are normalized to
         digits-only before substring match. The phone branch only fires
@@ -2204,7 +2227,7 @@ def update_unit_notes(unit_id, maintenance_notes: str) -> dict:
     update_meld_notes) and from any future property-level notes (not yet
     proven by capture as of P3 #8 ship).
 
-    Closes P3 #8 (orgs/ascendops/docs/pm-cli-gap-backlog-2026-05-18.md) at
+    Closes P3 #8 (orgs/example/docs/pm-cli-gap-backlog-2026-05-18.md) at
     the unit level. Property-level notes deferred pending HAR proof.
     """
     unit_id_int = int(unit_id)
@@ -2227,7 +2250,7 @@ def update_tenant_notes(tenant_id, notes: str) -> dict:
 
     Endpoint: PATCH /api/tenants/{tenant_id}/ with the FULL tenant body, mutating
     only `notes`. Verified shape from pm-tenant-notes-endpoint-capture-2026-05-18
-    (HAR capture against tenant 9000014, status 200, round-trip-reverted).
+    (HAR capture against tenant 9000026, status 200, round-trip-reverted).
 
     The endpoint is NOT thin-patch — `{"notes": "..."}` alone returns 400 because
     validators run on `first_name` / `last_name` even when not changed. We GET
@@ -2514,7 +2537,7 @@ def assign_vendor_by_name(meld_id: str, vendor_name: str, account_prefix: str = 
 
     Args:
         meld_id: Meld ID to assign the vendor to.
-        vendor_name: Partial name match. e.g. "Rogers" or "Rogers Electric".
+        vendor_name: Partial name match. e.g. "Rogers" or "Fixture Electric".
         account_prefix: Account prefix for composite_id (default "1").
     """
     meld_id = _validate_meld_id(meld_id)
@@ -2570,7 +2593,7 @@ def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, dura
 
     Args:
         meld_id: Meld ID.
-        vendor_id: Vendor ID (the integer PK from PM, e.g. 91195 for Dyer HVAC).
+        vendor_id: Vendor ID (the integer PK from PM, e.g. 6012 for Fixture Service).
         dtstart: ISO 8601 datetime string, e.g. '2026-04-27T14:00:00-04:00'.
         duration_hours: Appointment duration in hours (default 2).
 
@@ -2757,7 +2780,7 @@ def create_project(
 
     Required (per capture):
         name, project_type (e.g. "TURN"), due_date, start_date,
-        coordinators (list of management-agent int ids, e.g. [90025]),
+        coordinators (list of management-agent int ids, e.g. [9036]),
         unit ({"id": int, "label": str}).
 
     `meld_location` is a new field introduced in the live shape (captured
@@ -2924,7 +2947,7 @@ def get_unit(unit_id) -> dict:
 #   GET /api/properties/{id}/            -> property object, EMBEDS units[]
 #   GET /api/properties/?limit=N         -> {count,next,previous,results[]}, each
 #                                           property EMBEDS units[]
-#   unit PK field:    units[].id  (int, e.g. 1754320)
+#   unit PK field:    units[].id  (int, e.g. 9000004)
 #   unit label field: units[].unit (str) + apartment/building/floor/suite/room
 # The list endpoints do NOT honour server-side filters (prop=, search=,
 # property_name= are all ignored — count is unchanged), so property-by-name
@@ -3197,7 +3220,7 @@ def list_agents() -> list:
     do not silently truncate.
 
     Use for: roster lookup by name when pm vendors search misses. Closes the
-    silent misread class where in-house techs (Person019 / Person030 / Person017 / etc)
+    silent misread class where in-house techs (Tech A / Tech B / Tech C / etc)
     get mistaken for missing vendors.
     """
     creds = _load_creds()
@@ -3822,7 +3845,7 @@ def upload_receipt(meld_id: str, file_path: str, description: str = "", linked_e
     body = b"\r\n".join(body_parts)
 
     req = urllib.request.Request(
-        f"{BASE}/api/melds/{int(meld_id)}/receipts/",
+        f"{_base()}/api/melds/{int(meld_id)}/receipts/",
         data=body,
         method="POST",
         headers={
@@ -3832,7 +3855,7 @@ def upload_receipt(meld_id: str, file_path: str, description: str = "", linked_e
             "X-CSRFToken": csrf_token,
             "X-Requested-With": "XMLHttpRequest",
             "User-Agent": UA,
-            "Referer": f"{BASE}/melds/",
+            "Referer": f"{_base()}/melds/",
         },
     )
 
@@ -3859,7 +3882,7 @@ def _pm_presign_upload(presign_path: str, filename: str, content_type: str, cook
     own error body via normalize_http_error.
     """
     qs = urllib.parse.urlencode({"filename": filename, "content_type": content_type})
-    url = f"{BASE}/api/{presign_path}?{qs}"
+    url = f"{_base()}/api/{presign_path}?{qs}"
     req = urllib.request.Request(
         url,
         headers={
@@ -3867,7 +3890,7 @@ def _pm_presign_upload(presign_path: str, filename: str, content_type: str, cook
             "Accept": "application/json",
             "X-Requested-With": "XMLHttpRequest",
             "User-Agent": UA,
-            "Referer": f"{BASE}/melds/",
+            "Referer": f"{_base()}/melds/",
         },
     )
     with urllib.request.urlopen(req, context=_ssl_ctx, timeout=30) as resp:
@@ -3971,7 +3994,7 @@ def upload_meld_file(meld_id: str, file_path: str, uploader_role: str = "manager
         # Commit POST — done inline (not via _http_post) because that helper
         # sys.exits on non-401 errors, while upload's return contract is to
         # surface the PM error verbatim via `{ok: False, ...}`.
-        commit_url = f"{BASE}/api/melds/{int(meld_id)}/{commit_endpoint}/"
+        commit_url = f"{_base()}/api/melds/{int(meld_id)}/{commit_endpoint}/"
         req = urllib.request.Request(
             commit_url,
             data=json.dumps(payload).encode(),
@@ -3983,7 +4006,7 @@ def upload_meld_file(meld_id: str, file_path: str, uploader_role: str = "manager
                 "X-CSRFToken": csrf_token,
                 "X-Requested-With": "XMLHttpRequest",
                 "User-Agent": UA,
-                "Referer": f"{BASE}/melds/",
+                "Referer": f"{_base()}/melds/",
             },
         )
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=30) as resp:

@@ -4,13 +4,13 @@ Routes read commands to Nexus API backend; write/browser-session commands to htt
 
 Usage:
     pm work-orders list --status open --json
-    pm work-orders get 12345 --json
-    pm work-orders comments 12345 --json
-    pm work-orders send-message --meld-id 12345 --text "Heading over now"
-    pm work-orders clone --meld-id 12345
+    pm work-orders get 900001 --json
+    pm work-orders comments 900001 --json
+    pm work-orders send-message --meld-id 900001 --text "Heading over now"
+    pm work-orders clone --meld-id 900001
     pm properties list --json
     pm vendors list --json
-    pm work-orders assign-tech --work-order-id 12345 --tech Person019 --json
+    pm work-orders assign-tech --work-order-id 900001 --tech Tech A --json
 """
 import json
 import sys
@@ -26,6 +26,34 @@ from .utils import output_json, print_error, resolve_meld_id
 def cli():
     """Property Meld CLI — read work orders, properties, vendors; assign techs."""
     pass
+
+
+def command_index(root: click.Group = cli) -> dict:
+    """Derive the public command catalog from the live Click tree."""
+    commands = []
+
+    def visit(command: click.Command, path: tuple[str, ...]) -> None:
+        if isinstance(command, click.Group):
+            for name, child in sorted(command.commands.items()):
+                visit(child, path + (name,))
+            return
+        commands.append({
+            "command": " ".join(path),
+            "help": command.help or "",
+        })
+
+    visit(root, ())
+    return {
+        "repository": "cli-anything-pm",
+        "commands": commands,
+    }
+
+
+@cli.command("index")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def command_index_cmd(as_json):
+    """Print the runtime-derived command index as JSON."""
+    output_json(command_index())
 
 
 # ── insights group (strictly read-only) ───────────────────────────────────────
@@ -49,7 +77,8 @@ def _output_insights(callable_, **kwargs):
 @click.option("--limit", type=click.IntRange(1, 10000), default=100, show_default=True)
 @click.option("--work-category", default=None, help="Exact work category filter.")
 @click.option("--project/--non-project", default=None, help="Filter project status.")
-def insights_melds(limit, work_category, project):
+@click.option("--json", "as_json", is_flag=True, default=True, help="Output is always JSON.")
+def insights_melds(limit, work_category, project, as_json):
     """Return safe meld analytics with canonical vendor IDs."""
     _output_insights(
         insights_backend.get_melds,
@@ -63,7 +92,8 @@ def insights_melds(limit, work_category, project):
 @insights.command("turnovers")
 @click.option("--limit", type=click.IntRange(1, 10000), default=100, show_default=True)
 @click.option("--project/--non-project", default=None, help="Filter project status.")
-def insights_turnovers(limit, project):
+@click.option("--json", "as_json", is_flag=True, default=True, help="Output is always JSON.")
+def insights_turnovers(limit, project, as_json):
     """Return TURNOVER analytics with canonical vendor IDs."""
     _output_insights(
         insights_backend.get_melds,
@@ -80,7 +110,8 @@ def insights_turnovers(limit, project):
 @click.option("--priority", default=None, help="Exact priority filter.")
 @click.option("--region", default=None, help="Exact region filter.")
 @click.option("--project/--non-project", default=None, help="Filter project status.")
-def insights_benchmarks(limit, work_category, priority, region, project):
+@click.option("--json", "as_json", is_flag=True, default=True, help="Output is always JSON.")
+def insights_benchmarks(limit, work_category, priority, region, project, as_json):
     """Return PropertyMeld benchmark percentile rows."""
     _output_insights(
         insights_backend.get_benchmarks,
@@ -253,7 +284,7 @@ def list_work_entries_cmd(meld_id, as_json):
 @click.option("--meld-id", required=True, help="Meld ID")
 @click.option("--agent-id", "agent", required=True, type=int,
               help="Persona ID of the agent who performed the work "
-                   "(e.g. 90025=Person031, 90026=Person019)")
+                   "(e.g. 9036=Person038, 9037=Tech A)")
 @click.option("--description", required=True, callback=_require_nonempty,
               help="Short summary, shown in the meld feed.")
 @click.option("--long-description", "long_description", default="",
@@ -489,7 +520,7 @@ def merge_meld(destination_id, source_ids, meld_id, into_meld_id, as_json):
     if not destination_id or not source_ids:
         raise click.UsageError(
             "merge requires --destination + --source (or legacy --meld-id + --into). "
-            "Example: pm work-orders merge --destination 12819946 --source 12820134"
+            "Example: pm work-orders merge --destination 90000013 --source 90000014"
         )
 
     destination_id = _normalize_meld_id(destination_id)
@@ -610,7 +641,7 @@ def edit_unit_notes_cmd(unit_id, notes, as_json):
     PATCH /api/units/{unit_id}/ — verified shape from pm-capture 2026-05-14.
 
     Example:
-      pm units edit-notes 1754419 --notes "Water shut-off in basement near furnace"
+      pm units edit-notes 9000006 --notes "Water shut-off in basement near furnace"
     """
     result = http_backend.update_unit_notes(unit_id, notes)
     output_json(result)
@@ -630,7 +661,7 @@ def resolve_unit_cmd(property_ref, unit_address, as_json):
     picks. Single-unit properties resolve confidently regardless of label.
 
     Examples:
-      pm units resolve --property 1646329 --unit-address "Unit A"
+      pm units resolve --property 9000002 --unit-address "Unit A"
       pm units resolve --property "1098 N Hawthorne" --unit-address "Apt 12"
     """
     result = http_backend.resolve_unit_pk(property_ref, unit_address)
@@ -648,7 +679,7 @@ def list_units_by_property_cmd(property_ref, as_json):
     truncated list can never mislead.
 
     Example:
-      pm units list-by-property 1646329
+      pm units list-by-property 9000002
       pm units list-by-property "1098 N Hawthorne"
     """
     result = http_backend.list_units_by_property(property_ref)
@@ -665,7 +696,7 @@ def get_unit_by_address_cmd(property_ref, unit_address, as_json):
     confident single match; otherwise the same disambiguation payload as resolve.
 
     Example:
-      pm units get-by-address --property 1646329 --unit-address "Unit A"
+      pm units get-by-address --property 9000002 --unit-address "Unit A"
     """
     result = http_backend.get_unit_by_address(property_ref, unit_address)
     output_json(result)
@@ -753,7 +784,7 @@ def edit_tenant_notes_cmd(tenant_id, notes, as_json):
     roundtrip). Verified shape from pm-tenant-notes-endpoint-capture-2026-05-18.
 
     Example:
-      pm tenants edit-notes 9000014 --notes "Schedule access after 3pm weekdays; husband home during day"
+      pm tenants edit-notes 9000026 --notes "Schedule access after 3pm weekdays; husband home during day"
     """
     result = http_backend.update_tenant_notes(tenant_id, notes)
     output_json(result)
@@ -880,7 +911,7 @@ def get_agent_cmd(agent_id, as_json):
 
     Phone-data caveat (Blue gap #N+3): the ``contact`` field on the agent
     detail endpoint is EITHER ``None`` (no contact record exists in PM —
-    observed on Person019 90026) OR an integer FK to a Person001 record that is
+    observed on Tech A 9037) OR an integer FK to a Person001 record that is
     NOT exposed via the cookie-path ``/api/contacts/{id}/`` endpoint (404
     on probe). This means cell_phone / business_phone are NOT recoverable
     via this command alone for in-house techs whose contact lives in a
@@ -1006,7 +1037,8 @@ def list_api_keys(as_json):
 # ── probe ──────────────────────────────────────────────────────────────────────
 
 @cli.command()
-def probe():
+@click.option("--json", "as_json", is_flag=True, default=True, help="Output is always JSON.")
+def probe(as_json):
     """Health check — verify API credentials and connectivity."""
     result = api_backend.probe()
     output_json(result)
@@ -1155,7 +1187,7 @@ def get_project(project_id, as_json):
 def add_melds_to_project_cmd(project_id, meld_ids, as_json):
     """Attach one or more existing melds to a project.
 
-    Example: pm projects add-melds 222959 12772756 12772757
+    Example: pm projects add-melds 900005 90000005 90000006
     """
     result = http_backend.add_melds_to_project(project_id, list(meld_ids))
     output_json(result)
@@ -1202,8 +1234,8 @@ def create_meld_in_project_cmd(
     ManagementAgent objects. Two paths:
 
     \b
-    - Ergonomic: --unit-id 9000005 --maintenance-id 90025 (repeatable)
-      --tenant-id 9000009 (repeatable)
+    - Ergonomic: --unit-id 9000025 --maintenance-id 9036 (repeatable)
+      --tenant-id 9000021 (repeatable)
       → CLI auto-hydrates via GET /units/{id}/ and GET /agents/{id}/.
     - Power-user: --unit-json '<full obj>' --maintenance-json '<full list>'
       → passed through; must include nested fields or backend raises ValueError.
@@ -1263,7 +1295,7 @@ def create_meld_in_project_cmd(
 @click.option("--coordinator", "coordinators", multiple=True, required=True,
               type=int, help="Coordinator management-agent id (repeat for multiple)")
 @click.option("--unit-id", required=True, type=int, help="Unit PK")
-@click.option("--unit-label", required=True, callback=_require_nonempty, help="Unit address label, e.g. '123 Main St, Chattanooga, TN, 37421'")
+@click.option("--unit-label", required=True, callback=_require_nonempty, help="Unit address label, e.g. '123 Main St, Chattanooga, TN, 12345'")
 @click.option("--description", default="", help="Project description")
 @click.option("--meld-location", default="Unit", show_default=True,
               help='Discriminator — usually "Unit"; PM also accepts property-bound shapes')
@@ -1407,7 +1439,7 @@ def link_tenant_cmd(meld_id, tenant_id, as_json):
     the meld, returns already_linked=True without modifying.
 
     Example:
-      pm work-orders link-tenant 90000003 9000009
+      pm work-orders link-tenant 90000017 9000021
     """
     meld_id = _normalize_meld_id(meld_id)
     result = http_backend.link_tenant_to_meld(meld_id, tenant_id)

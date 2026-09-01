@@ -23,7 +23,7 @@ def _patch_base(monkeypatch):
 
 def _meld(status="PENDING_COMPLETION", in_house=True, vendor_requests=None):
     return {
-        "id": 12793634,
+        "id": 90000012,
         "status": status,
         "in_house_servicers": [{"id": 1, "agent": {"id": 2}}] if in_house else [],
         "vendor_assignment_requests": vendor_requests or [],
@@ -43,7 +43,7 @@ def test_in_house_manager_complete_fails_loud_without_patch(monkeypatch):
     monkeypatch.setattr(hb, "_http_patch", _no_patch)
 
     with pytest.raises(SystemExit) as exc:
-        hb.complete_meld("12793634")
+        hb.complete_meld("90000012")
     assert exc.value.code == 1
     assert patched["called"] is False, "complete/ PATCH must NOT be sent for in-house melds"
 
@@ -53,7 +53,7 @@ def test_in_house_fail_message_names_the_real_fix(monkeypatch, capsys):
     monkeypatch.setattr(hb, "_http_get", lambda path, cookie: _meld(in_house=True))
     monkeypatch.setattr(hb, "_http_patch", lambda *a, **k: {})
     with pytest.raises(SystemExit):
-        hb.complete_meld("12793634")
+        hb.complete_meld("90000012")
     err = capsys.readouterr().err.lower()
     assert "manager-side completion is disabled" in err
     assert "vendor-side path" in err
@@ -69,7 +69,7 @@ def test_unassigned_manager_complete_refuses_before_credentials_or_network(monke
     monkeypatch.setattr(hb, "_http_patch", lambda *a, **k: pytest.fail("manager refusal must precede PATCH"))
 
     with pytest.raises(SystemExit) as exc:
-        hb.complete_meld("12793634", completion_notes="manager note")
+        hb.complete_meld("90000012", completion_notes="manager note")
 
     assert exc.value.code == 1
     err = capsys.readouterr().err
@@ -101,7 +101,7 @@ def test_vendor_assignment_history_refuses_before_patch(monkeypatch, capsys, ven
     )
 
     with pytest.raises(SystemExit) as exc:
-        hb.complete_meld("12793634", completion_notes="vendor reports done")
+        hb.complete_meld("90000012", completion_notes="vendor reports done")
 
     assert exc.value.code == 1
     err = capsys.readouterr().err
@@ -118,7 +118,7 @@ def test_legacy_vendorassignment_shape_refuses_before_patch(monkeypatch):
     monkeypatch.setattr(hb, "_get_csrf_token", lambda cookie: pytest.fail("no csrf"))
     monkeypatch.setattr(hb, "_http_patch", lambda *a, **k: pytest.fail("no PATCH"))
     with pytest.raises(SystemExit):
-        hb.complete_meld("12793634")
+        hb.complete_meld("90000012")
 
 
 # ── vendor path untouched (Dane's explicit regression) ─────────────────────────
@@ -135,7 +135,7 @@ def test_vendor_complete_still_succeeds(monkeypatch):
     monkeypatch.setattr(hb, "_http_patch", _patch)
 
     out = hb.complete_meld(
-        "12793634", completion_notes="done",
+        "90000012", completion_notes="done",
         side="vendor", vendor_id="123", completion_date="2026-06-23T14:00:00.000Z",
     )
     assert out["ok"] is True and out["side"] == "vendor"
@@ -148,7 +148,7 @@ def test_force_pending_completion_is_disabled(monkeypatch):
     _patch_base(monkeypatch)
     monkeypatch.setattr(hb, "_http_get", lambda *a, **k: pytest.fail("disabled command must not hit the network"))
     monkeypatch.setattr(hb, "_http_patch", lambda *a, **k: pytest.fail("disabled command must not mutate"))
-    out = hb.force_pending_completion("12793634")
+    out = hb.force_pending_completion("90000012")
     assert out["ok"] is False
     assert out.get("deprecated") is True
     assert "tech-app" in out["error"] or "tech app" in out["error"]

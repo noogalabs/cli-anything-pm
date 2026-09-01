@@ -83,7 +83,7 @@ _PRESIGN_BODY = json.dumps({
     "fields": {
         "acl": "public-read",
         "success_action_status": "201",
-        "key": "media/meld/files/2026-05-25 18:50:16.903332+00:00-test.jpg",
+        "key": "media/meld/files/2026-05-25 18:50:16.900010+00:00-test.jpg",
         "AWSAccessKeyId": "AKIA5QE6ARYYVZKQYUIT",
         "policy": "eyJleHBpcmF0aW9uIjogIjIwMjYtMDUtMjVUMTk6NTA6MTZaIn0=",
         "signature": "I9pxdFT94RThSSuMUV5bsv4wSas=",
@@ -91,9 +91,9 @@ _PRESIGN_BODY = json.dumps({
 }).encode()
 
 _COMMIT_BODY = json.dumps({
-    "id": 20393733,
-    "meld": 90000004,
-    "file": "meld/files/2026-05-25 18:50:43.739493+00:00-test.jpg",
+    "id": 90000021,
+    "meld": 90000017,
+    "file": "meld/files/2026-05-25 18:50:43.900009+00:00-test.jpg",
     "filename": "test.jpg",
     "filenotes": [],
 }).encode()
@@ -105,10 +105,10 @@ class TestUploadMeldFileManager:
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch, [_PRESIGN_BODY, b"<xml/>", _COMMIT_BODY])
 
-        result = hb.upload_meld_file("90000004", tiny_jpeg, "manager")
+        result = hb.upload_meld_file("90000017", tiny_jpeg, "manager")
 
         assert result["ok"] is True
-        assert result["file_id"] == 20393733
+        assert result["file_id"] == 90000021
         assert result["uploader_role"] == "manager"
 
         # Three calls: presign GET, S3 POST, commit POST
@@ -130,17 +130,17 @@ class TestUploadMeldFileManager:
 
         # Step 3: commit POST — JSON body to /api/melds/{id}/files/
         assert cap[2]["method"] == "POST"
-        assert "/api/melds/90000004/files/" in cap[2]["url"]
+        assert "/api/melds/90000017/files/" in cap[2]["url"]
         commit_payload = json.loads(cap[2]["body"])
-        assert commit_payload["file"] == "media/meld/files/2026-05-25 18:50:16.903332+00:00-test.jpg"
+        assert commit_payload["file"] == "media/meld/files/2026-05-25 18:50:16.900010+00:00-test.jpg"
         assert commit_payload["filename"].endswith(".jpg")
-        assert commit_payload["meld_id"] == 90000004
+        assert commit_payload["meld_id"] == 90000017
 
     def test_description_included_when_provided(self, monkeypatch, tiny_jpeg):
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch, [_PRESIGN_BODY, b"<xml/>", _COMMIT_BODY])
 
-        hb.upload_meld_file("90000004", tiny_jpeg, "manager", description="from regression test")
+        hb.upload_meld_file("90000017", tiny_jpeg, "manager", description="from regression test")
 
         commit_payload = json.loads(cap[2]["body"])
         assert commit_payload["description"] == "from regression test"
@@ -149,7 +149,7 @@ class TestUploadMeldFileManager:
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch, [_PRESIGN_BODY, b"<xml/>", _COMMIT_BODY])
 
-        hb.upload_meld_file("90000004", tiny_jpeg, "manager")  # default description=""
+        hb.upload_meld_file("90000017", tiny_jpeg, "manager")  # default description=""
 
         commit_payload = json.loads(cap[2]["body"])
         assert "description" not in commit_payload
@@ -160,28 +160,28 @@ class TestUploadMeldFileRoleRouting:
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch, [_PRESIGN_BODY, b"<xml/>", _COMMIT_BODY])
 
-        hb.upload_meld_file("90000004", tiny_jpeg, "tenant")
+        hb.upload_meld_file("90000017", tiny_jpeg, "tenant")
 
         # Presign: tenant-side presign URL
         assert "/api/tenants/files/generate-policy/" in cap[0]["url"]
         # Commit: tenant-files endpoint on the meld
-        assert "/api/melds/90000004/tenant-files/" in cap[2]["url"]
+        assert "/api/melds/90000017/tenant-files/" in cap[2]["url"]
 
     def test_vendor_role_uses_vendor_presign_and_commit(self, monkeypatch, tiny_jpeg):
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch, [_PRESIGN_BODY, b"<xml/>", _COMMIT_BODY])
 
-        hb.upload_meld_file("90000004", tiny_jpeg, "vendor")
+        hb.upload_meld_file("90000017", tiny_jpeg, "vendor")
 
         assert "/api/vendors/files/generate-policy/" in cap[0]["url"]
-        assert "/api/melds/90000004/vendor-files/" in cap[2]["url"]
+        assert "/api/melds/90000017/vendor-files/" in cap[2]["url"]
 
     def test_unknown_role_returns_error_dict(self, monkeypatch, tiny_jpeg):
         _patch_creds_csrf(monkeypatch)
         # No urlopen calls expected — should fail before any HTTP
         _capture_urlopen(monkeypatch, [])
 
-        result = hb.upload_meld_file("90000004", tiny_jpeg, "lawyer")
+        result = hb.upload_meld_file("90000017", tiny_jpeg, "lawyer")
 
         assert result["ok"] is False
         assert "Unknown uploader_role" in result["error"]
@@ -192,7 +192,7 @@ class TestUploadMeldFileErrors:
         _patch_creds_csrf(monkeypatch)
         _capture_urlopen(monkeypatch, [])
 
-        result = hb.upload_meld_file("90000004", "/tmp/does-not-exist.jpg", "manager")
+        result = hb.upload_meld_file("90000017", "/tmp/does-not-exist.jpg", "manager")
 
         assert result["ok"] is False
         assert "File not found" in result["error"]
@@ -213,7 +213,7 @@ class TestUploadMeldFileErrors:
 
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
         # Bypass the recapture-retry decorator: SessionExpired is only raised on 401.
-        result = hb.upload_meld_file("90000004", tiny_jpeg, "manager")
+        result = hb.upload_meld_file("90000017", tiny_jpeg, "manager")
 
         assert result["ok"] is False
         assert result["uploader_role"] == "manager"

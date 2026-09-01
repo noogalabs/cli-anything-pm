@@ -22,7 +22,7 @@ def _unit(uid, label, **extra):
         "suite": extra.get("suite", ""),
         "room": extra.get("room", ""),
         "department": extra.get("department", ""),
-        "unit_address": extra.get("unit_address", 9000000 + uid),
+        "unit_address": extra.get("unit_address", 9000029 + uid),
         "prop": {"id": extra.get("prop_id", 5000)},
     }
     return base
