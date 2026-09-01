@@ -562,7 +562,7 @@ class TestGetWorkOrder:
                     "meld": 12904264,
                     "management_assignment": {
                         "in_house_servicers": [
-                            {"first_name": "tech c", "last_name": "servin"}
+                            {"first_name": "tech c", "last_name": "example"}
                         ]
                     },
                 }
@@ -580,7 +580,7 @@ class TestGetWorkOrder:
 
         mock_rich.assert_called_once_with("12904264")
         assert result["in_house_servicers"][0]["agent"]["id"] == 5013
-        assert result["managementappointment"][0]["management_assignment"]["in_house_servicers"][0]["last_name"] == "servin"
+        assert result["managementappointment"][0]["management_assignment"]["in_house_servicers"][0]["last_name"] == "example"
 
     def test_include_tech_warns_when_cookie_detail_fails(self, capsys):
         with patch("urllib.request.urlopen") as mock_open, patch(
@@ -1038,7 +1038,7 @@ _FULL_AGENT_FIXTURE = {
     "type": "ManagementAgent",
     "composite_id": "2-5011",
     "first_name": "Alex",
-    "last_name": "Hunter",
+    "last_name": "Example",
     "title": "COORDINATOR",
     "department": "MAINTENANCE",
     "selected_property_groups": [2937],
@@ -1116,7 +1116,7 @@ class TestTenantInvite:
             result = http_backend.invite_tenant(
                 unit_id="1870266",
                 first_name="Alex",
-                last_name="Hunter",
+                last_name="Example",
                 email="alex@example.com",
                 cell_phone="6789235467",
                 home_phone="6789873214",
@@ -1139,7 +1139,7 @@ class TestTenantInvite:
                 },
                 "units": [_TENANT_INVITE_UNIT_FIXTURE],
                 "first_name": "Alex",
-                "last_name": "Hunter",
+                "last_name": "Example",
                 "notes": "notes section",
                 "should_invite": True,
             }
@@ -1154,7 +1154,7 @@ class TestTenantInvite:
             mp.return_value = {"id": 4427861, "contact": {}, "invited": False}
 
             result = http_backend.invite_tenant(
-                1870266, "Alex", "Hunter", "alex@example.com", "6789235467",
+                1870266, "Alex", "Example", "alex@example.com", "6789235467",
                 should_invite=False,
             )
 
@@ -1183,7 +1183,7 @@ class TestTenantInvite:
             }
 
             result = http_backend.invite_tenant(
-                1870266, "Alex", "Hunter", "alex@example.com", "6781235467"
+                1870266, "Alex", "Example", "alex@example.com", "6781235467"
             )
 
             assert result["ok"] is False
@@ -1195,7 +1195,7 @@ class TestTenantInvite:
         with patch("cli_anything.propertymeld.http_backend.get_unit", return_value="bad"):
             with pytest.raises(RuntimeError, match="non-dict"):
                 http_backend.invite_tenant(
-                    1870266, "Alex", "Hunter", "alex@example.com", "6789235467"
+                    1870266, "Alex", "Example", "alex@example.com", "6789235467"
                 )
 
 
@@ -2194,10 +2194,10 @@ _TENANT_NOTES_FIXTURE = {
 _TENANT_CONTACT_FIXTURE = {
     "id": 4427861,
     "user": {
-        "id": 1626736,
+        "id": 1626000,
         "email": "alex@example.com",
         "first_name": "Alex",
-        "last_name": "Hunter",
+        "last_name": "Example",
         "last_active_at": "2026-05-31T03:00:11.803163Z",
         "last_active_channel": "DIGITAL",
         "last_login": "2026-05-29T11:42:27.648293Z",
@@ -2232,7 +2232,7 @@ _TENANT_CONTACT_FIXTURE = {
     "is_active": True,
     "first_name": "Alex",
     "middle_name": "",
-    "last_name": "Hunter",
+    "last_name": "Example",
     "notes": "notes section",
     "prompt_for_mobile": True,
     "default_language": "",

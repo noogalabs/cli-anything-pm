@@ -204,7 +204,7 @@ class TestVendorsCLI:
 
 class TestAgentsCLI:
     def test_agents_list_runs_and_emits_json(self, runner):
-        mock_agents = [{"id": 1, "first_name": "Tech A", "last_name": "Calel"}]
+        mock_agents = [{"id": 1, "first_name": "Tech A", "last_name": "Example"}]
         with patch("cli_anything.propertymeld.http_backend.list_agents",
                    return_value=mock_agents):
             result = runner.invoke(cli, ["agents", "list"])
@@ -214,7 +214,7 @@ class TestAgentsCLI:
 
     def test_agents_search_filters_by_name(self, runner):
         mock_agents = [
-            {"id": 1, "first_name": "Tech A", "last_name": "Calel"},
+            {"id": 1, "first_name": "Tech A", "last_name": "Example"},
             {"id": 2, "first_name": "Tech B", "last_name": "Lee"},
             {"id": 3, "first_name": "Tech C", "last_name": "Rossi"},
         ]
@@ -230,7 +230,7 @@ class TestAgentsCLI:
         mock_agent = {
             "id": 5012,
             "first_name": "Tech A",
-            "last_name": "Calel",
+            "last_name": "Example",
             "role": "MAINTENANCE",
             "contact": None,
             "user": {"email": "tech-d@example.com"},
@@ -668,7 +668,7 @@ class TestTenantsCLI:
                 "tenants", "invite",
                 "--unit-id", "1870266",
                 "--first-name", "Alex",
-                "--last-name", "Hunter",
+                "--last-name", "Example",
                 "--email", "alex@example.com",
                 "--cell", "6789235467",
                 "--home", "6789873214",
@@ -681,7 +681,7 @@ class TestTenantsCLI:
         mock_fn.assert_called_once_with(
             unit_id=1870266,
             first_name="Alex",
-            last_name="Hunter",
+            last_name="Example",
             email="alex@example.com",
             cell_phone="6789235467",
             home_phone="6789873214",
@@ -697,7 +697,7 @@ class TestTenantsCLI:
                 "tenants", "invite",
                 "--unit-id", "1870266",
                 "--first-name", "Alex",
-                "--last-name", "Hunter",
+                "--last-name", "Example",
                 "--email", "alex@example.com",
                 "--cell", "6789235467",
                 "--no-invite",

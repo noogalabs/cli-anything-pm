@@ -281,7 +281,7 @@ class TestTenantInvite:
         result = hb.invite_tenant(
             unit_id=1870266,
             first_name="Alex",
-            last_name="Hunter",
+            last_name="Example",
             email="alex@example.com",
             cell_phone="6789235467",
             notes="notes section",
@@ -300,7 +300,7 @@ class TestTenantInvite:
             },
             "units": [unit],
             "first_name": "Alex",
-            "last_name": "Hunter",
+            "last_name": "Example",
             "notes": "notes section",
             "should_invite": True,
         }
@@ -320,7 +320,7 @@ class TestTenantInvite:
         result = hb.invite_tenant(
             1870266,
             "Alex",
-            "Hunter",
+            "Example",
             "alex@example.com",
             "6789235467",
             should_invite=False,
@@ -351,7 +351,7 @@ class TestTenantInvite:
         result = hb.invite_tenant(
             1870266,
             "Alex",
-            "Hunter",
+            "Example",
             "alex@example.com",
             "bad-phone",
         )
@@ -366,10 +366,10 @@ def _tenant_contact_fixture():
     return {
         "id": 4427861,
         "user": {
-            "id": 1626736,
+            "id": 1626000,
             "email": "alex@example.com",
             "first_name": "Alex",
-            "last_name": "Hunter",
+            "last_name": "Example",
         },
         "contact": {
             "id": 5429857,
@@ -385,7 +385,7 @@ def _tenant_contact_fixture():
         "last_invite": {"id": 13708659, "email": "alex@example.com"},
         "first_name": "Alex",
         "middle_name": "",
-        "last_name": "Hunter",
+        "last_name": "Example",
         "notes": "notes section",
         "prompt_for_mobile": True,
         "default_language": "",

@@ -50,7 +50,7 @@ class TestExitNonZeroOnBackendFailure:
                 "tenants", "invite",
                 "--unit-id", "1870266",
                 "--first-name", "Alex",
-                "--last-name", "Hunter",
+                "--last-name", "Example",
                 "--email", "alex@example.com",
                 "--cell", "6789235467",
             ])

@@ -1,4 +1,5 @@
 import json
+import importlib.util
 import os
 import re
 import subprocess
@@ -175,6 +176,38 @@ def test_private_tenant_and_org_literals_are_absent_from_tracked_files():
 def test_structural_private_data_shapes_are_absent_from_tracked_files():
     repo = Path(__file__).parents[1]
     assert _tracked_structural_private_matches(repo) == []
+
+
+def test_private_vocabulary_is_derived_from_complete_roster_shapes():
+    repo = Path(__file__).parents[1]
+    script = repo / "scripts" / "build_private_literal_vocabulary.py"
+    spec = importlib.util.spec_from_file_location("private_vocab", script)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    vocabulary = module.build_vocabulary(
+        [{
+            "id": 501,
+            "first_name": "Tech",
+            "last_name": "Example",
+            "management": 1000,
+            "user": {"id": 601, "first_name": "Operator", "last_name": "Example"},
+        }],
+        [{"id": 701, "name": "Vendor Example"}],
+        {
+            "multitenant_id": "1000",
+            "nexus_account_id": "2000",
+            "credentials_path": "/private/example/session.json",
+        },
+        ["Example Property Management", "orgs/example"],
+    )
+
+    assert set(vocabulary) == {
+        "501", "601", "701", "1000", "2000",
+        "Tech", "Operator", "Example", "Vendor Example",
+        "/private/example/session.json", "Example Property Management", "orgs/example",
+    }
 
 
 def test_supported_untracked_config_is_outside_source_census(tmp_path):
