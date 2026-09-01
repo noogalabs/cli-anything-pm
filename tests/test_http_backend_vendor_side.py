@@ -374,7 +374,7 @@ def _tenant_contact_fixture():
         "contact": {
             "id": 9000025,
             "home_phone": "old home",
-            "cell_phone": "(202) 555-0105",
+            "cell_phone": "(202) 555-0128",
             "business_phone": "",
             "primary_email": "alex@example.com",
             "secondary_email": "alex@example.com",
@@ -401,7 +401,7 @@ class TestTenantPerson001Person003:
         _patch_creds_csrf(monkeypatch)
         original = _tenant_contact_fixture()
         updated = json.loads(json.dumps(original))
-        updated["contact"]["cell_phone"] = "(678) 923-7654"
+        updated["contact"]["cell_phone"] = "(202) 555-0129"
         calls = []
 
         def fake_urlopen(req, **kw):
@@ -416,14 +416,14 @@ class TestTenantPerson001Person003:
 
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
 
-        result = hb.edit_tenant_contact(9000026, cell_phone="(678) 923-7654")
+        result = hb.edit_tenant_contact(9000026, cell_phone="(202) 555-0129")
 
         assert [call["method"] for call in calls] == ["GET", "PUT"]
         assert calls[0]["url"].endswith("/tenants/9000026/")
         assert calls[1]["url"].endswith("/tenants/9000026/")
         put_body = json.loads(calls[1]["body"])
         expected = json.loads(json.dumps(original))
-        expected["contact"]["cell_phone"] = "(678) 923-7654"
+        expected["contact"]["cell_phone"] = "(202) 555-0129"
         assert put_body == expected
         assert put_body["contact"]["home_phone"] == "old home"
         assert put_body["contact"]["secondary_email"] == "alex@example.com"

@@ -2072,7 +2072,7 @@ def _filter_tenants(tenants: list, search: str) -> list:
         first = (t.get("first_name") or "").lower()
         last = (t.get("last_name") or "").lower()
         # Collapse runs of whitespace — real PM data has tenants with
-        # trailing-space first_names (e.g. "Resident " / "Person039") that would
+        # trailing-space first_names (e.g. "Resident " / "Beta") that would
         # otherwise produce "erica  mapp" and miss a "resident beta" needle.
         full_name = " ".join(f"{first} {last}".split())
         email = (t.get("email") or "").lower()
@@ -2090,7 +2090,7 @@ def list_tenants(search: Optional[str] = None, limit: int = 100) -> list:
     """List tenants, optionally filtered client-side by name, email, or phone.
 
     The /api/tenants/ list response is FLAT — phone is a top-level ``phone``
-    string (e.g. ``"(202) 555-0106"``) and email is top-level ``email``.
+    string (e.g. ``"(202) 555-0136"``) and email is top-level ``email``.
     There is NO nested ``contact`` or ``user`` object on the list shape (the
     detail endpoint ``/api/tenants/{id}/`` does return the nested objects;
     see ``get_tenant``).

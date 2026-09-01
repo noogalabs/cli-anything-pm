@@ -276,8 +276,8 @@ MOCK_FILES = [
     {"id": 9002, "filename": "after.jpg", "signed_url": "https://example/after.jpg"},
 ]
 MOCK_TENANTS = [
-    {"id": 1, "first_name": "Fixture", "last_name": "Doe", "email": "fixture.alpha@example.com"},
-    {"id": 2, "first_name": "Resident", "last_name": "Person035", "email": "fixture.beta@example.com"},
+    {"id": 1, "first_name": "Fixture", "last_name": "Alpha", "email": "fixture.alpha@example.com"},
+    {"id": 2, "first_name": "Fixture", "last_name": "Beta", "email": "fixture.beta@example.com"},
 ]
 
 
@@ -647,11 +647,11 @@ class TestTenantsCLI:
     def test_list_with_search(self, runner):
         with patch("cli_anything.propertymeld.http_backend.list_tenants",
                    return_value=MOCK_TENANTS) as mock_fn:
-            result = runner.invoke(cli, ["tenants", "list", "--search", "doe"])
+            result = runner.invoke(cli, ["tenants", "list", "--search", "alpha"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert isinstance(data, list)
-        mock_fn.assert_called_once_with(search="doe", limit=100)
+        mock_fn.assert_called_once_with(search="alpha", limit=100)
 
     def test_get_single_tenant(self, runner):
         with patch("cli_anything.propertymeld.http_backend.get_tenant",
@@ -711,16 +711,16 @@ class TestTenantsCLI:
         assert "Missing option" in result.output
 
 
-# Fixture mirrors the actual /api/tenants/ list shape verified live on
-# 2026-05-23 — flat email + phone at the top level, no nested contact/user.
+# Synthetic fixture covers the /api/tenants/ shape: flat email and phone at
+# the top level, with no nested contact/user.
 _TENANT_FIXTURE = [
-    {"id": 9000026, "first_name": "Resident", "last_name": "Person016",
-     "email": "resident.alpha@example.com", "phone": "(555) 900-0030"},
-    {"id": 9000017, "first_name": "Resident", "last_name": "Person039",
-     "email": "resident.beta@example.com", "phone": "+1 (555) 900-0032"},
-    {"id": 9000024, "first_name": "Resident", "last_name": "Person035",
-     "email": "resident.gamma@example.com", "phone": "(555) 900-0026"},
-    {"id": 9000025, "first_name": "Fixture", "last_name": "Doe",
+    {"id": 9000026, "first_name": "Resident", "last_name": "Alpha",
+     "email": "resident.alpha@example.com", "phone": "(202) 555-0123"},
+    {"id": 9000017, "first_name": "Resident", "last_name": "Beta",
+     "email": "resident.beta@example.com", "phone": "+1 (202) 555-0100"},
+    {"id": 9000024, "first_name": "Resident", "last_name": "Gamma",
+     "email": "resident.gamma@example.com", "phone": "(202) 555-0122"},
+    {"id": 9000025, "first_name": "Resident", "last_name": "Delta",
      "email": "resident.delta@example.com", "phone": None},
 ]
 
@@ -730,7 +730,7 @@ class TestFilterTenants:
 
     def test_single_word_lastname_match(self):
         from cli_anything.propertymeld.http_backend import _filter_tenants
-        out = _filter_tenants(_TENANT_FIXTURE, "Person016")
+        out = _filter_tenants(_TENANT_FIXTURE, "Alpha")
         assert [t["id"] for t in out] == [9000026]
 
     def test_multi_word_name_match(self):
@@ -750,7 +750,7 @@ class TestFilterTenants:
 
     def test_phone_formatted_needle_matches_formatted_stored(self):
         from cli_anything.propertymeld.http_backend import _filter_tenants
-        out = _filter_tenants(_TENANT_FIXTURE, "(555) 900-0030")
+        out = _filter_tenants(_TENANT_FIXTURE, "(202) 555-0123")
         assert [t["id"] for t in out] == [9000026]
 
     def test_phone_digits_only_needle_matches_formatted_stored(self):
@@ -766,7 +766,7 @@ class TestFilterTenants:
     def test_phone_partial_digits_above_floor_matches(self):
         from cli_anything.propertymeld.http_backend import _filter_tenants
         # 7+ digit tail of the stored phone — should still hit.
-        out = _filter_tenants(_TENANT_FIXTURE, "9000030")
+        out = _filter_tenants(_TENANT_FIXTURE, "5550123")
         assert [t["id"] for t in out] == [9000026]
 
     def test_phone_below_digit_floor_does_not_match(self):
@@ -789,25 +789,25 @@ class TestFilterTenants:
 
     def test_phone_match_tolerates_country_code_and_punctuation(self):
         from cli_anything.propertymeld.http_backend import _filter_tenants
-        # Stored: "+1 (555) 900-0032" → digits "15559000032"
-        # Needle digits "5559000032" should be a substring → match.
-        out = _filter_tenants(_TENANT_FIXTURE, "(555) 900-0032")
+        # Stored: "+1 (202) 555-0100" → digits "12025550100"
+        # Needle digits "2025550100" should be a substring → match.
+        out = _filter_tenants(_TENANT_FIXTURE, "(202) 555-0100")
         assert [t["id"] for t in out] == [9000017]
 
     def test_name_query_does_not_accidentally_phone_match(self):
         from cli_anything.propertymeld.http_backend import _filter_tenants
-        # "Person035" has no digits → phone branch skipped → only name/email
+        # "Gamma" has no digits → phone branch skipped → only name/email
         # matching applies. Verifies the no-digits short-circuit.
-        out = _filter_tenants(_TENANT_FIXTURE, "Person035")
+        out = _filter_tenants(_TENANT_FIXTURE, "Gamma")
         assert [t["id"] for t in out] == [9000024]
 
     def test_multi_word_match_tolerates_trailing_whitespace(self):
         from cli_anything.propertymeld.http_backend import _filter_tenants
-        # Real PM data has tenants with trailing-space first_name (e.g.
-        # "Resident " / "Person039"). The combined-name match must collapse
+        # A trailing-space first_name must still match its normalized form.
+        # The combined-name match must collapse
         # internal whitespace so "Resident Beta" still hits.
         fixture = [
-            {"id": 9000011, "first_name": "Resident ", "last_name": "Person039",
+            {"id": 9000011, "first_name": "Resident ", "last_name": "Beta",
              "email": "resident.beta@example.com", "phone": None},
         ]
         out = _filter_tenants(fixture, "Resident Beta")
@@ -817,7 +817,7 @@ class TestFilterTenants:
         from cli_anything.propertymeld.http_backend import _filter_tenants
         # Tenant 9000025 has phone=None. Should not crash, should not
         # match a phone needle.
-        out = _filter_tenants(_TENANT_FIXTURE, "9000026")
+        out = _filter_tenants(_TENANT_FIXTURE, "5550122")
         assert [t["id"] for t in out] == [9000024]
 
 

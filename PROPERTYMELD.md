@@ -41,8 +41,8 @@ Create the vendor and send the portal invite in one manager-side call:
 pm vendors invite \
   --email vendor@example.com \
   --first-name Fixture \
-  --last-name Person035 \
-  --company "Person035 Plumbing" \
+  --last-name Vendor \
+  --company "Fixture Plumbing" \
   --line1 "123 Main St" \
   --postcode 12345 \
   --phone 2025550110
@@ -51,7 +51,7 @@ pm vendors invite \
 Captured request shape:
 
 ```json
-{"email":"vendor@example.com","first_name":"Fixture","last_name":"Person035","name":"Person035 Plumbing","line_1":"123 Main St","state":"","postcode":"12345","phone":"2025550110"}
+{"email":"vendor@example.com","first_name":"Fixture","last_name":"Vendor","name":"Fixture Plumbing","line_1":"123 Main St","state":"","postcode":"12345","phone":"2025550110"}
 ```
 
 PM returns HTTP 400 when the invite email already exists; the CLI surfaces that as `ok: false` with `already_exists` / `already_invited`.
