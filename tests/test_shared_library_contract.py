@@ -299,10 +299,7 @@ def test_private_tenant_and_org_digests_do_not_match_tracked_files():
     assert _tracked_private_digest_matches(repo, set(decoded), salt) == []
 
 
-@pytest.mark.parametrize("salt_value", [None, ""], ids=["unset", "blank"])
-def test_trusted_ci_missing_or_blank_salt_fails_instead_of_skipping(
-    monkeypatch, salt_value
-):
+def _assert_trusted_ci_salt_value_fails(monkeypatch, salt_value):
     if salt_value is None:
         monkeypatch.delenv("PROPERTYMELD_VOCAB_SALT", raising=False)
     else:
@@ -317,6 +314,27 @@ def test_trusted_ci_missing_or_blank_salt_fails_instead_of_skipping(
         assert "PROPERTYMELD_VOCAB_SALT is required" in str(exc)
     else:
         pytest.fail("trusted CI missing-salt path did not fail")
+
+
+def test_trusted_ci_missing_salt_fails_instead_of_skipping(monkeypatch):
+    _assert_trusted_ci_salt_value_fails(monkeypatch, None)
+
+
+def test_trusted_ci_blank_salt_fails_instead_of_skipping(monkeypatch):
+    _assert_trusted_ci_salt_value_fails(monkeypatch, "")
+
+
+def test_local_missing_salt_skips_by_name(monkeypatch):
+    monkeypatch.delenv("PROPERTYMELD_VOCAB_SALT", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+    try:
+        test_private_tenant_and_org_digests_do_not_match_tracked_files()
+    except BaseException as exc:
+        assert isinstance(exc, pytest.skip.Exception)
+        assert "locally" in str(exc)
+    else:
+        pytest.fail("local missing-salt path did not skip")
 
 
 def test_fork_pull_request_missing_salt_skips_by_name(monkeypatch, tmp_path):
@@ -382,6 +400,15 @@ def test_tracked_private_export_path_is_visible_to_custody_census(tmp_path):
     subprocess.run(["git", "add", "-f", str(export.relative_to(tmp_path))], cwd=tmp_path, check=True)
 
     assert _tracked_private_export_paths(tmp_path) == ["private-exports/tenants.json"]
+
+
+def test_tracked_vocab_salt_file_is_visible_to_custody_census(tmp_path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    salt_file = tmp_path / "operator.vocab-salt"
+    salt_file.write_text("not-a-real-salt\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-f", salt_file.name], cwd=tmp_path, check=True)
+
+    assert _tracked_private_export_paths(tmp_path) == ["operator.vocab-salt"]
 
 
 def test_common_english_first_name_is_not_a_digest_subject(tmp_path):
