@@ -62,7 +62,7 @@ Create a tenant on a unit and send the portal invite:
 
 ```bash
 pm tenants invite \
-  --unit-id 1870266 \
+  --unit-id 9000007 \
   --first-name Jane \
   --last-name Resident \
   --email jane@example.com \
@@ -78,7 +78,7 @@ manager UI request sends `units: [<full unit>]`, not a stripped id-only unit.
 Edit tenant contact fields through the manager-side full-echo tenant PUT:
 
 ```bash
-pm tenants edit-contact 4427861 \
+pm tenants edit-contact 9000023 \
   --cell 4235550100 \
   --home 4235550101 \
   --business 4235550102 \

@@ -1,5 +1,6 @@
-import json
 import importlib.util
+import hashlib
+import json
 import os
 import re
 import subprocess
@@ -127,22 +128,25 @@ def _tracked_private_literal_matches(repo: Path, needles: tuple[str, ...]):
 def _tracked_structural_private_matches(repo: Path):
     """Find private-data shapes that do not require a secret vocabulary.
 
-    The numeric structural denominator is five-digit agent/coordinator IDs,
-    the private shape historically present in this corpus. Real IDs of every
-    length come from the authoritative roster/config secret and are checked by
-    ``_tracked_private_literal_matches``. Longer numeric fixtures here are
-    synthetic by construction; a collision with a real ID is still caught by
-    that sourced vocabulary.
+    The numeric structural denominator is every standalone five- through
+    eight-digit token, covering agent/coordinator, meld, unit, vendor, and
+    tenant record IDs in this corpus. Six- through eight-digit fixture IDs must
+    use the reserved 9-prefixed synthetic range. The only classified non-ID
+    tokens are the command limit, synthetic postcode, and two CSS colours.
+    Real IDs of every length are also checked against the authoritative
+    roster/config vocabulary by ``_tracked_private_literal_matches``.
     """
     patterns = (
         re.compile(r"orgs[/]ascendops|Documents[/]AscendOps-Brain", re.IGNORECASE),
         re.compile(r"https?://[^\s\"']*propertymeld\.com/\d+/", re.IGNORECASE),
     )
-    five_digit_token = re.compile(r"(?<![A-Za-z0-9])\d{5}(?![A-Za-z0-9])")
-    # Five-digit literals are IDs unless explicitly classified otherwise.
-    # Today the only non-ID values are a synthetic postcode and the Insights
-    # command limit. New exceptions require a deliberate review here.
-    allowed_non_id_tokens = {"123" + "45", "100" + "00"}
+    numeric_token = re.compile(r"(?<![A-Za-z0-9])\d{5,8}(?![A-Za-z0-9])")
+    allowed_non_id_tokens = {
+        "123" + "45",  # intentionally synthetic postcode
+        "100" + "00",  # Insights command limit
+        "141" + "414", # CSS colour
+        "161" + "616", # CSS colour
+    }
     matches = []
     tracked = subprocess.run(
         ["git", "ls-files", "-z"],
@@ -158,11 +162,12 @@ def _tracked_structural_private_matches(repo: Path):
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, FileNotFoundError):
             continue
-        has_forbidden_five_digit = any(
+        has_forbidden_numeric = any(
             token not in allowed_non_id_tokens
-            for token in five_digit_token.findall(text)
+            and not (len(token) in (6, 7, 8) and token.startswith("9"))
+            for token in numeric_token.findall(text)
         )
-        if any(pattern.search(text) for pattern in patterns) or has_forbidden_five_digit:
+        if any(pattern.search(text) for pattern in patterns) or has_forbidden_numeric:
             matches.append(str(path.relative_to(repo)))
     return matches
 
@@ -178,6 +183,16 @@ def test_private_tenant_and_org_literals_are_absent_from_tracked_files():
     assert isinstance(decoded, list)
     private_literals = tuple(decoded)
     assert private_literals and all(isinstance(item, str) and item for item in private_literals)
+    provenance = (repo / "docs" / "private-literal-secret-provenance.md").read_text(
+        encoding="utf-8"
+    )
+    expected_digest = re.search(
+        r"Vocabulary SHA-256: `([a-f0-9]{64})`", provenance
+    )
+    assert expected_digest, "committed private-vocabulary provenance hash is missing"
+    assert hashlib.sha256(raw.encode("utf-8")).hexdigest() == expected_digest.group(1), (
+        "PROPERTYMELD_PRIVATE_LITERALS is stale or was built from a partial export"
+    )
     assert _tracked_private_literal_matches(repo, private_literals) == []
 
 
@@ -216,6 +231,31 @@ def test_private_vocabulary_is_derived_from_complete_roster_shapes():
         "Tech", "Operator", "Example", "Vendor Example",
         "/private/example/session.json", "Example Property Management", "orgs/example",
     }
+
+
+def test_private_vocabulary_provenance_records_counts_and_digest(tmp_path):
+    repo = Path(__file__).parents[1]
+    script = repo / "scripts" / "build_private_literal_vocabulary.py"
+    spec = importlib.util.spec_from_file_location("private_vocab_provenance", script)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    doc = tmp_path / "provenance.md"
+    doc.write_text(
+        f"before\n{module.PROVENANCE_START}\nold\n{module.PROVENANCE_END}\nafter\n",
+        encoding="utf-8",
+    )
+    vocabulary_json = module.serialize_vocabulary(["Agent Example", "9000001"])
+
+    module.write_provenance(
+        doc, agent_count=10, vendor_count=17, vocabulary_json=vocabulary_json
+    )
+
+    text = doc.read_text(encoding="utf-8")
+    assert "Agent records: `10`" in text
+    assert "Vendor records: `17`" in text
+    assert "Vocabulary entries: `2`" in text
+    assert hashlib.sha256(vocabulary_json.encode()).hexdigest() in text
 
 
 def test_supported_untracked_config_is_outside_source_census(tmp_path):

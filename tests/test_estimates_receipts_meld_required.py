@@ -47,8 +47,8 @@ class TestListEstimatesMeldRequired:
             return {"results": [{"id": 9001, "amount": "123.45"}]}
 
         monkeypatch.setattr(hb, "_http_get", fake_http_get)
-        result = hb.list_estimates(meld_id="12701108", limit=50)
-        assert captured["path"] == "estimates/meld/12701108/?limit=50"
+        result = hb.list_estimates(meld_id="90000001", limit=50)
+        assert captured["path"] == "estimates/meld/90000001/?limit=50"
         assert isinstance(result, list)
         assert result[0]["id"] == 9001
 
@@ -61,18 +61,18 @@ class TestListEstimatesMeldRequired:
             return []
 
         monkeypatch.setattr(hb, "_http_get", fake_http_get)
-        hb.list_estimates(meld_id="12701108", limit=25, status="issued")
-        assert captured["path"] == "estimates/meld/12701108/?limit=25&status=issued"
+        hb.list_estimates(meld_id="90000001", limit=25, status="issued")
+        assert captured["path"] == "estimates/meld/90000001/?limit=25&status=issued"
 
     def test_meld_scoped_paginates_next_until_limit(self, monkeypatch):
         _patch_creds(monkeypatch)
         calls = []
         pages = {
-            "estimates/meld/12701108/?limit=3": {
+            "estimates/meld/90000001/?limit=3": {
                 "results": [{"id": 9001}, {"id": 9002}],
-                "next": "https://app.propertymeld.test/1000/m/1000/api/estimates/meld/12701108/?cursor=abc&limit=100",
+                "next": "https://app.propertymeld.test/1000/m/1000/api/estimates/meld/90000001/?cursor=abc&limit=100",
             },
-            "estimates/meld/12701108/?cursor=abc&limit=100": {
+            "estimates/meld/90000001/?cursor=abc&limit=100": {
                 "results": [{"id": 9003}],
                 "next": None,
             },
@@ -83,27 +83,27 @@ class TestListEstimatesMeldRequired:
             return pages[path]
 
         monkeypatch.setattr(hb, "_http_get", fake_http_get)
-        result = hb.list_estimates(meld_id="12701108", limit=3)
+        result = hb.list_estimates(meld_id="90000001", limit=3)
 
         assert [r["id"] for r in result] == [9001, 9002, 9003]
         assert calls == [
-            "estimates/meld/12701108/?limit=3",
-            "estimates/meld/12701108/?cursor=abc&limit=100",
+            "estimates/meld/90000001/?limit=3",
+            "estimates/meld/90000001/?cursor=abc&limit=100",
         ]
 
     def test_meld_scoped_stops_fetching_once_limit_collected(self, monkeypatch):
         _patch_creds(monkeypatch)
         calls = []
         pages = {
-            "estimates/meld/12701108/?limit=100": {
+            "estimates/meld/90000001/?limit=100": {
                 "results": [{"id": i} for i in range(9000, 9100)],
-                "next": "https://app.propertymeld.test/1000/m/1000/api/estimates/meld/12701108/?cursor=page2&limit=100",
+                "next": "https://app.propertymeld.test/1000/m/1000/api/estimates/meld/90000001/?cursor=page2&limit=100",
             },
-            "estimates/meld/12701108/?cursor=page2&limit=100": {
+            "estimates/meld/90000001/?cursor=page2&limit=100": {
                 "results": [{"id": i} for i in range(9100, 9200)],
-                "next": "https://app.propertymeld.test/1000/m/1000/api/estimates/meld/12701108/?cursor=page3&limit=100",
+                "next": "https://app.propertymeld.test/1000/m/1000/api/estimates/meld/90000001/?cursor=page3&limit=100",
             },
-            "estimates/meld/12701108/?cursor=page3&limit=100": {
+            "estimates/meld/90000001/?cursor=page3&limit=100": {
                 "results": [{"id": i} for i in range(9200, 9300)],
                 "next": None,
             },
@@ -114,24 +114,24 @@ class TestListEstimatesMeldRequired:
             return pages[path]
 
         monkeypatch.setattr(hb, "_http_get", fake_http_get)
-        result = hb.list_estimates(meld_id="12701108", limit=150)
+        result = hb.list_estimates(meld_id="90000001", limit=150)
 
         assert len(result) == 150
         assert [r["id"] for r in result[:2]] == [9000, 9001]
         assert calls == [
-            "estimates/meld/12701108/?limit=100",
-            "estimates/meld/12701108/?cursor=page2&limit=100",
+            "estimates/meld/90000001/?limit=100",
+            "estimates/meld/90000001/?cursor=page2&limit=100",
         ]
 
     def test_meld_scoped_limit_zero_fetches_all(self, monkeypatch):
         _patch_creds(monkeypatch)
         calls = []
         pages = {
-            "estimates/meld/12701108/?limit=100": {
+            "estimates/meld/90000001/?limit=100": {
                 "results": [{"id": 1}],
-                "next": "https://app.propertymeld.test/1000/m/1000/api/estimates/meld/12701108/?cursor=page2&limit=100",
+                "next": "https://app.propertymeld.test/1000/m/1000/api/estimates/meld/90000001/?cursor=page2&limit=100",
             },
-            "estimates/meld/12701108/?cursor=page2&limit=100": {
+            "estimates/meld/90000001/?cursor=page2&limit=100": {
                 "results": [{"id": 2}],
                 "next": None,
             },
@@ -142,12 +142,12 @@ class TestListEstimatesMeldRequired:
             return pages[path]
 
         monkeypatch.setattr(hb, "_http_get", fake_http_get)
-        result = hb.list_estimates(meld_id="12701108", limit=0)
+        result = hb.list_estimates(meld_id="90000001", limit=0)
 
         assert [r["id"] for r in result] == [1, 2]
         assert calls == [
-            "estimates/meld/12701108/?limit=100",
-            "estimates/meld/12701108/?cursor=page2&limit=100",
+            "estimates/meld/90000001/?limit=100",
+            "estimates/meld/90000001/?cursor=page2&limit=100",
         ]
 
 
@@ -176,8 +176,8 @@ class TestListReceiptsMeldRequired:
             return [{"id": 5001, "amount": "67.89"}]
 
         monkeypatch.setattr(hb, "_http_get", fake_http_get)
-        result = hb.list_receipts(meld_id="12701108", limit=10)
-        assert captured["path"] == "melds/12701108/receipts/"
+        result = hb.list_receipts(meld_id="90000001", limit=10)
+        assert captured["path"] == "melds/90000001/receipts/"
         assert isinstance(result, list)
         assert result[0]["id"] == 5001
 

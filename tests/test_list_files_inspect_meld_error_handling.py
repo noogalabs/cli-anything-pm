@@ -74,7 +74,7 @@ FILES_PAGE = {
 }
 
 MELD_DETAIL = {
-    "id": 12701108,
+    "id": 90000001,
     "completion_notes": "done",
     "maintenance_notes": "n/a",
 }
@@ -96,7 +96,7 @@ class TestListFilesErrorHandling:
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
 
         with pytest.raises(SystemExit) as exc:
-            hb.list_files("12701108")
+            hb.list_files("90000001")
         assert exc.value.code == 1
         err = capsys.readouterr().err
         payload = json.loads(err.strip().splitlines()[-1])
@@ -113,7 +113,7 @@ class TestListFilesErrorHandling:
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
 
         with pytest.raises(SystemExit) as exc:
-            hb.list_files("12701108")
+            hb.list_files("90000001")
         assert exc.value.code == 1
         err = capsys.readouterr().err
         payload = json.loads(err.strip().splitlines()[-1])
@@ -132,7 +132,7 @@ class TestListFilesErrorHandling:
             return _FakeResp(json.dumps({"count": 0, "next": None, "results": []}).encode())
 
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
-        result = hb.list_files("12701108")
+        result = hb.list_files("90000001")
         assert isinstance(result, list)
         assert any(f.get("filename") == "before.jpg" for f in result)
         assert all(f.get("uploader_role") in ("manager", "tenant", "vendor") for f in result)
@@ -153,7 +153,7 @@ class TestInspectMeldErrorHandling:
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
 
         with pytest.raises(SystemExit) as exc:
-            hb.inspect_meld("12701108")
+            hb.inspect_meld("90000001")
         assert exc.value.code == 1
         err = capsys.readouterr().err
         payload = json.loads(err.strip().splitlines()[-1])
@@ -169,7 +169,7 @@ class TestInspectMeldErrorHandling:
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
 
         with pytest.raises(SystemExit) as exc:
-            hb.inspect_meld("12701108")
+            hb.inspect_meld("90000001")
         assert exc.value.code == 1
         err = capsys.readouterr().err
         payload = json.loads(err.strip().splitlines()[-1])
@@ -182,15 +182,15 @@ class TestInspectMeldErrorHandling:
 
         def fake_urlopen(req, **kw):
             url = req.full_url
-            if url.endswith("/melds/12701108/") or "/melds/12701108/?" in url:
+            if url.endswith("/melds/90000001/") or "/melds/90000001/?" in url:
                 return _FakeResp(json.dumps(MELD_DETAIL).encode())
             # All list endpoints (files, tenant-files, vendor-files,
             # work-entries, comments) return empty paginated pages.
             return _FakeResp(json.dumps({"count": 0, "next": None, "results": []}).encode())
 
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
-        result = hb.inspect_meld("12701108")
-        assert result["meld"]["id"] == 12701108
+        result = hb.inspect_meld("90000001")
+        assert result["meld"]["id"] == 90000001
         assert result["notes"]["completion_notes"] == "done"
         assert result["photos"]["manager"] == []
 
@@ -209,7 +209,7 @@ class TestInspectMeldErrorHandling:
                 raise _http_error(url, 401, b'{"detail": "auth"}')
             # Everything else (meld detail, manager files, work-entries,
             # comments) returns valid empty/detail JSON.
-            if "/melds/12701108/" in url and "files" not in url and "work" not in url:
+            if "/melds/90000001/" in url and "files" not in url and "work" not in url:
                 return _FakeResp(json.dumps(MELD_DETAIL).encode())
             return _FakeResp(json.dumps({"count": 0, "next": None, "results": []}).encode())
 
@@ -219,7 +219,7 @@ class TestInspectMeldErrorHandling:
         monkeypatch.setattr(hb, "_attempt_recapture", lambda: False)
 
         with pytest.raises(SystemExit) as exc:
-            hb.inspect_meld("12701108")
+            hb.inspect_meld("90000001")
         assert exc.value.code == 1
         # Last stderr line must parse as JSON (structured envelope, no traceback).
         err = capsys.readouterr().err
@@ -240,7 +240,7 @@ class TestInspectMeldErrorHandling:
             url = req.full_url
             if ("tenant-files" in url or "vendor-files" in url) and not state["recaptured"]:
                 raise _http_error(url, 401, b'{"detail": "auth"}')
-            if "/melds/12701108/" in url and "files" not in url and "work" not in url:
+            if "/melds/90000001/" in url and "files" not in url and "work" not in url:
                 return _FakeResp(json.dumps(MELD_DETAIL).encode())
             return _FakeResp(json.dumps({"count": 0, "next": None, "results": []}).encode())
 
@@ -252,8 +252,8 @@ class TestInspectMeldErrorHandling:
         # Recapture succeeds (no real Playwright); decorator re-invokes the call.
         monkeypatch.setattr(hb, "_attempt_recapture", fake_recapture)
 
-        result = hb.inspect_meld("12701108")
-        assert result["meld"]["id"] == 12701108
+        result = hb.inspect_meld("90000001")
+        assert result["meld"]["id"] == 90000001
         assert result["photos"]["tenant"] == []
         assert result["photos"]["vendor"] == []
 
@@ -281,7 +281,7 @@ class TestOptionalResultsDowngrade:
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
 
         items, note = hb._http_get_optional_results(
-            "melds/12701108/tenant-files/?limit=100", "sessionid=fake", "tenant"
+            "melds/90000001/tenant-files/?limit=100", "sessionid=fake", "tenant"
         )
         assert items == []
         assert note is not None
@@ -302,7 +302,7 @@ class TestOptionalResultsDowngrade:
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
 
         items, note = hb._http_get_optional_results(
-            "melds/12701108/vendor-files/?limit=100", "sessionid=fake", "vendor"
+            "melds/90000001/vendor-files/?limit=100", "sessionid=fake", "vendor"
         )
         assert items == []
         assert note is not None
@@ -318,7 +318,7 @@ class TestOptionalResultsDowngrade:
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
 
         items, note = hb._http_get_optional_results(
-            "melds/12701108/tenant-files/?limit=100", "sessionid=fake", "tenant"
+            "melds/90000001/tenant-files/?limit=100", "sessionid=fake", "tenant"
         )
         assert items == []
         assert note is not None
@@ -337,7 +337,7 @@ class TestOptionalResultsDowngrade:
 
         with pytest.raises(SystemExit) as exc:
             hb._http_get_optional_results(
-                "melds/12701108/vendor-files/?limit=100", "sessionid=fake", "vendor"
+                "melds/90000001/vendor-files/?limit=100", "sessionid=fake", "vendor"
             )
         assert exc.value.code == 1
 
@@ -360,7 +360,7 @@ class TestOptionalResultsDowngrade:
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
 
         items, note = hb._http_get_optional_results(
-            "melds/12701108/tenant-files/?limit=100", "sessionid=fake", "tenant"
+            "melds/90000001/tenant-files/?limit=100", "sessionid=fake", "tenant"
         )
         assert items == []
         assert note is not None
@@ -380,7 +380,7 @@ class TestOptionalResultsDowngrade:
 
         with pytest.raises(SystemExit) as exc:
             hb._http_get_optional_results(
-                "melds/12701108/vendor-files/?limit=100", "sessionid=fake", "vendor"
+                "melds/90000001/vendor-files/?limit=100", "sessionid=fake", "vendor"
             )
         assert exc.value.code == 1
 
@@ -400,7 +400,7 @@ class TestOptionalResultsDowngrade:
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
 
         items, note = hb._http_get_optional_results(
-            "melds/12701108/tenant-files/?limit=100", "sessionid=fake", "tenant"
+            "melds/90000001/tenant-files/?limit=100", "sessionid=fake", "tenant"
         )
         assert items == []
         assert note is not None
@@ -424,7 +424,7 @@ class TestOptionalResultsDowngrade:
 
         with pytest.raises(SystemExit) as exc:
             hb._http_get_optional_results(
-                "melds/12701108/vendor-files/?limit=100", "sessionid=fake", "vendor"
+                "melds/90000001/vendor-files/?limit=100", "sessionid=fake", "vendor"
             )
         assert exc.value.code == 1
 
@@ -441,7 +441,7 @@ class TestOptionalResultsDowngrade:
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
 
         items, note = hb._http_get_optional_results(
-            "melds/12701108/vendor-files/?limit=100", "sessionid=fake", "vendor"
+            "melds/90000001/vendor-files/?limit=100", "sessionid=fake", "vendor"
         )
         assert items == []
         assert note is not None
@@ -457,7 +457,7 @@ class TestOptionalResultsDowngrade:
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
 
         items, note = hb._http_get_optional_results(
-            "melds/12701108/tenant-files/?limit=100", "sessionid=fake", "tenant"
+            "melds/90000001/tenant-files/?limit=100", "sessionid=fake", "tenant"
         )
         assert note is None
         assert any(f.get("filename") == "before.jpg" for f in items)
@@ -582,7 +582,7 @@ class TestStatusContextThroughOptionalPath:
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
 
         items, note = hb._http_get_optional_results(
-            "melds/12701108/tenant-files/?limit=100", "sessionid=fake", "tenant"
+            "melds/90000001/tenant-files/?limit=100", "sessionid=fake", "tenant"
         )
         assert items == []
         assert note is not None
@@ -603,7 +603,7 @@ class TestStatusContextThroughOptionalPath:
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
 
         items, note = hb._http_get_optional_results(
-            "melds/12701108/tenant-files/?limit=100", "sessionid=fake", "tenant"
+            "melds/90000001/tenant-files/?limit=100", "sessionid=fake", "tenant"
         )
         assert items == []
         assert note is not None
@@ -627,7 +627,7 @@ class TestStatusContextThroughOptionalPath:
 
         with pytest.raises(SystemExit) as exc:
             hb._http_get_optional_results(
-                "melds/12701108/vendor-files/?limit=100", "sessionid=fake", "vendor"
+                "melds/90000001/vendor-files/?limit=100", "sessionid=fake", "vendor"
             )
         assert exc.value.code == 1
 
@@ -646,7 +646,7 @@ class TestStatusContextThroughOptionalPath:
 
         with pytest.raises(SystemExit) as exc:
             hb._http_get_optional_results(
-                "melds/12701108/vendor-files/?limit=100", "sessionid=fake", "vendor"
+                "melds/90000001/vendor-files/?limit=100", "sessionid=fake", "vendor"
             )
         assert exc.value.code == 1
 
@@ -661,7 +661,7 @@ class TestStatusContextThroughOptionalPath:
 
         with pytest.raises(SystemExit) as exc:
             hb._http_get_optional_results(
-                "melds/12701108/vendor-files/?limit=100", "sessionid=fake", "vendor"
+                "melds/90000001/vendor-files/?limit=100", "sessionid=fake", "vendor"
             )
         assert exc.value.code == 1
 
@@ -678,7 +678,7 @@ class TestRequiredVsOptionalSplit:
 
         def fake_urlopen(req, **kw):
             url = req.full_url
-            if url.endswith("/melds/12701108/") or "/melds/12701108/?" in url:
+            if url.endswith("/melds/90000001/") or "/melds/90000001/?" in url:
                 return _FakeResp(json.dumps(MELD_DETAIL).encode())
             if "tenant-files" in url or "vendor-files" in url:
                 # OPTIONAL path: forbidden interstitial served as HTTP 200.
@@ -688,8 +688,8 @@ class TestRequiredVsOptionalSplit:
 
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
 
-        result = hb.inspect_meld("12701108")
-        assert result["meld"]["id"] == 12701108
+        result = hb.inspect_meld("90000001")
+        assert result["meld"]["id"] == 90000001
         assert result["photos"]["tenant"] == []
         assert result["photos"]["vendor"] == []
 
@@ -705,5 +705,5 @@ class TestRequiredVsOptionalSplit:
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
 
         with pytest.raises(SystemExit) as exc:
-            hb.list_files("12701108")
+            hb.list_files("90000001")
         assert exc.value.code == 1

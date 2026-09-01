@@ -48,7 +48,7 @@ class TestExitNonZeroOnBackendFailure:
                    return_value={"ok": False,
                                  "error": "No in-house tech assignment found on this meld"}):
             result = runner.invoke(cli, ["work-orders", "schedule",
-                                         "--meld-id", "12701108",
+                                         "--meld-id", "90000001",
                                          "--dtstart", "2026-04-27T14:00:00-04:00",
                                          "--hours", "3"])
         assert result.exit_code == 1, result.output
@@ -60,9 +60,9 @@ class TestExitNonZeroOnBackendFailure:
         from unittest.mock import patch
         with patch("cli_anything.propertymeld.http_backend.force_pending_completion",
                    return_value={"ok": False,
-                                 "error": "meld 12701108 is PENDING_COMPLETION"}):
+                                 "error": "meld 90000001 is PENDING_COMPLETION"}):
             result = runner.invoke(cli, ["work-orders", "force-pending-completion",
-                                         "--meld-id", "12701108"])
+                                         "--meld-id", "90000001"])
         assert result.exit_code == 1, result.output
         assert json.loads(result.output)["ok"] is False
 
@@ -74,7 +74,7 @@ class TestExitNonZeroOnBackendFailure:
                    return_value={"ok": False,
                                  "error": "No vendor appointment found on this meld"}):
             result = runner.invoke(cli, ["work-orders", "schedule-vendor",
-                                         "--meld-id", "12701108",
+                                         "--meld-id", "90000001",
                                          "--vendor-id", "10",
                                          "--dtstart", "2026-05-06T14:00:00-04:00",
                                          "--hours", "3"])
@@ -88,7 +88,7 @@ class TestExitNonZeroOnBackendFailure:
         with patch("cli_anything.propertymeld.http_backend.add_melds_to_project",
                    return_value={"ok": False, "error": "no meld_ids provided"}):
             result = runner.invoke(cli, ["projects", "add-melds",
-                                         "222959", "12772756"])
+                                         "900005", "90000005"])
         assert result.exit_code == 1, result.output
         assert json.loads(result.output)["ok"] is False
 
@@ -99,7 +99,7 @@ class TestExitNonZeroOnBackendFailure:
         with patch("cli_anything.propertymeld.http_backend.update_project",
                    return_value={"ok": False,
                                  "error": "could not fetch current project state"}):
-            result = runner.invoke(cli, ["projects", "edit", "222969",
+            result = runner.invoke(cli, ["projects", "edit", "900008",
                                          "--name", "Renamed"])
         assert result.exit_code == 1, result.output
         assert json.loads(result.output)["ok"] is False

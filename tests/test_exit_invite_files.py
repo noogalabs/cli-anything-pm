@@ -48,7 +48,7 @@ class TestExitNonZeroOnBackendFailure:
                    return_value={"ok": False, "error": "tenant invite failed"}) as mock_fn:
             result = runner.invoke(cli, [
                 "tenants", "invite",
-                "--unit-id", "1870266",
+                "--unit-id", "9000007",
                 "--first-name", "Alex",
                 "--last-name", "Example",
                 "--email", "alex@example.com",
@@ -86,7 +86,7 @@ class TestExitNonZeroOnBackendFailure:
                    return_value={"ok": False, "error": "File not found"}) as mock_fn:
             result = runner.invoke(cli, [
                 "receipts", "upload",
-                "--meld-id", "12701108",
+                "--meld-id", "90000001",
                 "--file", str(receipt_file),
             ])
         assert result.exit_code == 1, result.output
@@ -102,7 +102,7 @@ class TestExitNonZeroOnBackendFailure:
                    return_value={"ok": False, "error": "Unknown uploader_role"}) as mock_fn:
             result = runner.invoke(cli, [
                 "work-orders", "upload-file",
-                "12701108", str(upload_file),
+                "90000001", str(upload_file),
                 "--as", "manager",
             ])
         assert result.exit_code == 1, result.output

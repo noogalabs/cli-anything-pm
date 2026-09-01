@@ -37,10 +37,10 @@ def runner():
     return CliRunner()
 
 
-# Blue's safe fixture from the architect doc: TKG5XYM = meld_id 12774440,
+# Blue's safe fixture from the architect doc: TKG5XYM = meld_id 90000009,
 # tenant-less + already COMPLETED so it can't disrupt active work.
-MELD_ID = "12774440"
-ENTRY_ID = 3177515
+MELD_ID = "90000009"
+ENTRY_ID = 9000010
 AGENT_ID_SYNTHETIC = 5015
 
 

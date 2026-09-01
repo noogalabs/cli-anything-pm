@@ -41,7 +41,7 @@ def runner():
     return CliRunner()
 
 
-MELD_ID = "12701108"
+MELD_ID = "90000001"
 
 
 class TestAssignTechExitsNonZeroOnFailure:
@@ -99,9 +99,9 @@ class TestSetCoordinatorExitsNonZeroOnFailure:
             result = runner.invoke(cli, [
                 "work-orders", "set-coordinator",
                 "--meld-id", MELD_ID,
-                "--user-id", "9999999",
+                "--user-id", "9000031",
             ])
         assert result.exit_code == 1, result.output
         data = json.loads(result.output)
         assert data["ok"] is False
-        mock_fn.assert_called_once_with(MELD_ID, 9999999)
+        mock_fn.assert_called_once_with(MELD_ID, 9000031)

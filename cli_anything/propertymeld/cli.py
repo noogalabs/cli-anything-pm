@@ -4,13 +4,13 @@ Routes read commands to Nexus API backend; write/browser-session commands to htt
 
 Usage:
     pm work-orders list --status open --json
-    pm work-orders get 123456 --json
-    pm work-orders comments 123456 --json
-    pm work-orders send-message --meld-id 123456 --text "Heading over now"
-    pm work-orders clone --meld-id 123456
+    pm work-orders get 900001 --json
+    pm work-orders comments 900001 --json
+    pm work-orders send-message --meld-id 900001 --text "Heading over now"
+    pm work-orders clone --meld-id 900001
     pm properties list --json
     pm vendors list --json
-    pm work-orders assign-tech --work-order-id 123456 --tech Tech A --json
+    pm work-orders assign-tech --work-order-id 900001 --tech Tech A --json
 """
 import json
 import sys
@@ -248,7 +248,7 @@ def get_files(meld_id, as_json):
 class _WorkEntriesGroup(click.Group):
     """Routes the legacy positional invocation `work-entries <meld_id>` to `list <meld_id>`.
 
-    Before this sub-group refactor, `pm work-orders work-entries 12701108`
+    Before this sub-group refactor, `pm work-orders work-entries 90000001`
     listed entries directly. Codex review of PR #7 flagged that the new
     group rejects that shape with "No such command". Keep back-compat by
     falling through to `list` when the first arg is not a known
@@ -520,7 +520,7 @@ def merge_meld(destination_id, source_ids, meld_id, into_meld_id, as_json):
     if not destination_id or not source_ids:
         raise click.UsageError(
             "merge requires --destination + --source (or legacy --meld-id + --into). "
-            "Example: pm work-orders merge --destination 12819946 --source 12820134"
+            "Example: pm work-orders merge --destination 90000013 --source 90000014"
         )
 
     destination_id = _normalize_meld_id(destination_id)
@@ -641,7 +641,7 @@ def edit_unit_notes_cmd(unit_id, notes, as_json):
     PATCH /api/units/{unit_id}/ — verified shape from pm-capture 2026-05-14.
 
     Example:
-      pm units edit-notes 1754419 --notes "Water shut-off in basement near furnace"
+      pm units edit-notes 9000006 --notes "Water shut-off in basement near furnace"
     """
     result = http_backend.update_unit_notes(unit_id, notes)
     output_json(result)
@@ -661,7 +661,7 @@ def resolve_unit_cmd(property_ref, unit_address, as_json):
     picks. Single-unit properties resolve confidently regardless of label.
 
     Examples:
-      pm units resolve --property 1646329 --unit-address "Unit A"
+      pm units resolve --property 9000002 --unit-address "Unit A"
       pm units resolve --property "1098 N Hawthorne" --unit-address "Apt 12"
     """
     result = http_backend.resolve_unit_pk(property_ref, unit_address)
@@ -679,7 +679,7 @@ def list_units_by_property_cmd(property_ref, as_json):
     truncated list can never mislead.
 
     Example:
-      pm units list-by-property 1646329
+      pm units list-by-property 9000002
       pm units list-by-property "1098 N Hawthorne"
     """
     result = http_backend.list_units_by_property(property_ref)
@@ -696,7 +696,7 @@ def get_unit_by_address_cmd(property_ref, unit_address, as_json):
     confident single match; otherwise the same disambiguation payload as resolve.
 
     Example:
-      pm units get-by-address --property 1646329 --unit-address "Unit A"
+      pm units get-by-address --property 9000002 --unit-address "Unit A"
     """
     result = http_backend.get_unit_by_address(property_ref, unit_address)
     output_json(result)
@@ -784,7 +784,7 @@ def edit_tenant_notes_cmd(tenant_id, notes, as_json):
     roundtrip). Verified shape from pm-tenant-notes-endpoint-capture-2026-05-18.
 
     Example:
-      pm tenants edit-notes 4043079 --notes "Schedule access after 3pm weekdays; husband home during day"
+      pm tenants edit-notes 9000016 --notes "Schedule access after 3pm weekdays; husband home during day"
     """
     result = http_backend.update_tenant_notes(tenant_id, notes)
     output_json(result)
@@ -1187,7 +1187,7 @@ def get_project(project_id, as_json):
 def add_melds_to_project_cmd(project_id, meld_ids, as_json):
     """Attach one or more existing melds to a project.
 
-    Example: pm projects add-melds 222959 12772756 12772757
+    Example: pm projects add-melds 900005 90000005 90000006
     """
     result = http_backend.add_melds_to_project(project_id, list(meld_ids))
     output_json(result)
@@ -1234,8 +1234,8 @@ def create_meld_in_project_cmd(
     ManagementAgent objects. Two paths:
 
     \b
-    - Ergonomic: --unit-id 1870266 --maintenance-id 5011 (repeatable)
-      --tenant-id 4010708 (repeatable)
+    - Ergonomic: --unit-id 9000007 --maintenance-id 5011 (repeatable)
+      --tenant-id 9000014 (repeatable)
       → CLI auto-hydrates via GET /units/{id}/ and GET /agents/{id}/.
     - Power-user: --unit-json '<full obj>' --maintenance-json '<full list>'
       → passed through; must include nested fields or backend raises ValueError.
@@ -1439,7 +1439,7 @@ def link_tenant_cmd(meld_id, tenant_id, as_json):
     the meld, returns already_linked=True without modifying.
 
     Example:
-      pm work-orders link-tenant 12791190 4010708
+      pm work-orders link-tenant 90000011 9000014
     """
     meld_id = _normalize_meld_id(meld_id)
     result = http_backend.link_tenant_to_meld(meld_id, tenant_id)

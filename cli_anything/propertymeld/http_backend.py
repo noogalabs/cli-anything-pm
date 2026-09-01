@@ -1964,7 +1964,7 @@ def schedule_appointment(meld_id: str, dtstart: str, duration_hours: float = 2.0
     management_availability_segments list.
 
     Root cause of the prior HTTP 500 (diagnosed live 2026-06-03, demo
-    fixture meld 12937555): the old flow PUT an `availability_segment`
+    fixture meld 90000018): the old flow PUT an `availability_segment`
     payload to `management-appointments/{appt_id}/schedule/`. That endpoint
     is a SELECT-from-existing action — it has no availability segment to
     bind and the server-side handler 500s (null deref) for EVERY payload
@@ -2250,7 +2250,7 @@ def update_tenant_notes(tenant_id, notes: str) -> dict:
 
     Endpoint: PATCH /api/tenants/{tenant_id}/ with the FULL tenant body, mutating
     only `notes`. Verified shape from pm-tenant-notes-endpoint-capture-2026-05-18
-    (HAR capture against tenant 4043079, status 200, round-trip-reverted).
+    (HAR capture against tenant 9000016, status 200, round-trip-reverted).
 
     The endpoint is NOT thin-patch — `{"notes": "..."}` alone returns 400 because
     validators run on `first_name` / `last_name` even when not changed. We GET
@@ -2566,7 +2566,7 @@ def assign_vendor_by_name(meld_id: str, vendor_name: str, account_prefix: str = 
 
 
 # ── int-PK guard ──────────────────────────────────────────────────────────────
-# PM API endpoints expect the integer PK (e.g. 12701108), not the human-facing
+# PM API endpoints expect the integer PK (e.g. 90000001), not the human-facing
 # short code (e.g. 'T5LKWTDB'). Passing a short code returns HTTP 404 because the
 # Django URL pattern is <int:pk>. This guard catches the mismatch at the SDK
 # boundary instead of at the API boundary, so the error is actionable. Applied
@@ -2582,7 +2582,7 @@ def _validate_meld_id(meld_id) -> int:
         return int(meld_id)
     except (TypeError, ValueError):
         raise ValueError(
-            f"meld_id must be the integer PK (e.g. 12701108), got {meld_id!r}. "
+            f"meld_id must be the integer PK (e.g. 90000001), got {meld_id!r}. "
             f"PM short codes (e.g. 'T5LKWTDB') are not accepted; use 'pm work-orders list' to find the int PK."
         )
 
@@ -2947,7 +2947,7 @@ def get_unit(unit_id) -> dict:
 #   GET /api/properties/{id}/            -> property object, EMBEDS units[]
 #   GET /api/properties/?limit=N         -> {count,next,previous,results[]}, each
 #                                           property EMBEDS units[]
-#   unit PK field:    units[].id  (int, e.g. 1754320)
+#   unit PK field:    units[].id  (int, e.g. 9000004)
 #   unit label field: units[].unit (str) + apartment/building/floor/suite/room
 # The list endpoints do NOT honour server-side filters (prop=, search=,
 # property_name= are all ignored — count is unchanged), so property-by-name
