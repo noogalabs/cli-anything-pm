@@ -299,8 +299,14 @@ def test_private_tenant_and_org_digests_do_not_match_tracked_files():
     assert _tracked_private_digest_matches(repo, set(decoded), salt) == []
 
 
-def test_trusted_ci_missing_salt_fails_instead_of_skipping(monkeypatch):
-    monkeypatch.delenv("PROPERTYMELD_VOCAB_SALT", raising=False)
+@pytest.mark.parametrize("salt_value", [None, ""], ids=["unset", "blank"])
+def test_trusted_ci_missing_or_blank_salt_fails_instead_of_skipping(
+    monkeypatch, salt_value
+):
+    if salt_value is None:
+        monkeypatch.delenv("PROPERTYMELD_VOCAB_SALT", raising=False)
+    else:
+        monkeypatch.setenv("PROPERTYMELD_VOCAB_SALT", salt_value)
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
 
