@@ -49,10 +49,10 @@ Get API credentials from: Property Meld > Settings > API / Nexus API
 ```bash
 pm probe                                     # Verify setup
 pm work-orders list --status open --json    # List open work orders
-pm work-orders get 12345 --json             # Single work order
-pm work-orders comments 12345 --json        # Comments (browser)
-pm work-orders assign-tech --work-order-id 12345 --tech Person021 --json
-pm work-orders assign-vendor --work-order-id 12345 --vendor "Example HVAC" --json
+pm work-orders get 123456 --json             # Single work order
+pm work-orders comments 123456 --json        # Comments (browser)
+pm work-orders assign-tech --work-order-id 123456 --tech Tech A --json
+pm work-orders assign-vendor --work-order-id 123456 --vendor "Example HVAC" --json
 pm vendors invite --email vendor@example.com --first-name Fixture --last-name Person035 --company "Person035 Plumbing" --line1 "123 Main St" --postcode 37421 --phone 2025550110
 pm tenants invite --unit-id 9000005 --first-name Fixture --last-name Resident --email fixture.alpha@example.com --cell 2025550110
 pm tenants edit-contact 9000020 --cell 2025550110 --primary-email tenant@example.com

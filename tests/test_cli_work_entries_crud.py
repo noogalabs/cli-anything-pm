@@ -41,7 +41,7 @@ def runner():
 # tenant-less + already COMPLETED so it can't disrupt active work.
 MELD_ID = "12774440"
 ENTRY_ID = 3177515
-AGENT_ID_DAVID = 90025
+AGENT_ID_SYNTHETIC = 5015
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -60,7 +60,7 @@ class TestWorkEntriesCreateCLI:
             result = runner.invoke(cli, [
                 "work-orders", "work-entries", "create",
                 "--meld-id", MELD_ID,
-                "--agent-id", str(AGENT_ID_DAVID),
+                "--agent-id", str(AGENT_ID_SYNTHETIC),
                 "--description", "test entry",
             ])
         assert result.exit_code == 0, result.output
@@ -69,7 +69,7 @@ class TestWorkEntriesCreateCLI:
         assert data["entry_id"] == ENTRY_ID
         mock_fn.assert_called_once_with(
             MELD_ID,
-            agent=AGENT_ID_DAVID,
+            agent=AGENT_ID_SYNTHETIC,
             description="test entry",
             long_description="",
             checkin=None,
@@ -87,7 +87,7 @@ class TestWorkEntriesCreateCLI:
             result = runner.invoke(cli, [
                 "work-orders", "work-entries", "create",
                 "--meld-id", MELD_ID,
-                "--agent-id", str(AGENT_ID_DAVID),
+                "--agent-id", str(AGENT_ID_SYNTHETIC),
                 "--description", "full body",
                 "--long-description", "longer notes here",
                 "--checkin", "2026-05-18T09:00:00-04:00",
@@ -97,7 +97,7 @@ class TestWorkEntriesCreateCLI:
         assert result.exit_code == 0, result.output
         mock_fn.assert_called_once_with(
             MELD_ID,
-            agent=AGENT_ID_DAVID,
+            agent=AGENT_ID_SYNTHETIC,
             description="full body",
             long_description="longer notes here",
             checkin="2026-05-18T09:00:00-04:00",
@@ -126,7 +126,7 @@ class TestWorkEntriesCreateCLI:
             result = runner.invoke(cli, [
                 "work-orders", "work-entries", "create",
                 "--meld-id", MELD_ID,
-                "--agent-id", str(AGENT_ID_DAVID),
+                "--agent-id", str(AGENT_ID_SYNTHETIC),
             ])
         assert result.exit_code != 0
         assert "description" in result.output.lower()
@@ -190,7 +190,7 @@ class TestWorkEntriesUpdateCLI:
                 "work-orders", "work-entries", "update", str(ENTRY_ID),
                 "--description", "new desc",
                 "--hours", "2.25",
-                "--agent-id", str(AGENT_ID_DAVID),
+                "--agent-id", str(AGENT_ID_SYNTHETIC),
             ])
         assert result.exit_code == 0, result.output
         mock_fn.assert_called_once_with(
@@ -200,7 +200,7 @@ class TestWorkEntriesUpdateCLI:
             checkin=None,
             checkout=None,
             hours=2.25,
-            agent=AGENT_ID_DAVID,
+            agent=AGENT_ID_SYNTHETIC,
         )
 
 

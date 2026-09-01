@@ -14,6 +14,8 @@ from click.testing import CliRunner
 from cli_anything.propertymeld import api_backend, insights_backend
 from cli_anything.propertymeld.cli import cli
 
+SYNTHETIC_TENANT = "1000"
+
 
 def _parquet_bytes(rows):
     sink = pa.BufferOutputStream()
@@ -26,7 +28,7 @@ def _response(payload):
     response.__enter__.return_value = response
     response.__exit__.return_value = False
     response.geturl.return_value = (
-        "https://app.propertymeld.com/1000/m/1000/api/analytics/parquet/"
+        f"https://app.propertymeld.com/{SYNTHETIC_TENANT}/m/{SYNTHETIC_TENANT}/api/analytics/parquet/"
         "raw_meld_data.parquet"
     )
     response.read.return_value = payload
@@ -62,9 +64,9 @@ RECORDED_MELDS = [
         "meld_meld_status": "COMPLETED",
         "meld_meld_work_category": "TURNOVER",
         "meld_meld_project_id": 7001,
-        "vendor_assigned_name": "  DBH   Construction ",
+        "vendor_assigned_name": "  Vendor   A ",
         "inhouse_servicer_name": None,
-        "meld_meld_coordinator_id": 90025,
+        "meld_meld_coordinator_id": 5015,
         "meld_meld_coordinator_name": "Coordinator",
         "meld_meld_assigned_to_accepted_for_vendor": 30.0,
         "meld_meld_accepted_to_scheduled_for_vendor": 60.0,
@@ -86,7 +88,7 @@ RECORDED_MELDS = [
         "meld_meld_project_id": None,
         "vendor_assigned_name": "Unknown Vendor",
         "inhouse_servicer_name": None,
-        "meld_meld_coordinator_id": 90025,
+        "meld_meld_coordinator_id": 5015,
         "meld_meld_coordinator_name": "Coordinator",
         "meld_meld_assigned_to_accepted_for_vendor": None,
         "meld_meld_accepted_to_scheduled_for_vendor": None,
@@ -108,7 +110,7 @@ RECORDED_MELDS = [
         "meld_meld_project_id": None,
         "vendor_assigned_name": None,
         "inhouse_servicer_name": "Technician",
-        "meld_meld_coordinator_id": 90025,
+        "meld_meld_coordinator_id": 5015,
         "meld_meld_coordinator_name": "Coordinator",
         "meld_meld_assigned_to_accepted_for_vendor": None,
         "meld_meld_accepted_to_scheduled_for_vendor": None,
@@ -181,9 +183,9 @@ RECORDED_CLI_MELDS = [
         "meld_meld_status": "COMPLETED",
         "meld_meld_work_category": "TURNOVER",
         "meld_meld_project_id": 8001.0,
-        "vendor_assigned_name": "DBH Construction",
+        "vendor_assigned_name": "Vendor A",
         "inhouse_servicer_name": "Primary Technician",
-        "meld_meld_coordinator_id": 90025,
+        "meld_meld_coordinator_id": 5015,
         "meld_meld_coordinator_name": "Coordinator One",
         "meld_meld_assigned_to_accepted_for_vendor": 31.0,
         "meld_meld_accepted_to_scheduled_for_vendor": 61.0,
@@ -203,7 +205,7 @@ RECORDED_CLI_MELDS = [
         "meld_meld_project_id": float("nan"),
         "vendor_assigned_name": "Unknown Vendor",
         "inhouse_servicer_name": "Secondary Technician",
-        "meld_meld_coordinator_id": 57164,
+        "meld_meld_coordinator_id": 5016,
         "meld_meld_coordinator_name": "Coordinator Two",
         "meld_meld_assigned_to_accepted_for_vendor": 32.0,
         "meld_meld_accepted_to_scheduled_for_vendor": 62.0,
@@ -223,7 +225,7 @@ RECORDED_CLI_MELDS = [
         "meld_meld_project_id": 8003.0,
         "vendor_assigned_name": "Same Vendor",
         "inhouse_servicer_name": "Third Technician",
-        "meld_meld_coordinator_id": 57165,
+        "meld_meld_coordinator_id": 5017,
         "meld_meld_coordinator_name": "Coordinator Three",
         "meld_meld_assigned_to_accepted_for_vendor": 33.0,
         "meld_meld_accepted_to_scheduled_for_vendor": 63.0,
@@ -243,7 +245,7 @@ RECORDED_CLI_MELDS = [
         "meld_meld_project_id": 8004.0,
         "vendor_assigned_name": None,
         "inhouse_servicer_name": "Fourth Technician",
-        "meld_meld_coordinator_id": 57166,
+        "meld_meld_coordinator_id": 5018,
         "meld_meld_coordinator_name": "Coordinator Four",
         "meld_meld_assigned_to_accepted_for_vendor": 34.0,
         "meld_meld_accepted_to_scheduled_for_vendor": 64.0,
@@ -366,15 +368,15 @@ CLI_OUTPUT_SCHEMA = {
 
 
 CLI_VENDOR_ROSTER = [
-    {"id": 91159, "name": "DBH Construction"},
-    {"id": 92001, "name": "Same Vendor"},
-    {"id": 92002, "name": " same   vendor "},
+    {"id": 9011, "name": "Vendor A"},
+    {"id": 9021, "name": "Same Vendor"},
+    {"id": 9022, "name": " same   vendor "},
 ]
 
 RECORDED_MINIMAL_MELDS = [{
     "meld_meld_id": 401,
     "meld_meld_work_category": "TURNOVER",
-    "vendor_assigned_name": "DBH Construction",
+    "vendor_assigned_name": "Vendor A",
 }]
 
 RECORDED_MINIMAL_BENCHMARKS = [{
@@ -408,9 +410,9 @@ def _expected_cli_meld_rows():
             **RECORDED_CLI_MELDS[0],
             "vendor_resolution": {
                 "status": "resolved",
-                "source_name": "DBH Construction",
-                "vendor_id": 91159,
-                "vendor_name": "DBH Construction",
+                "source_name": "Vendor A",
+                "vendor_id": 9011,
+                "vendor_name": "Vendor A",
             },
         },
         {
@@ -431,8 +433,8 @@ def _expected_cli_meld_rows():
                 "vendor_id": None,
                 "vendor_name": None,
                 "matches": [
-                    {"vendor_id": 92001, "vendor_name": "Same Vendor"},
-                    {"vendor_id": 92002, "vendor_name": "same   vendor"},
+                    {"vendor_id": 9021, "vendor_name": "Same Vendor"},
+                    {"vendor_id": 9022, "vendor_name": "same   vendor"},
                 ],
             },
         },
@@ -517,7 +519,7 @@ def _invoke_recorded_cli(command, rows, *, roster=(), extra_args=()):
     response = _response(_parquet_bytes(rows))
     if command == "benchmarks":
         response.geturl.return_value = (
-            "https://app.propertymeld.com/1000/m/1000/api/analytics/parquet/"
+            f"https://app.propertymeld.com/{SYNTHETIC_TENANT}/m/{SYNTHETIC_TENANT}/api/analytics/parquet/"
             "benchmarks.parquet"
         )
     with patch("urllib.request.urlopen", return_value=response), patch(
@@ -534,7 +536,7 @@ def _invoke_recorded_cli(command, rows, *, roster=(), extra_args=()):
 
 def test_melds_uses_exact_get_and_resolves_without_leaking_free_text(credentials):
     payload = _parquet_bytes(RECORDED_MELDS)
-    roster = [{"id": 91159, "name": "DBH Construction"}]
+    roster = [{"id": 9011, "name": "Vendor A"}]
     with patch("urllib.request.urlopen", return_value=_response(payload)) as opener, patch(
         "cli_anything.propertymeld.api_backend.list_vendors", return_value=roster
     ) as list_vendors:
@@ -544,7 +546,7 @@ def test_melds_uses_exact_get_and_resolves_without_leaking_free_text(credentials
     assert request.get_method() == "GET"
     assert request.data is None
     assert request.full_url == (
-        "https://app.propertymeld.com/1000/m/1000/api/analytics/parquet/"
+        f"https://app.propertymeld.com/{SYNTHETIC_TENANT}/m/{SYNTHETIC_TENANT}/api/analytics/parquet/"
         "raw_meld_data.parquet"
     )
     list_vendors.assert_called_once_with(limit=None)
@@ -553,9 +555,9 @@ def test_melds_uses_exact_get_and_resolves_without_leaking_free_text(credentials
     assert len(result["rows"]) == 3
     assert result["rows"][0]["vendor_resolution"] == {
         "status": "resolved",
-        "source_name": "  DBH   Construction ",
-        "vendor_id": 91159,
-        "vendor_name": "DBH Construction",
+            "source_name": "  Vendor   A ",
+        "vendor_id": 9011,
+        "vendor_name": "Vendor A",
     }
     assert result["rows"][1]["vendor_resolution"]["status"] == "unresolved"
     assert result["rows"][2]["vendor_resolution"]["status"] == "not_applicable"
@@ -604,7 +606,7 @@ def test_cli_preserves_missing_project_disclosure_for_every_mode(
     if command == "benchmarks":
         response = _response(_parquet_bytes(RECORDED_NAN_BENCHMARKS))
         response.geturl.return_value = (
-            "https://app.propertymeld.com/1000/m/1000/api/analytics/parquet/"
+            f"https://app.propertymeld.com/{SYNTHETIC_TENANT}/m/{SYNTHETIC_TENANT}/api/analytics/parquet/"
             "benchmarks.parquet"
         )
     else:
@@ -629,7 +631,7 @@ def test_cli_preserves_every_named_output_member_from_recorded_parquet(
     if command == "benchmarks":
         response = _response(_parquet_bytes(RECORDED_CLI_BENCHMARKS))
         response.geturl.return_value = (
-            "https://app.propertymeld.com/1000/m/1000/api/analytics/parquet/"
+            f"https://app.propertymeld.com/{SYNTHETIC_TENANT}/m/{SYNTHETIC_TENANT}/api/analytics/parquet/"
             "benchmarks.parquet"
         )
     else:
@@ -699,7 +701,7 @@ def test_cli_fails_closed_and_names_each_missing_required_member(
     response = _response(_parquet_bytes([row]))
     if command == "benchmarks":
         response.geturl.return_value = (
-            "https://app.propertymeld.com/1000/m/1000/api/analytics/parquet/"
+            f"https://app.propertymeld.com/{SYNTHETIC_TENANT}/m/{SYNTHETIC_TENANT}/api/analytics/parquet/"
             "benchmarks.parquet"
         )
     with patch("urllib.request.urlopen", return_value=response), patch(
@@ -879,7 +881,7 @@ def test_benchmarks_exact_endpoint_and_recorded_shape(credentials):
     payload = _parquet_bytes(RECORDED_BENCHMARKS)
     response = _response(payload)
     response.geturl.return_value = (
-        "https://app.propertymeld.com/1000/m/1000/api/analytics/parquet/"
+        f"https://app.propertymeld.com/{SYNTHETIC_TENANT}/m/{SYNTHETIC_TENANT}/api/analytics/parquet/"
         "benchmarks.parquet"
     )
     with patch("urllib.request.urlopen", return_value=response) as opener:
@@ -901,7 +903,7 @@ def test_benchmark_project_filter_treats_nan_as_non_project(credentials):
     payload = _parquet_bytes(RECORDED_NAN_BENCHMARKS)
     response = _response(payload)
     response.geturl.return_value = (
-        "https://app.propertymeld.com/1000/m/1000/api/analytics/parquet/"
+        f"https://app.propertymeld.com/{SYNTHETIC_TENANT}/m/{SYNTHETIC_TENANT}/api/analytics/parquet/"
         "benchmarks.parquet"
     )
     with patch("urllib.request.urlopen", return_value=response):

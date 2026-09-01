@@ -7,7 +7,7 @@ body field name was wrong (CLI sent {"meld": dest}; PM expected
 {"destination_id", "source_ids": [...]}).
 
 Capture doc:
-    orgs/ascendops/docs/pm-create-meld-in-and-merge-endpoint-capture-2026-05-19.md
+    orgs/example/docs/pm-create-meld-in-and-merge-endpoint-capture-2026-05-19.md
 
 These tests pin the captured-shape behavior:
 - URL is /api/melds/{destination_id}/merge/

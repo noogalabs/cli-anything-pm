@@ -36,7 +36,7 @@ pm vendors list --json                            # All vendors
 
 ### Tech Assignment (browser backend)
 ```bash
-pm assign-tech --work-order-id <id> --tech Person021 --json
+pm assign-tech --work-order-id <id> --tech Tech A --json
 ```
 
 ### Health Check

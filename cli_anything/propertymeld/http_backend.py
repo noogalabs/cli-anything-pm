@@ -1154,7 +1154,7 @@ def assign_tech(meld_id: str, tech_name: str) -> dict:
 
     Args:
         meld_id: Meld ID to assign the tech to.
-        tech_name: Partial name match (case-insensitive). e.g. "Person021" or "Synthetic Person 008".
+        tech_name: Partial name match (case-insensitive). e.g. "Tech A" or "Tech A".
     """
     meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
@@ -1250,7 +1250,7 @@ def merge_meld(destination_id: str, source_ids, meld_id=None, into_meld_id=None)
             into_meld_id and warned in the result. Will be removed.
 
     Endpoint shape captured from PM web UI 2026-05-20T01:14:45Z (capture doc:
-    orgs/ascendops/docs/pm-create-meld-in-and-merge-endpoint-capture-2026-05-19.md):
+    orgs/example/docs/pm-create-meld-in-and-merge-endpoint-capture-2026-05-19.md):
 
         POST /api/melds/{destination_id}/merge/
         body: { "destination_id": int, "source_ids": [int, ...] }
@@ -2227,7 +2227,7 @@ def update_unit_notes(unit_id, maintenance_notes: str) -> dict:
     update_meld_notes) and from any future property-level notes (not yet
     proven by capture as of P3 #8 ship).
 
-    Closes P3 #8 (orgs/ascendops/docs/pm-cli-gap-backlog-2026-05-18.md) at
+    Closes P3 #8 (orgs/example/docs/pm-cli-gap-backlog-2026-05-18.md) at
     the unit level. Property-level notes deferred pending HAR proof.
     """
     unit_id_int = int(unit_id)
@@ -2593,7 +2593,7 @@ def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, dura
 
     Args:
         meld_id: Meld ID.
-        vendor_id: Vendor ID (the integer PK from PM, e.g. 61002 for Example HVAC).
+        vendor_id: Vendor ID (the integer PK from PM, e.g. 6012 for Example HVAC).
         dtstart: ISO 8601 datetime string, e.g. '2026-04-27T14:00:00-04:00'.
         duration_hours: Appointment duration in hours (default 2).
 
@@ -2780,7 +2780,7 @@ def create_project(
 
     Required (per capture):
         name, project_type (e.g. "TURN"), due_date, start_date,
-        coordinators (list of management-agent int ids, e.g. [90022]),
+        coordinators (list of management-agent int ids, e.g. [9036]),
         unit ({"id": int, "label": str}).
 
     `meld_location` is a new field introduced in the live shape (captured
@@ -3220,7 +3220,7 @@ def list_agents() -> list:
     do not silently truncate.
 
     Use for: roster lookup by name when pm vendors search misses. Closes the
-    silent misread class where in-house techs (Person021 / Person030 / Person017 / etc)
+    silent misread class where in-house techs (Tech A / Tech B / Tech C / etc)
     get mistaken for missing vendors.
     """
     creds = _load_creds()

@@ -10,11 +10,13 @@ import pytest
 
 from cli_anything.propertymeld import http_backend as hb
 
+SYNTHETIC_TENANT = "1000"
+
 
 class TestBuildUrl:
     def test_manager_default(self):
         url = hb._build_url("melds/M123ABC/complete/")
-        assert url == "https://app.propertymeld.com/1000/m/1000/api/melds/M123ABC/complete/"
+        assert url == f"https://app.propertymeld.com/{SYNTHETIC_TENANT}/m/{SYNTHETIC_TENANT}/api/melds/M123ABC/complete/"
 
     def test_manager_explicit(self):
         url = hb._build_url("melds/", side="manager")
@@ -26,8 +28,8 @@ class TestBuildUrl:
             hb._build_url("melds/M123ABC/complete/", side="vendor")
 
     def test_vendor_with_id(self):
-        url = hb._build_url("melds/M123ABC/complete/", side="vendor", vendor_id="91159")
-        assert url == "https://app.propertymeld.com/1000/v/91159/api/melds/M123ABC/complete/"
+        url = hb._build_url("melds/M123ABC/complete/", side="vendor", vendor_id="9011")
+        assert url == f"https://app.propertymeld.com/{SYNTHETIC_TENANT}/v/9011/api/melds/M123ABC/complete/"
 
     def test_unknown_side_raises(self):
         with pytest.raises(ValueError, match="unknown side"):
@@ -75,9 +77,9 @@ class TestHelperRouting:
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
         hb._http_patch(
             "melds/M1/complete/", {}, "sessionid=x", "csrf",
-            side="vendor", vendor_id="91159",
+            side="vendor", vendor_id="9011",
         )
-        assert "/v/91159/" in captured["url"]
+        assert "/v/9011/" in captured["url"]
         assert "/m/" not in captured["url"]
 
     def test_http_delete_returns_empty_on_204(self, monkeypatch):
@@ -112,13 +114,13 @@ class TestCompleteMeldSideRouting:
         Decorator @with_recapture_retry only catches SessionExpired, so
         ValueError propagates cleanly."""
         with pytest.raises(ValueError, match="vendor_id required"):
-            hb.complete_meld("12345678", side="vendor")
+            hb.complete_meld("123456678", side="vendor")
 
     def test_complete_meld_vendor_requires_completion_date(self):
         """Vendor surface PATCH /melds/{id}/complete/ requires a date field
         per capture 2026-05-16 024240Z. Validate before HTTP I/O."""
         with pytest.raises(ValueError, match="completion_date required"):
-            hb.complete_meld("12345678", side="vendor", vendor_id="91159")
+            hb.complete_meld("123456678", side="vendor", vendor_id="9011")
 
     def test_complete_meld_manager_is_disabled_before_credentials_or_http(self, monkeypatch, capsys):
         """No client preflight can make the manager mutation atomic."""
@@ -126,7 +128,7 @@ class TestCompleteMeldSideRouting:
         monkeypatch.setattr(hb.urllib.request, "urlopen", lambda *a, **k: pytest.fail("must refuse before HTTP"))
 
         with pytest.raises(SystemExit) as exc:
-            hb.complete_meld("12345678", completion_notes="preserve me")
+            hb.complete_meld("123456678", completion_notes="preserve me")
 
         assert exc.value.code == 1
         err = json.loads(capsys.readouterr().err)
@@ -155,10 +157,10 @@ class TestCompleteMeldSideRouting:
 
         hb.complete_meld(
             "12791157", completion_notes="completed",
-            side="vendor", vendor_id="91159",
+            side="vendor", vendor_id="9011",
             completion_date="2026-05-17T14:00:00.000Z",
         )
-        assert "/v/91159/" in captured["url"]
+        assert "/v/9011/" in captured["url"]
         assert "/m/" not in captured["url"]
         import json as _json
         body = _json.loads(captured["body"])
