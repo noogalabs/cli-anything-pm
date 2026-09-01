@@ -31,7 +31,7 @@ Property Meld uses OAuth2 client credentials (Nexus API).
 
 ## Browser Backend Session
 
-Comments, tech assignment, vendor assignment, vendor invites, tenant invites, and tenant contact edits require a browser session. Credentials stored at `PM_CREDS_PATH` (JSON with `username`, `password`, `cookies` fields). Cookies are refreshed automatically on session expiry.
+Comments, tech assignment, vendor assignment, vendor invites, tenant invites, and tenant contact edits require a browser session. The session file is selected by `credentials_path` in the private `PROPERTYMELD_CONFIG` JSON (with `username`, `password`, `cookies` fields). Cookies are refreshed automatically on session expiry.
 
 ## Vendor Invite (CLI)
 
@@ -93,7 +93,7 @@ returns 403.
 
 ## Rate Limits
 
-No documented rate limit from Property Meld. AscendOps convention: max 7 Nexus API calls/day (morning report window only).
+Property Meld does not document a rate limit. Each installation must set its own operational call budget outside this shared repository.
 
 ## API Key Rotation (CLI)
 
@@ -112,14 +112,14 @@ pm api-keys list
 
 **Manual flow the CLI automates:**
 1. `app.propertymeld.com` → click user icon (top right) → Switch Account Type
-2. Select "Nexus Partner / Ascend Property Management"
-3. Navigate to Settings > API Keys (`/338/n/338/nexus/api-keys/`)
+2. Select the Nexus Partner entry for your organization.
+3. Navigate to Settings > API Keys (`/2000/n/2000/nexus/api-keys/`)
 4. Click "Create API Key"
 5. Copy Client ID and Client Secret (shown ONCE)
 6. Update Railway env vars: `PM_NEXUS_CLIENT_ID`, `PM_NEXUS_CLIENT_SECRET`
 7. `railway redeploy --yes` in `emergency-dispatch-middleware/`
 
 **Notes:**
-- Nexus account ID is `338`, management account is `3287`
+- Record the Nexus and management account IDs in your private config file.
 - Client secret is shown only once — always capture it immediately
 - After Railway redeploy, confirm via `railway logs | grep "Fetched PM melds"`

@@ -49,9 +49,9 @@ class TestExitNonZeroOnBackendFailure:
             result = runner.invoke(cli, [
                 "tenants", "invite",
                 "--unit-id", "1870266",
-                "--first-name", "David",
+                "--first-name", "Alex",
                 "--last-name", "Hunter",
-                "--email", "david@example.com",
+                "--email", "alex@example.com",
                 "--cell", "6789235467",
             ])
         assert result.exit_code == 1, result.output
@@ -64,7 +64,7 @@ class TestExitNonZeroOnBackendFailure:
                    return_value={"ok": False, "error": "vendor invite failed"}) as mock_fn:
             result = runner.invoke(cli, [
                 "vendors", "invite",
-                "--email", "david+zztest@noogalabs.com",
+                "--email", "alex+zztest@example.com",
                 "--first-name", "ZZ",
                 "--last-name", "Test",
                 "--company", "Test Co",

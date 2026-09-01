@@ -70,7 +70,7 @@ class TestListEstimatesMeldRequired:
         pages = {
             "estimates/meld/12701108/?limit=3": {
                 "results": [{"id": 9001}, {"id": 9002}],
-                "next": "https://app.propertymeld.test/3287/m/3287/api/estimates/meld/12701108/?cursor=abc&limit=100",
+                "next": "https://app.propertymeld.test/1000/m/1000/api/estimates/meld/12701108/?cursor=abc&limit=100",
             },
             "estimates/meld/12701108/?cursor=abc&limit=100": {
                 "results": [{"id": 9003}],
@@ -97,11 +97,11 @@ class TestListEstimatesMeldRequired:
         pages = {
             "estimates/meld/12701108/?limit=100": {
                 "results": [{"id": i} for i in range(9000, 9100)],
-                "next": "https://app.propertymeld.test/3287/m/3287/api/estimates/meld/12701108/?cursor=page2&limit=100",
+                "next": "https://app.propertymeld.test/1000/m/1000/api/estimates/meld/12701108/?cursor=page2&limit=100",
             },
             "estimates/meld/12701108/?cursor=page2&limit=100": {
                 "results": [{"id": i} for i in range(9100, 9200)],
-                "next": "https://app.propertymeld.test/3287/m/3287/api/estimates/meld/12701108/?cursor=page3&limit=100",
+                "next": "https://app.propertymeld.test/1000/m/1000/api/estimates/meld/12701108/?cursor=page3&limit=100",
             },
             "estimates/meld/12701108/?cursor=page3&limit=100": {
                 "results": [{"id": i} for i in range(9200, 9300)],
@@ -129,7 +129,7 @@ class TestListEstimatesMeldRequired:
         pages = {
             "estimates/meld/12701108/?limit=100": {
                 "results": [{"id": 1}],
-                "next": "https://app.propertymeld.test/3287/m/3287/api/estimates/meld/12701108/?cursor=page2&limit=100",
+                "next": "https://app.propertymeld.test/1000/m/1000/api/estimates/meld/12701108/?cursor=page2&limit=100",
             },
             "estimates/meld/12701108/?cursor=page2&limit=100": {
                 "results": [{"id": 2}],

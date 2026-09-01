@@ -55,7 +55,7 @@ class TestCreateWorkEntry:
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch, response_body=b'{"id": 3177515}')
         result = hb.create_work_entry(
-            12720246, agent=57163, description="painted",
+            12720246, agent=51001, description="painted",
             long_description="I painted", hours=0.13,
             checkin="2026-05-16T02:52:00.000Z", checkout="2026-05-16T03:00:00.000Z",
         )
@@ -63,7 +63,7 @@ class TestCreateWorkEntry:
         # ASYMMETRY GUARD: NESTED path under meld
         assert "/melds/12720246/work-entries/" in cap["url"]
         body = json.loads(cap["body"])
-        assert body["agent"] == 57163
+        assert body["agent"] == 51001
         assert body["description"] == "painted"
         assert body["meld"] == 12720246
         assert body["hours"] == 0.13
@@ -86,10 +86,10 @@ class TestVendorAcceptAssignment:
     def test_routes_to_vendor_surface(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch)
-        hb.vendor_accept_assignment("91159", 8559205)
+        hb.vendor_accept_assignment("61001", 8559205)
         assert cap["method"] == "PATCH"
         # SURFACE GUARD: vendor side
-        assert "/v/91159/" in cap["url"]
+        assert "/v/61001/" in cap["url"]
         assert "/m/" not in cap["url"]
         assert "/assignments/8559205/accept/" in cap["url"]
         body = json.loads(cap["body"])
@@ -101,11 +101,11 @@ class TestVendorSetSchedule:
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch)
         hb.vendor_set_schedule(
-            "91159", 8559205,
+            "61001", 8559205,
             new_segments=[("2026-05-17T14:00:00.000Z", "2026-05-17T16:00:00.000Z")],
             segments_to_keep=[],
         )
-        assert "/v/91159/" in cap["url"]
+        assert "/v/61001/" in cap["url"]
         assert "/assignments/8559205/segments/" in cap["url"]
         body = json.loads(cap["body"])
         assert body["segments_to_keep"] == []
@@ -120,7 +120,7 @@ class TestVendorSetSchedule:
         _capture_urlopen(monkeypatch)
         with pytest.raises(ValueError, match="segments_to_keep is required"):
             hb.vendor_set_schedule(
-                "91159", 8559205,
+                "61001", 8559205,
                 new_segments=[("2026-05-17T14:00:00.000Z", "2026-05-17T16:00:00.000Z")],
             )
 
@@ -128,7 +128,7 @@ class TestVendorSetSchedule:
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch)
         seg = {"event": {"dtstart": "a", "dtend": "b", "type": "default", "_cid": "event_3"}}
-        hb.vendor_set_schedule("91159", 8559205, new_segments=[seg], segments_to_keep=[123])
+        hb.vendor_set_schedule("61001", 8559205, new_segments=[seg], segments_to_keep=[123])
         body = json.loads(cap["body"])
         assert body["segments_to_keep"] == [123]
         assert body["new_segments"] == [seg]
@@ -137,7 +137,7 @@ class TestVendorSetSchedule:
         _patch_creds_csrf(monkeypatch)
         _capture_urlopen(monkeypatch)
         with pytest.raises(ValueError, match="Unsupported segment shape"):
-            hb.vendor_set_schedule("91159", 8559205, new_segments=["bad"], segments_to_keep=[])
+            hb.vendor_set_schedule("61001", 8559205, new_segments=["bad"], segments_to_keep=[])
 
 
 class TestVendorCreateInvoice:
@@ -145,14 +145,14 @@ class TestVendorCreateInvoice:
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch, response_body=b'{"id": 3863382}')
         result = hb.vendor_create_invoice(
-            "91159", 12791157,
+            "61001", 12791157,
             line_items=[
                 {"quantity": 1, "unit_price": 125.00, "description": "first"},
                 {"quantity": 1, "unit_price": "250.00", "description": "second"},
             ],
         )
         assert cap["method"] == "POST"
-        assert "/v/91159/" in cap["url"]
+        assert "/v/61001/" in cap["url"]
         assert cap["url"].endswith("/meld-invoices/")
         body = json.loads(cap["body"])
         assert body["meld"] == 12791157
@@ -165,7 +165,7 @@ class TestVendorCreateInvoice:
 
     def test_empty_line_items_raises(self):
         with pytest.raises(ValueError, match="at least one entry"):
-            hb.vendor_create_invoice("91159", 12791157, line_items=[])
+            hb.vendor_create_invoice("61001", 12791157, line_items=[])
 
 
 class TestVendorIdRequired:
@@ -197,9 +197,9 @@ class TestVendorSubmitInvoice:
     def test_sends_submit_flag(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch)
-        hb.vendor_submit_invoice("91159", 3863382)
+        hb.vendor_submit_invoice("61001", 3863382)
         assert cap["method"] == "PATCH"
-        assert "/v/91159/" in cap["url"]
+        assert "/v/61001/" in cap["url"]
         assert "/meld-invoices/3863382/" in cap["url"]
         # No /hold/ or /decline/ — base submit endpoint
         assert "/hold/" not in cap["url"]
@@ -213,11 +213,11 @@ class TestVendorInvite:
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch, response_body=b"")
         result = hb.invite_vendor(
-            email="david+zztest@noogalabs.com",
+            email="alex+zztest@example.com",
             first_name="ZZ TEST CAPTURE",
             last_name="test last name ",
             company="test company name",
-            line1="123 test address chattanooga tn ",
+            line1="123 test address example city ",
             postcode="37421",
             phone="6784567891",
         )
@@ -226,17 +226,17 @@ class TestVendorInvite:
         assert "/vendors/invite/" in cap["url"]
         body = json.loads(cap["body"])
         assert body == {
-            "email": "david+zztest@noogalabs.com",
+            "email": "alex+zztest@example.com",
             "first_name": "ZZ TEST CAPTURE",
             "last_name": "test last name ",
             "name": "test company name",
-            "line_1": "123 test address chattanooga tn ",
+            "line_1": "123 test address example city ",
             "state": "",
             "postcode": "37421",
             "phone": "6784567891",
         }
         assert result["ok"] is True
-        assert result["email"] == "david+zztest@noogalabs.com"
+        assert result["email"] == "alex+zztest@example.com"
 
     def test_duplicate_email_400_returns_friendly_not_silent_success(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
@@ -253,24 +253,24 @@ class TestVendorInvite:
 
         monkeypatch.setattr(hb.urllib.request, "urlopen", boom)
         result = hb.invite_vendor(
-            email="david@noogalabs.com",
+            email="alex@example.com",
             first_name="ZZ TEST CAPTURE",
             last_name="test last name ",
             company="test company name",
-            line1="123 test address chattanooga tn ",
+            line1="123 test address example city ",
             postcode="37421",
             phone="1234567891",
         )
         assert result["ok"] is False
         assert result["already_exists"] is True
         assert result["already_invited"] is True
-        assert result["email"] == "david@noogalabs.com"
+        assert result["email"] == "alex@example.com"
         assert result["detail"]["status_code"] == 400
 
 
 class TestTenantInvite:
     def test_posts_captured_payload_to_manager_tenants_endpoint(self, monkeypatch):
-        unit = {"id": 1870266, "name": "Unit A", "property": {"id": 3287}}
+        unit = {"id": 1870266, "name": "Unit A", "property": {"id": 1000}}
         monkeypatch.setattr(hb, "get_unit", lambda unit_id: unit)
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(
@@ -280,9 +280,9 @@ class TestTenantInvite:
 
         result = hb.invite_tenant(
             unit_id=1870266,
-            first_name="David",
+            first_name="Alex",
             last_name="Hunter",
-            email="david@example.com",
+            email="alex@example.com",
             cell_phone="6789235467",
             notes="notes section",
         )
@@ -293,13 +293,13 @@ class TestTenantInvite:
         body = json.loads(cap["body"])
         assert body == {
             "contact": {
-                "primary_email": "david@example.com",
-                "secondary_email": "david@example.com",
+                "primary_email": "alex@example.com",
+                "secondary_email": "alex@example.com",
                 "cell_phone": "6789235467",
                 "home_phone": "",
             },
             "units": [unit],
-            "first_name": "David",
+            "first_name": "Alex",
             "last_name": "Hunter",
             "notes": "notes section",
             "should_invite": True,
@@ -319,9 +319,9 @@ class TestTenantInvite:
 
         result = hb.invite_tenant(
             1870266,
-            "David",
+            "Alex",
             "Hunter",
-            "david@example.com",
+            "alex@example.com",
             "6789235467",
             should_invite=False,
         )
@@ -350,9 +350,9 @@ class TestTenantInvite:
         monkeypatch.setattr(hb.urllib.request, "urlopen", boom)
         result = hb.invite_tenant(
             1870266,
-            "David",
+            "Alex",
             "Hunter",
-            "david@example.com",
+            "alex@example.com",
             "bad-phone",
         )
 
@@ -367,8 +367,8 @@ def _tenant_contact_fixture():
         "id": 4427861,
         "user": {
             "id": 1626736,
-            "email": "david@noogalabs.com",
-            "first_name": "David",
+            "email": "alex@example.com",
+            "first_name": "Alex",
             "last_name": "Hunter",
         },
         "contact": {
@@ -376,21 +376,21 @@ def _tenant_contact_fixture():
             "home_phone": "old home",
             "cell_phone": "(678) 923-5467",
             "business_phone": "",
-            "primary_email": "david@noogalabs.com",
-            "secondary_email": "david@noogalabs.com",
+            "primary_email": "alex@example.com",
+            "secondary_email": "alex@example.com",
             "tertiary_email": "",
-            "tenant_objs": [3287],
+            "tenant_objs": [1000],
         },
         "invited": True,
-        "last_invite": {"id": 13708659, "email": "david@noogalabs.com"},
-        "first_name": "David",
+        "last_invite": {"id": 13708659, "email": "alex@example.com"},
+        "first_name": "Alex",
         "middle_name": "",
         "last_name": "Hunter",
         "notes": "notes section",
         "prompt_for_mobile": True,
         "default_language": "",
         "address": None,
-        "management": 3287,
+        "management": 1000,
         "leases": [],
         "links": [],
     }
@@ -426,7 +426,7 @@ class TestTenantContactEdit:
         expected["contact"]["cell_phone"] = "(678) 923-7654"
         assert put_body == expected
         assert put_body["contact"]["home_phone"] == "old home"
-        assert put_body["contact"]["secondary_email"] == "david@noogalabs.com"
+        assert put_body["contact"]["secondary_email"] == "alex@example.com"
         assert put_body["notes"] == "notes section"
         assert result["ok"] is True
         assert result["tenant_id"] == 4427861

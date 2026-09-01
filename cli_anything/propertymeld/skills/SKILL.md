@@ -13,7 +13,7 @@ pip install -e ~/projects/cli-anything-propertymeld/
 # Required env vars (from agent .env):
 #   PM_CLIENT_ID, PM_CLIENT_SECRET
 # For assign-tech (browser backend):
-#   PM_CREDS_PATH (default: ~/.claude/credentials/property-meld.json)
+#   PROPERTYMELD_CONFIG (local JSON containing tenant/account routing and session path)
 #   playwright install chromium
 ```
 
@@ -36,7 +36,7 @@ pm vendors list --json                            # All vendors
 
 ### Tech Assignment (browser backend)
 ```bash
-pm assign-tech --work-order-id <id> --tech Carlos --json
+pm assign-tech --work-order-id <id> --tech Jordan --json
 ```
 
 ### Health Check
@@ -50,7 +50,7 @@ pm probe --json                                   # Verify API credentials
 |---------|---------|---------|
 | work-orders list | Nexus API | PM_CLIENT_ID, PM_CLIENT_SECRET |
 | work-orders get | Nexus API | PM_CLIENT_ID, PM_CLIENT_SECRET |
-| work-orders comments | Browser (Playwright) | PM_CREDS_PATH + cookies |
+| work-orders comments | Browser (Playwright) | configured session path + cookies |
 | properties list | Nexus API | PM_CLIENT_ID, PM_CLIENT_SECRET |
 | vendors list | Nexus API | PM_CLIENT_ID, PM_CLIENT_SECRET |
-| assign-tech | Browser (Playwright) | PM_CREDS_PATH + cookies |
+| assign-tech | Browser (Playwright) | configured session path + cookies |
