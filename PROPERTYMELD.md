@@ -40,18 +40,18 @@ Create the vendor and send the portal invite in one manager-side call:
 ```bash
 pm vendors invite \
   --email vendor@example.com \
-  --first-name Jane \
-  --last-name Smith \
-  --company "Smith Plumbing" \
+  --first-name Fixture \
+  --last-name Vendor \
+  --company "Fixture Plumbing" \
   --line1 "123 Main St" \
   --postcode 12345 \
-  --phone 4235550100
+  --phone 2025550110
 ```
 
 Captured request shape:
 
 ```json
-{"email":"vendor@example.com","first_name":"Jane","last_name":"Smith","name":"Smith Plumbing","line_1":"123 Main St","state":"","postcode":"12345","phone":"4235550100"}
+{"email":"vendor@example.com","first_name":"Fixture","last_name":"Vendor","name":"Fixture Plumbing","line_1":"123 Main St","state":"","postcode":"12345","phone":"2025550110"}
 ```
 
 PM returns HTTP 400 when the invite email already exists; the CLI surfaces that as `ok: false` with `already_exists` / `already_invited`.
@@ -63,10 +63,10 @@ Create a tenant on a unit and send the portal invite:
 ```bash
 pm tenants invite \
   --unit-id 9000007 \
-  --first-name Jane \
+  --first-name Fixture \
   --last-name Resident \
   --email jane@example.com \
-  --cell 4235550100
+  --cell 2025550110
 ```
 
 Use `--no-invite` to create the tenant record without sending the invite email.
@@ -79,9 +79,9 @@ Edit tenant contact fields through the manager-side full-echo tenant PUT:
 
 ```bash
 pm tenants edit-contact 9000023 \
-  --cell 4235550100 \
-  --home 4235550101 \
-  --business 4235550102 \
+  --cell 2025550110 \
+  --home 2025550111 \
+  --business 2025550112 \
   --primary-email tenant@example.com \
   --secondary-email tenant.alt@example.com
 ```

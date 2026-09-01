@@ -219,7 +219,7 @@ class TestVendorInvite:
             company="test company name",
             line1="123 test address example city ",
             postcode="12345",
-            phone="6784567891",
+            phone="2025550133",
         )
         assert cap["method"] == "POST"
         assert "/m/" in cap["url"]
@@ -233,7 +233,7 @@ class TestVendorInvite:
             "line_1": "123 test address example city ",
             "state": "",
             "postcode": "12345",
-            "phone": "6784567891",
+            "phone": "2025550133",
         }
         assert result["ok"] is True
         assert result["email"] == "alex+zztest@example.com"
@@ -259,7 +259,7 @@ class TestVendorInvite:
             company="test company name",
             line1="123 test address example city ",
             postcode="12345",
-            phone="12345667891",
+            phone="12025550107",
         )
         assert result["ok"] is False
         assert result["already_exists"] is True
@@ -283,7 +283,7 @@ class TestTenantInvite:
             first_name="Alex",
             last_name="Example",
             email="alex@example.com",
-            cell_phone="6789235467",
+            cell_phone="2025550128",
             notes="notes section",
         )
 
@@ -295,7 +295,7 @@ class TestTenantInvite:
             "contact": {
                 "primary_email": "alex@example.com",
                 "secondary_email": "alex@example.com",
-                "cell_phone": "6789235467",
+                "cell_phone": "2025550128",
                 "home_phone": "",
             },
             "units": [unit],
@@ -322,7 +322,7 @@ class TestTenantInvite:
             "Alex",
             "Example",
             "alex@example.com",
-            "6789235467",
+            "2025550128",
             should_invite=False,
         )
 
@@ -374,7 +374,7 @@ def _tenant_contact_fixture():
         "contact": {
             "id": 9000025,
             "home_phone": "old home",
-            "cell_phone": "(678) 923-5467",
+            "cell_phone": "(202) 555-0128",
             "business_phone": "",
             "primary_email": "alex@example.com",
             "secondary_email": "alex@example.com",
@@ -401,7 +401,7 @@ class TestTenantContactEdit:
         _patch_creds_csrf(monkeypatch)
         original = _tenant_contact_fixture()
         updated = json.loads(json.dumps(original))
-        updated["contact"]["cell_phone"] = "(678) 923-7654"
+        updated["contact"]["cell_phone"] = "(202) 555-0129"
         calls = []
 
         def fake_urlopen(req, **kw):
@@ -416,14 +416,14 @@ class TestTenantContactEdit:
 
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
 
-        result = hb.edit_tenant_contact(9000023, cell_phone="(678) 923-7654")
+        result = hb.edit_tenant_contact(9000023, cell_phone="(202) 555-0129")
 
         assert [call["method"] for call in calls] == ["GET", "PUT"]
         assert calls[0]["url"].endswith("/tenants/9000023/")
         assert calls[1]["url"].endswith("/tenants/9000023/")
         put_body = json.loads(calls[1]["body"])
         expected = json.loads(json.dumps(original))
-        expected["contact"]["cell_phone"] = "(678) 923-7654"
+        expected["contact"]["cell_phone"] = "(202) 555-0129"
         assert put_body == expected
         assert put_body["contact"]["home_phone"] == "old home"
         assert put_body["contact"]["secondary_email"] == "alex@example.com"
@@ -449,7 +449,7 @@ class TestTenantContactEdit:
         monkeypatch.setattr(hb.urllib.request, "urlopen", fake_urlopen)
 
         with pytest.raises(SystemExit) as exc:
-            hb.edit_tenant_contact(9000023, cell_phone="4235550100")
+            hb.edit_tenant_contact(9000023, cell_phone="2025550110")
 
         assert exc.value.code == 1
         stderr = capsys.readouterr().err

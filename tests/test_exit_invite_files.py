@@ -52,7 +52,7 @@ class TestExitNonZeroOnBackendFailure:
                 "--first-name", "Alex",
                 "--last-name", "Example",
                 "--email", "alex@example.com",
-                "--cell", "6789235467",
+                "--cell", "2025550128",
             ])
         assert result.exit_code == 1, result.output
         assert json.loads(result.output)["ok"] is False
@@ -70,7 +70,7 @@ class TestExitNonZeroOnBackendFailure:
                 "--company", "Test Co",
                 "--line1", "123 Test St",
                 "--postcode", "12345",
-                "--phone", "6784567891",
+                "--phone", "2025550133",
             ])
         assert result.exit_code == 1, result.output
         assert json.loads(result.output)["ok"] is False

@@ -57,7 +57,7 @@ _MELD_NO_TENANTS = json.dumps(
 ).encode()
 
 # Tenant GET: the fully-hydrated tenant object link_tenant_to_meld appends.
-_TENANT = json.dumps({"id": 4242, "first_name": "Jane", "last_name": "Doe"}).encode()
+_TENANT = json.dumps({"id": 4242, "first_name": "Fixture", "last_name": "Alpha"}).encode()
 
 # PATCH response — 2xx body (PM echoes the meld; content irrelevant to the fix).
 _PATCH_2XX = json.dumps({"id": 90000018, "tenants": []}).encode()

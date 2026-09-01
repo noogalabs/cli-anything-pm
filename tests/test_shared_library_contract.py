@@ -1,9 +1,11 @@
+import base64
 import importlib.util
 import hashlib
 import json
 import os
 import re
 import subprocess
+import zlib
 from pathlib import Path
 
 import click
@@ -105,6 +107,28 @@ def test_dummy_config_drives_real_manager_and_vendor_routing():
 
 
 def _tracked_private_literal_matches(repo: Path, needles: tuple[str, ...]):
+    tenant_names = {
+        value.removeprefix("tenant-name:").casefold()
+        for value in needles if value.startswith("tenant-name:")
+    }
+    tenant_emails = {
+        value.removeprefix("tenant-email:").casefold()
+        for value in needles if value.startswith("tenant-email:")
+    }
+    tenant_phones = {
+        re.sub(r"\D", "", value.removeprefix("tenant-phone:"))
+        for value in needles if value.startswith("tenant-phone:")
+    }
+    general_needles = tuple(value for value in needles if not value.startswith("tenant-"))
+    name_field = re.compile(
+        r"[\"'](?:first_name|last_name)[\"']\s*:\s*[\"']([^\"']+)[\"']"
+    )
+    name_argv = re.compile(
+        r"[\"']--(?:first|last)-name[\"']\s*,\s*[\"']([^\"']+)[\"']"
+    )
+    phone_candidate = re.compile(
+        r"(?<!\d)(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)"
+    )
     matches = []
     tracked = subprocess.run(
         ["git", "ls-files", "-z"],
@@ -120,7 +144,43 @@ def _tracked_private_literal_matches(repo: Path, needles: tuple[str, ...]):
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, FileNotFoundError):
             continue
-        if any(needle in text for needle in needles):
+        folded = text.casefold()
+        matched = False
+        for needle in general_needles:
+            if needle.isdigit():
+                matched = re.search(rf"(?<!\d){re.escape(needle)}(?!\d)", text) is not None
+            elif "@" in needle or "/" in needle or "\\" in needle:
+                matched = needle.casefold() in folded
+            else:
+                matched = re.search(
+                    rf"(?<![A-Za-z]){re.escape(needle)}(?![A-Za-z])",
+                    text,
+                    re.IGNORECASE,
+                ) is not None
+            if matched:
+                break
+        if not matched:
+            names = {
+                value.strip().casefold()
+                for regex in (name_field, name_argv)
+                for value in regex.findall(text)
+            }
+            emails = {
+                value.casefold()
+                for value in re.findall(
+                    r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", text
+                )
+            }
+            phones = {
+                re.sub(r"\D", "", value)
+                for value in phone_candidate.findall(text)
+            }
+            matched = bool(
+                names & tenant_names
+                or emails & tenant_emails
+                or phones & tenant_phones
+            )
+        if matched:
             matches.append(str(path.relative_to(repo)))
     return matches
 
@@ -141,6 +201,9 @@ def _tracked_structural_private_matches(repo: Path):
         re.compile(r"https?://[^\s\"']*propertymeld\.com/\d+/", re.IGNORECASE),
     )
     numeric_token = re.compile(r"(?<![A-Za-z0-9])\d{5,8}(?![A-Za-z0-9])")
+    phone_candidate = re.compile(
+        r"(?<!\d)(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)"
+    )
     allowed_non_id_tokens = {
         "123" + "45",  # intentionally synthetic postcode
         "100" + "00",  # Insights command limit
@@ -165,9 +228,25 @@ def _tracked_structural_private_matches(repo: Path):
         has_forbidden_numeric = any(
             token not in allowed_non_id_tokens
             and not (len(token) in (6, 7, 8) and token.startswith("9"))
+            and not (len(token) == 7 and token.startswith("555" + "01"))
             for token in numeric_token.findall(text)
         )
-        if any(pattern.search(text) for pattern in patterns) or has_forbidden_numeric:
+        has_forbidden_phone = False
+        for candidate in phone_candidate.findall(text):
+            digits = re.sub(r"\D", "", candidate)
+            national = digits[1:] if len(digits) == 11 and digits.startswith("1") else digits
+            if (
+                len(national) != 10
+                or national.startswith("423")
+                or national[3:8] != ("555" + "01")
+            ):
+                has_forbidden_phone = True
+                break
+        if (
+            any(pattern.search(text) for pattern in patterns)
+            or has_forbidden_numeric
+            or has_forbidden_phone
+        ):
             matches.append(str(path.relative_to(repo)))
     return matches
 
@@ -179,7 +258,9 @@ def test_private_tenant_and_org_literals_are_absent_from_tracked_files():
         pytest.skip(
             "PROPERTYMELD_PRIVATE_LITERALS is absent; private-literal census is armed in CI via repository secret"
         )
-    decoded = json.loads(raw)
+    assert raw.startswith("zlib64:"), "private vocabulary secret uses an unknown encoding"
+    canonical = zlib.decompress(base64.b64decode(raw.removeprefix("zlib64:"))).decode("utf-8")
+    decoded = json.loads(canonical)
     assert isinstance(decoded, list)
     private_literals = tuple(decoded)
     assert private_literals and all(isinstance(item, str) and item for item in private_literals)
@@ -190,7 +271,7 @@ def test_private_tenant_and_org_literals_are_absent_from_tracked_files():
         r"Vocabulary SHA-256: `([a-f0-9]{64})`", provenance
     )
     assert expected_digest, "committed private-vocabulary provenance hash is missing"
-    assert hashlib.sha256(raw.encode("utf-8")).hexdigest() == expected_digest.group(1), (
+    assert hashlib.sha256(canonical.encode("utf-8")).hexdigest() == expected_digest.group(1), (
         "PROPERTYMELD_PRIVATE_LITERALS is stale or was built from a partial export"
     )
     assert _tracked_private_literal_matches(repo, private_literals) == []
@@ -199,6 +280,31 @@ def test_private_tenant_and_org_literals_are_absent_from_tracked_files():
 def test_structural_private_data_shapes_are_absent_from_tracked_files():
     repo = Path(__file__).parents[1]
     assert _tracked_structural_private_matches(repo) == []
+
+
+def _tracked_fixture(tmp_path: Path, text: str) -> Path:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    fixture = tmp_path / "fixture.py"
+    fixture.write_text(text, encoding="utf-8")
+    subprocess.run(["git", "add", "fixture.py"], cwd=tmp_path, check=True)
+    return tmp_path
+
+
+def test_sourced_resident_name_is_visible_to_private_literal_census(tmp_path):
+    repo = _tracked_fixture(
+        tmp_path,
+        'resident = {"first_name": "Resident", "last_name": "Leak"}\n',
+    )
+
+    assert _tracked_private_literal_matches(
+        repo, ("tenant-name:Resident", "tenant-name:Leak")
+    ) == ["fixture.py"]
+
+
+def test_non_reserved_phone_is_visible_to_structural_census(tmp_path):
+    repo = _tracked_fixture(tmp_path, 'phone = "' + "4" + "23-555-0199" + '"\n')
+
+    assert _tracked_structural_private_matches(repo) == ["fixture.py"]
 
 
 def test_private_vocabulary_is_derived_from_complete_roster_shapes():
@@ -218,6 +324,20 @@ def test_private_vocabulary_is_derived_from_complete_roster_shapes():
             "user": {"id": 601, "first_name": "Operator", "last_name": "Example"},
         }],
         [{"id": 701, "name": "Vendor Example"}],
+        [{
+            "first_name": "Fixture Resident",
+            "middle_name": "Fixture Middle",
+            "last_name": "Fixture Surname",
+            "user": {
+                "first_name": "Fixture Resident",
+                "last_name": "Fixture Surname",
+                "email": "fixture.resident@example.com",
+            },
+            "contact": {
+                "cell_phone": "2025550101",
+                "primary_email": "fixture.contact@example.com",
+            },
+        }],
         {
             "multitenant_id": "1000",
             "nexus_account_id": "2000",
@@ -229,6 +349,9 @@ def test_private_vocabulary_is_derived_from_complete_roster_shapes():
     assert set(vocabulary) == {
         "501", "601", "701", "1000", "2000",
         "Tech", "Operator", "Example", "Vendor Example",
+        "tenant-name:Fixture Resident", "tenant-name:Fixture Middle",
+        "tenant-name:Fixture Surname", "tenant-email:fixture.resident@example.com",
+        "tenant-email:fixture.contact@example.com", "tenant-phone:2025550101",
         "/private/example/session.json", "Example Property Management", "orgs/example",
     }
 
@@ -248,12 +371,14 @@ def test_private_vocabulary_provenance_records_counts_and_digest(tmp_path):
     vocabulary_json = module.serialize_vocabulary(["Agent Example", "9000001"])
 
     module.write_provenance(
-        doc, agent_count=10, vendor_count=17, vocabulary_json=vocabulary_json
+        doc, agent_count=10, vendor_count=17, tenant_count=648,
+        vocabulary_json=vocabulary_json
     )
 
     text = doc.read_text(encoding="utf-8")
     assert "Agent records: `10`" in text
     assert "Vendor records: `17`" in text
+    assert "Tenant records: `648`" in text
     assert "Vocabulary entries: `2`" in text
     assert hashlib.sha256(vocabulary_json.encode()).hexdigest() in text
 

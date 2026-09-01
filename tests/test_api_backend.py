@@ -1050,10 +1050,10 @@ _FULL_TENANT_FIXTURE = {
     "id": 99,
     "type": "Tenant",
     "composite_id": "3-99",
-    "first_name": "Regina",
-    "last_name": "Moses",
+    "first_name": "Resident",
+    "last_name": "Epsilon",
     "prompt_for_mobile": False,
-    "contact": {"email": "regina@example.com", "phone": "4235550100"},
+    "contact": {"email": "resident.epsilon@example.com", "phone": "2025550110"},
     "default_language": "en",
     "notification_settings": {"sms": True, "email": True},
 }
@@ -1107,7 +1107,7 @@ class TestTenantInvite:
             mcs.return_value = "csrf"
             mp.return_value = {
                 "id": 9000023,
-                "contact": {"id": 9000025, "cell_phone": "(678) 923-5467"},
+                "contact": {"id": 9000025, "cell_phone": "(202) 555-0128"},
                 "invited": True,
                 "last_invite": {"id": 90000019, "email": "alex@example.com"},
                 "notes": "notes section",
@@ -1118,8 +1118,8 @@ class TestTenantInvite:
                 first_name="Alex",
                 last_name="Example",
                 email="alex@example.com",
-                cell_phone="6789235467",
-                home_phone="6789873214",
+                cell_phone="2025550128",
+                home_phone="2025550130",
                 secondary_email="alt@example.com",
                 notes="notes section",
             )
@@ -1133,9 +1133,9 @@ class TestTenantInvite:
             assert payload == {
                 "contact": {
                     "primary_email": "alex@example.com",
-                    "cell_phone": "6789235467",
+                    "cell_phone": "2025550128",
                     "secondary_email": "alt@example.com",
-                    "home_phone": "6789873214",
+                    "home_phone": "2025550130",
                 },
                 "units": [_TENANT_INVITE_UNIT_FIXTURE],
                 "first_name": "Alex",
@@ -1154,7 +1154,7 @@ class TestTenantInvite:
             mp.return_value = {"id": 9000023, "contact": {}, "invited": False}
 
             result = http_backend.invite_tenant(
-                9000007, "Alex", "Example", "alex@example.com", "6789235467",
+                9000007, "Alex", "Example", "alex@example.com", "2025550128",
                 should_invite=False,
             )
 
@@ -1165,7 +1165,7 @@ class TestTenantInvite:
             assert payload["contact"] == {
                 "primary_email": "alex@example.com",
                 "secondary_email": "alex@example.com",
-                "cell_phone": "6789235467",
+                "cell_phone": "2025550128",
                 "home_phone": "",
             }
 
@@ -1183,7 +1183,7 @@ class TestTenantInvite:
             }
 
             result = http_backend.invite_tenant(
-                9000007, "Alex", "Example", "alex@example.com", "6781235467"
+                9000007, "Alex", "Example", "alex@example.com", "2025550132"
             )
 
             assert result["ok"] is False
@@ -1195,7 +1195,7 @@ class TestTenantInvite:
         with patch("cli_anything.propertymeld.http_backend.get_unit", return_value="bad"):
             with pytest.raises(RuntimeError, match="non-dict"):
                 http_backend.invite_tenant(
-                    9000007, "Alex", "Example", "alex@example.com", "6789235467"
+                    9000007, "Alex", "Example", "alex@example.com", "2025550128"
                 )
 
 
@@ -1351,7 +1351,7 @@ class TestCreateMeldInProject:
                 due_date="2026-05-16T00:00:00.000Z",
                 unit=_FULL_UNIT_FIXTURE,
                 maintenance=[_FULL_AGENT_FIXTURE],
-                tenants=[{"id": 99, "first_name": "Regina"}],
+                tenants=[{"id": 99, "first_name": "Resident"}],
             )
 
     def test_empty_tenants_does_not_call_get(self):
@@ -1942,8 +1942,8 @@ class TestCloneMeldOverrides:
 
 _TENANT_FIXTURE = {
     "id": 9000014,
-    "user": {"id": 9001, "first_name": "Regina", "last_name": "Moses", "email": "regina@example.com"},
-    "contact": {"id": 4001, "home_phone": "+14235550199"},
+    "user": {"id": 9001, "first_name": "Resident", "last_name": "Epsilon", "email": "resident.epsilon@example.com"},
+    "contact": {"id": 4001, "home_phone": "+12025550114"},
     "is_active": True,
     "management": 1000,
 }
@@ -2179,14 +2179,14 @@ class TestUpdateUnitNotes:
 
 _TENANT_NOTES_FIXTURE = {
     "id": 9000016,
-    "first_name": "Angelica",
-    "last_name": "Acevedo",
+    "first_name": "Resident",
+    "last_name": "Alpha",
     "middle_name": "",
     "notes": "",
     "is_active": True,
     "management": 1000,
     "user": {"id": 9000008, "email": "a@example.com"},
-    "contact": {"id": 9000024, "cell_phone": "(706) 913-7178"},
+    "contact": {"id": 9000024, "cell_phone": "(202) 555-0136"},
     "leases": [{"unit_id": 9000005}],
 }
 
@@ -2204,8 +2204,8 @@ _TENANT_CONTACT_FIXTURE = {
     },
     "contact": {
         "id": 9000025,
-        "home_phone": "(678) 987-3214",
-        "cell_phone": "(678) 923-5467",
+        "home_phone": "(202) 555-0130",
+        "cell_phone": "(202) 555-0128",
         "business_phone": "",
         "created": "2026-05-31T02:59:07.878312Z",
         "create_by": {"org_type": "m", "persona_id": 5011},
@@ -2278,10 +2278,10 @@ class TestUpdateTenantNotes:
             patch_path, patch_payload, _, _ = mp.call_args[0]
             assert patch_path == "tenants/9000016/"
             # Full body sent — not a thin patch
-            assert patch_payload["first_name"] == "Angelica"
-            assert patch_payload["last_name"] == "Acevedo"
+            assert patch_payload["first_name"] == "Resident"
+            assert patch_payload["last_name"] == "Alpha"
             assert patch_payload["id"] == 9000016
-            assert patch_payload["contact"]["cell_phone"] == "(706) 913-7178"
+            assert patch_payload["contact"]["cell_phone"] == "(202) 555-0136"
             # Notes was mutated
             assert patch_payload["notes"] == "Access after 3pm"
 
@@ -2378,21 +2378,21 @@ class TestUpdateTenantContact:
              patch("cli_anything.propertymeld.http_backend._http_patch") as mpatch:
             get_returns = json.loads(json.dumps(_TENANT_CONTACT_FIXTURE))
             put_returns = json.loads(json.dumps(_TENANT_CONTACT_FIXTURE))
-            put_returns["contact"]["cell_phone"] = "(678) 923-7654"
-            put_returns["contact"]["home_phone"] = "(678) 987-4123"
-            put_returns["contact"]["business_phone"] = "(423) 654-1234"
+            put_returns["contact"]["cell_phone"] = "(202) 555-0129"
+            put_returns["contact"]["home_phone"] = "(202) 555-0131"
+            put_returns["contact"]["business_phone"] = "(202) 555-0113"
             self._wire(mc, mch, mcs, mg, mp, get_returns=get_returns, put_returns=put_returns)
 
             result = http_backend.edit_tenant_contact(
                 9000023,
-                cell_phone="(678) 923-7654",
-                home_phone=" (678) 987-4123",
-                business_phone="4236541234",
+                cell_phone="(202) 555-0129",
+                home_phone=" (202) 555-0131",
+                business_phone="2025550113",
             )
 
             assert result["ok"] is True
             assert result["tenant_id"] == 9000023
-            assert result["contact"]["business_phone"] == "(423) 654-1234"
+            assert result["contact"]["business_phone"] == "(202) 555-0113"
             assert result["updated_fields"] == ["business_phone", "cell_phone", "home_phone"]
             assert mg.call_args[0][0] == "tenants/9000023/"
             put_path, put_payload, _, _ = mp.call_args[0]
@@ -2402,9 +2402,9 @@ class TestUpdateTenantContact:
             assert put_payload["first_name"] == "Alex"
             assert put_payload["notes"] == "notes section"
             assert put_payload["user"]["email"] == "alex@example.com"
-            assert put_payload["contact"]["cell_phone"] == "(678) 923-7654"
-            assert put_payload["contact"]["home_phone"] == " (678) 987-4123"
-            assert put_payload["contact"]["business_phone"] == "4236541234"
+            assert put_payload["contact"]["cell_phone"] == "(202) 555-0129"
+            assert put_payload["contact"]["home_phone"] == " (202) 555-0131"
+            assert put_payload["contact"]["business_phone"] == "2025550113"
             assert put_payload["contact"]["primary_email"] == "alex@example.com"
 
     def test_mutates_email_fields_and_preserves_other_tenant_keys(self):
@@ -2433,7 +2433,7 @@ class TestUpdateTenantContact:
             assert payload["contact"]["primary_email"] == "primary@example.com"
             assert payload["contact"]["secondary_email"] == ""
             assert payload["contact"]["tertiary_email"] == ""
-            assert payload["contact"]["cell_phone"] == "(678) 923-5467"
+            assert payload["contact"]["cell_phone"] == "(202) 555-0128"
 
     def test_requires_at_least_one_field(self):
         with pytest.raises(ValueError, match="at least one"):
@@ -2449,5 +2449,5 @@ class TestUpdateTenantContact:
             get_returns["contact"] = None
             self._wire(mc, mch, mcs, mg, mp, get_returns=get_returns, put_returns={})
             with pytest.raises(RuntimeError, match="contact object"):
-                http_backend.edit_tenant_contact(9000023, cell_phone="4235550100")
+                http_backend.edit_tenant_contact(9000023, cell_phone="2025550110")
             assert mp.call_count == 0
