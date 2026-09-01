@@ -44,14 +44,14 @@ pm vendors invite \
   --last-name Smith \
   --company "Smith Plumbing" \
   --line1 "123 Main St" \
-  --postcode 37421 \
+  --postcode 12345 \
   --phone 4235550100
 ```
 
 Captured request shape:
 
 ```json
-{"email":"vendor@example.com","first_name":"Jane","last_name":"Smith","name":"Smith Plumbing","line_1":"123 Main St","state":"","postcode":"37421","phone":"4235550100"}
+{"email":"vendor@example.com","first_name":"Jane","last_name":"Smith","name":"Smith Plumbing","line_1":"123 Main St","state":"","postcode":"12345","phone":"4235550100"}
 ```
 
 PM returns HTTP 400 when the invite email already exists; the CLI surfaces that as `ok: false` with `already_exists` / `already_invited`.

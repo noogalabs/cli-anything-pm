@@ -184,7 +184,7 @@ class TestVendorsCLI:
                 "--last-name", "test last name ",
                 "--company", "test company name",
                 "--line1", "123 test address example city ",
-                "--postcode", "37421",
+                "--postcode", "12345",
                 "--phone", "6784567891",
             ])
         assert result.exit_code == 0
@@ -196,7 +196,7 @@ class TestVendorsCLI:
             last_name="test last name ",
             company="test company name",
             line1="123 test address example city ",
-            postcode="37421",
+            postcode="12345",
             phone="6784567891",
             state="",
         )
@@ -1609,7 +1609,7 @@ class TestRequiredFreeTextNonEmpty:
                 "--last-name", "Test",
                 "--company", "Test Co",
                 "--line1", "123 Test St",
-                "--postcode", "37421",
+                "--postcode", "12345",
                 "--phone", "6784567891",
             ])
         assert result.exit_code != 0

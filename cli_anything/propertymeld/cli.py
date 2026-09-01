@@ -1295,7 +1295,7 @@ def create_meld_in_project_cmd(
 @click.option("--coordinator", "coordinators", multiple=True, required=True,
               type=int, help="Coordinator management-agent id (repeat for multiple)")
 @click.option("--unit-id", required=True, type=int, help="Unit PK")
-@click.option("--unit-label", required=True, callback=_require_nonempty, help="Unit address label, e.g. '123 Main St, Chattanooga, TN, 37421'")
+@click.option("--unit-label", required=True, callback=_require_nonempty, help="Unit address label, e.g. '123 Main St, Chattanooga, TN, 12345'")
 @click.option("--description", default="", help="Project description")
 @click.option("--meld-location", default="Unit", show_default=True,
               help='Discriminator — usually "Unit"; PM also accepts property-bound shapes')

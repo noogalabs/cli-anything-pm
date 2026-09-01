@@ -218,7 +218,7 @@ class TestVendorInvite:
             last_name="test last name ",
             company="test company name",
             line1="123 test address example city ",
-            postcode="37421",
+            postcode="12345",
             phone="6784567891",
         )
         assert cap["method"] == "POST"
@@ -232,7 +232,7 @@ class TestVendorInvite:
             "name": "test company name",
             "line_1": "123 test address example city ",
             "state": "",
-            "postcode": "37421",
+            "postcode": "12345",
             "phone": "6784567891",
         }
         assert result["ok"] is True
@@ -258,7 +258,7 @@ class TestVendorInvite:
             last_name="test last name ",
             company="test company name",
             line1="123 test address example city ",
-            postcode="37421",
+            postcode="12345",
             phone="12345667891",
         )
         assert result["ok"] is False
