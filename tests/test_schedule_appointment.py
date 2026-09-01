@@ -87,7 +87,7 @@ _PENDING_COMPLETION_MELD = json.dumps(
 _OCCUPIED_ZOMBIE_MELD = json.dumps(
     {
         "status": "PENDING_MORE_MANAGEMENT_AVAILABILITY",
-        "tenants": [{"id": 9000026, "name": "Synthetic Person 004"}],
+        "tenants": [{"id": 9000026, "name": "SyntheticOne"}],
         "managementappointment": [{"id": 9000022, "availability_segment": None}],
     }
 ).encode()

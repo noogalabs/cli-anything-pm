@@ -27,5 +27,5 @@ jobs:
 
       - name: Run tests (pytest -x)
         env:
-          PROPERTYMELD_PRIVATE_LITERALS: ${{ secrets.PROPERTYMELD_PRIVATE_LITERALS }}
+          PROPERTYMELD_VOCAB_SALT: ${{ secrets.PROPERTYMELD_VOCAB_SALT }}
         run: pytest tests/ -x

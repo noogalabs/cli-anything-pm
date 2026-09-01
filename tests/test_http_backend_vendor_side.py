@@ -214,9 +214,9 @@ class TestVendorPerson004:
         cap = _capture_urlopen(monkeypatch, response_body=b"")
         result = hb.invite_vendor(
             email="alex+zztest@example.com",
-            first_name="ZZ TEST CAPTURE",
+            first_name="Fixture Capture",
             last_name="test last name ",
-            company="test company name",
+            company="fixture business",
             line1="123 test address example city ",
             postcode="12345",
             phone="2025550133",
@@ -227,9 +227,9 @@ class TestVendorPerson004:
         body = json.loads(cap["body"])
         assert body == {
             "email": "alex+zztest@example.com",
-            "first_name": "ZZ TEST CAPTURE",
+            "first_name": "Fixture Capture",
             "last_name": "test last name ",
-            "name": "test company name",
+            "name": "fixture business",
             "line_1": "123 test address example city ",
             "state": "",
             "postcode": "12345",
@@ -254,9 +254,9 @@ class TestVendorPerson004:
         monkeypatch.setattr(hb.urllib.request, "urlopen", boom)
         result = hb.invite_vendor(
             email="alex@example.com",
-            first_name="ZZ TEST CAPTURE",
+            first_name="Fixture Capture",
             last_name="test last name ",
-            company="test company name",
+            company="fixture business",
             line1="123 test address example city ",
             postcode="12345",
             phone="12025550107",

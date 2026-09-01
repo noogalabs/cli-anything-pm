@@ -52,8 +52,8 @@ pm work-orders list --status open --json    # List open work orders
 pm work-orders get 900001 --json             # Single work order
 pm work-orders comments 900001 --json        # Comments (browser)
 pm work-orders assign-tech --work-order-id 900001 --tech Tech A --json
-pm work-orders assign-vendor --work-order-id 900001 --vendor "Example HVAC" --json
-pm vendors invite --email vendor@example.com --first-name Fixture --last-name Vendor --company "Fixture Plumbing" --line1 "123 Main St" --postcode 12345 --phone 2025550110
+pm work-orders assign-vendor --work-order-id 900001 --vendor "Fixture Service" --json
+pm vendors invite --email vendor@example.com --first-name Fixture --last-name Vendor --company "Fixture Service" --line1 "123 Main St" --postcode 12345 --phone 2025550110
 pm tenants invite --unit-id 9000025 --first-name Fixture --last-name Resident --email resident@example.com --cell 2025550110
 pm tenants edit-contact 9000026 --cell 2025550110 --primary-email tenant@example.com
 pm index --json                              # Runtime-derived command catalog
