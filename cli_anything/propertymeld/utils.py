@@ -4,10 +4,11 @@ import os
 import sys
 from typing import Any
 
+from .config import require_propertymeld_config
+
 # Nexus API constants
 TOKEN_URL = "https://app.propertymeld.com/api/v2/oauth/token/"
 API_BASE = "https://app.propertymeld.com/api/v2"
-MULTITENANT_ID = os.environ.get("PM_MULTITENANT_ID", "3287")
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
 import time
@@ -135,6 +136,7 @@ def _api_get_json(path: str, params: dict | None = None) -> Any:
     import urllib.request
 
     token = get_token()
+    multitenant_id = require_propertymeld_config().multitenant_id
     url = f"{API_BASE}{path}"
     if params:
         url += "?" + urllib.parse.urlencode(params)
@@ -143,7 +145,7 @@ def _api_get_json(path: str, params: dict | None = None) -> Any:
         url,
         headers={
             "Authorization": f"Bearer {token}",
-            "X-Multitenant-Id": MULTITENANT_ID,
+            "X-Multitenant-Id": multitenant_id,
             "User-Agent": UA,
             "Accept": "application/json",
         },

@@ -117,7 +117,7 @@ class TestListProjects:
         pages = {
             "projects/?limit=3": {
                 "results": [{"id": 222001}, {"id": 222002}],
-                "next": "https://app.propertymeld.test/3287/m/3287/api/projects/?cursor=abc&limit=100",
+                "next": "https://app.propertymeld.test/1000/m/1000/api/projects/?cursor=abc&limit=100",
             },
             "projects/?cursor=abc&limit=100": {
                 "results": [{"id": 222003}],
@@ -144,11 +144,11 @@ class TestListProjects:
         pages = {
             "projects/?limit=100": {
                 "results": [{"id": i} for i in range(1000, 1100)],
-                "next": "https://app.propertymeld.test/3287/m/3287/api/projects/?cursor=page2&limit=100",
+                "next": "https://app.propertymeld.test/1000/m/1000/api/projects/?cursor=page2&limit=100",
             },
             "projects/?cursor=page2&limit=100": {
                 "results": [{"id": i} for i in range(1100, (12 * 100))],
-                "next": "https://app.propertymeld.test/3287/m/3287/api/projects/?cursor=page3&limit=100",
+                "next": "https://app.propertymeld.test/1000/m/1000/api/projects/?cursor=page3&limit=100",
             },
             "projects/?cursor=page3&limit=100": {
                 "results": [{"id": i} for i in range((12 * 100), 1300)],
@@ -176,7 +176,7 @@ class TestListProjects:
         pages = {
             "vendors/?limit=100": {
                 "results": [{"id": 1}],
-                "next": "https://app.propertymeld.test/3287/m/3287/api/vendors/?cursor=page2&limit=100",
+                "next": "https://app.propertymeld.test/1000/m/1000/api/vendors/?cursor=page2&limit=100",
             },
             "vendors/?cursor=page2&limit=100": {
                 "results": [{"id": 2}],
@@ -203,7 +203,7 @@ class TestListProjects:
         pages = {
             "projects/?limit=100": {
                 "results": [{"id": 1}],
-                "next": "https://app.propertymeld.test/3287/m/3287/api/projects/?cursor=page2&limit=100",
+                "next": "https://app.propertymeld.test/1000/m/1000/api/projects/?cursor=page2&limit=100",
             },
             "projects/?cursor=page2&limit=100": {
                 "results": [{"id": 2}],

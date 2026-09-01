@@ -17,8 +17,9 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from .config import require_propertymeld_config
 from .http_backend import _validate_meld_id
-from .utils import API_BASE, MULTITENANT_ID, UA, get_token, print_error
+from .utils import API_BASE, UA, get_token, print_error
 
 
 def _api_get(path: str, params: Optional[dict] = None) -> Any:
@@ -26,6 +27,7 @@ def _api_get(path: str, params: Optional[dict] = None) -> Any:
     import urllib.parse
 
     token = get_token()
+    multitenant_id = require_propertymeld_config().multitenant_id
     url = f"{API_BASE}{path}"
     if params:
         url += "?" + urllib.parse.urlencode(params)
@@ -34,7 +36,7 @@ def _api_get(path: str, params: Optional[dict] = None) -> Any:
         url,
         headers={
             "Authorization": f"Bearer {token}",
-            "X-Multitenant-Id": MULTITENANT_ID,
+            "X-Multitenant-Id": multitenant_id,
             "User-Agent": UA,
             "Accept": "application/json",
         },
@@ -93,7 +95,7 @@ def list_work_orders(
 
     PM Nexus accepts UPPER_CASE_SNAKE_CASE values for the `status` filter and
     rejects anything else (HTTP 400 "Select a valid choice"). The valid set
-    observed via Nexus introspection on tenant 3287:
+    observed via Nexus introspection on tenant 1000:
 
         PENDING_ASSIGNMENT
         PENDING_VENDOR

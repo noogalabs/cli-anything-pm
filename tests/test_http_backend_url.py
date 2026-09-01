@@ -14,10 +14,7 @@ from cli_anything.propertymeld import http_backend as hb
 class TestBuildUrl:
     def test_manager_default(self):
         url = hb._build_url("melds/M123ABC/complete/")
-        assert url == (
-            f"https://app.propertymeld.com/{hb.MULTITENANT}"
-            f"/m/{hb.MULTITENANT}/api/melds/M123ABC/complete/"
-        )
+        assert url == "https://app.propertymeld.com/1000/m/1000/api/melds/M123ABC/complete/"
 
     def test_manager_explicit(self):
         url = hb._build_url("melds/", side="manager")
@@ -30,10 +27,7 @@ class TestBuildUrl:
 
     def test_vendor_with_id(self):
         url = hb._build_url("melds/M123ABC/complete/", side="vendor", vendor_id="91159")
-        assert url == (
-            f"https://app.propertymeld.com/{hb.MULTITENANT}"
-            f"/v/91159/api/melds/M123ABC/complete/"
-        )
+        assert url == "https://app.propertymeld.com/1000/v/91159/api/melds/M123ABC/complete/"
 
     def test_unknown_side_raises(self):
         with pytest.raises(ValueError, match="unknown side"):

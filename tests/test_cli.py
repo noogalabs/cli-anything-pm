@@ -29,7 +29,7 @@ def runner():
 
 MOCK_WO_LIST = [{"id": 1001, "status": "open", "description": "Test WO"}]
 MOCK_PROPERTIES = [{"id": 5, "name": "123 Main St"}]
-MOCK_VENDORS = [{"id": 10, "name": "Dyer HVAC"}]
+MOCK_VENDORS = [{"id": 10, "name": "Example HVAC"}]
 
 
 class TestWorkOrdersCLI:
@@ -66,7 +66,7 @@ class TestWorkOrdersCLI:
                 cli,
                 [
                     "work-orders", "list",
-                    "--assigned-to-tech", "90025",
+                    "--assigned-to-tech", "90022",
                     "--assigned-to-vendor", "99",
                     "--stuck-hours", "48",
                     "--created-since", "2026-05-18T00:00:00Z",
@@ -78,7 +78,7 @@ class TestWorkOrdersCLI:
         mock_fn.assert_called_once_with(
             status=None,
             status_raw=None,
-            assigned_to_tech=90025,
+            assigned_to_tech=90022,
             assigned_to_vendor=99,
             stuck_hours=48.0,
             created_since="2026-05-18T00:00:00Z",
@@ -96,7 +96,7 @@ class TestWorkOrdersCLI:
                 [
                     "work-orders", "list",
                     "--status-raw", "MAINTENANCE_COULD_NOT_COMPLETE",
-                    "--assigned-to-tech", "90025",
+                    "--assigned-to-tech", "90022",
                     "--created-since", "2026-05-18T00:00:00Z",
                     "--status-not", "COMPLETED",
                 ],
@@ -105,7 +105,7 @@ class TestWorkOrdersCLI:
         mock_fn.assert_called_once_with(
             status=None,
             status_raw="MAINTENANCE_COULD_NOT_COMPLETE",
-            assigned_to_tech=90025,
+            assigned_to_tech=90022,
             assigned_to_vendor=None,
             stuck_hours=None,
             created_since="2026-05-18T00:00:00Z",
@@ -170,20 +170,20 @@ class TestVendorsCLI:
             result = runner.invoke(cli, ["vendors", "list"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data[0]["name"] == "Dyer HVAC"
+        assert data[0]["name"] == "Example HVAC"
 
     def test_invite_passes_captured_args(self, runner):
         with patch(
             "cli_anything.propertymeld.http_backend.invite_vendor",
-            return_value={"ok": True, "email": "david+zztest@noogalabs.com"},
+            return_value={"ok": True, "email": "alex+zztest@example.com"},
         ) as mock_fn:
             result = runner.invoke(cli, [
                 "vendors", "invite",
-                "--email", "david+zztest@noogalabs.com",
+                "--email", "alex+zztest@example.com",
                 "--first-name", "ZZ TEST CAPTURE",
                 "--last-name", "test last name ",
                 "--company", "test company name",
-                "--line1", "123 test address chattanooga tn ",
+                "--line1", "123 test address example city ",
                 "--postcode", "37421",
                 "--phone", "2025550133",
             ])
@@ -191,11 +191,11 @@ class TestVendorsCLI:
         data = json.loads(result.output)
         assert data["ok"] is True
         mock_fn.assert_called_once_with(
-            email="david+zztest@noogalabs.com",
+            email="alex+zztest@example.com",
             first_name="ZZ TEST CAPTURE",
             last_name="test last name ",
             company="test company name",
-            line1="123 test address chattanooga tn ",
+            line1="123 test address example city ",
             postcode="37421",
             phone="2025550133",
             state="",
@@ -204,32 +204,32 @@ class TestVendorsCLI:
 
 class TestAgentsCLI:
     def test_agents_list_runs_and_emits_json(self, runner):
-        mock_agents = [{"id": 1, "first_name": "Person019", "last_name": "Person029"}]
+        mock_agents = [{"id": 1, "first_name": "Person021", "last_name": "Person029"}]
         with patch("cli_anything.propertymeld.http_backend.list_agents",
                    return_value=mock_agents):
             result = runner.invoke(cli, ["agents", "list"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data[0]["first_name"] == "Person019"
+        assert data[0]["first_name"] == "Person021"
 
     def test_agents_search_filters_by_name(self, runner):
         mock_agents = [
-            {"id": 1, "first_name": "Person019", "last_name": "Person029"},
-            {"id": 2, "first_name": "Person030", "last_name": "Person021"},
+            {"id": 1, "first_name": "Person021", "last_name": "Person029"},
+            {"id": 2, "first_name": "Person030", "last_name": "Person040"},
             {"id": 3, "first_name": "Person017", "last_name": "Person034"},
         ]
         with patch("cli_anything.propertymeld.http_backend.list_agents",
                    return_value=mock_agents):
-            result = runner.invoke(cli, ["agents", "search", "carlos"])
+            result = runner.invoke(cli, ["agents", "search", "jordan"])
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert len(data) == 1
-        assert data[0]["first_name"] == "Person019"
+        assert data[0]["first_name"] == "Person021"
 
     def test_agents_get_returns_full_record(self, runner):
         mock_agent = {
-            "id": 90026,
-            "first_name": "Person019",
+            "id": 90023,
+            "first_name": "Person021",
             "last_name": "Person029",
             "role": "MAINTENANCE",
             "contact": None,
@@ -237,12 +237,12 @@ class TestAgentsCLI:
         }
         with patch("cli_anything.propertymeld.http_backend.get_management_agent",
                    return_value=mock_agent) as mock_fn:
-            result = runner.invoke(cli, ["agents", "get", "90026"])
+            result = runner.invoke(cli, ["agents", "get", "90023"])
         assert result.exit_code == 0
-        mock_fn.assert_called_once_with(90026)
+        mock_fn.assert_called_once_with(90023)
         data = json.loads(result.output)
-        assert data["id"] == 90026
-        assert data["first_name"] == "Person019"
+        assert data["id"] == 90023
+        assert data["first_name"] == "Person021"
         # contact-None case (no contact record exists) surfaces as-is — operator
         # sees the PM data shape rather than silently missing the gap.
         assert data["contact"] is None
@@ -357,7 +357,7 @@ class TestWorkOrdersWorkEntriesCLI:
     def test_work_entries_outputs_list(self, runner):
         mock_entries = [
             {"id": 1, "checkin": "2026-05-01T08:00:00Z", "checkout": "2026-05-01T10:30:00Z",
-             "hours": 2.5, "agent_name": "Person019", "description": "AC tune-up",
+             "hours": 2.5, "agent_name": "Person021", "description": "AC tune-up",
              "long_description": "Replaced filter, cleaned coils."},
         ]
         with patch("cli_anything.propertymeld.http_backend.list_work_entries",
@@ -365,13 +365,13 @@ class TestWorkOrdersWorkEntriesCLI:
             result = runner.invoke(cli, ["work-orders", "work-entries", "list", "90000014"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data[0]["agent_name"] == "Person019"
+        assert data[0]["agent_name"] == "Person021"
         mock_fn.assert_called_once_with("90000014")
 
 
 class TestAssignTechCLI:
     def test_assign_tech_canonical_and_alias_stdout_match(self, runner):
-        payload = {"ok": True, "agent_id": 90026, "matched_name": "Synthetic Person 007"}
+        payload = {"ok": True, "agent_id": 90023, "matched_name": "Synthetic Person 008"}
         with patch("cli_anything.propertymeld.http_backend.assign_tech",
                    return_value=payload) as mock_fn:
             canonical = runner.invoke(cli, ["work-orders", "assign-tech",
@@ -395,7 +395,7 @@ class TestAssignTechCLI:
 class TestAssignVendorCLI:
     def test_assign_vendor_passes_partial_name(self, runner):
         with patch("cli_anything.propertymeld.http_backend.assign_vendor_by_name",
-                   return_value={"ok": True, "vendor_id": 10, "matched_name": "Dyer HVAC"}) as mock_fn:
+                   return_value={"ok": True, "vendor_id": 10, "matched_name": "Example HVAC"}) as mock_fn:
             result = runner.invoke(cli, ["work-orders", "assign-vendor",
                                          "--work-order-id", "90000014",
                                          "--vendor", "dyer"])
@@ -405,7 +405,7 @@ class TestAssignVendorCLI:
         mock_fn.assert_called_once_with("90000014", "dyer", account_prefix="1")
 
     def test_assign_vendor_canonical_and_alias_stdout_match(self, runner):
-        payload = {"ok": True, "vendor_id": 10, "matched_name": "Dyer HVAC"}
+        payload = {"ok": True, "vendor_id": 10, "matched_name": "Example HVAC"}
         with patch("cli_anything.propertymeld.http_backend.assign_vendor_by_name",
                    return_value=payload) as mock_fn:
             canonical = runner.invoke(cli, ["work-orders", "assign-vendor",
@@ -529,14 +529,14 @@ class TestWorkOrdersLifecycleCLI:
     def test_set_coordinator_cmd_calls_backend(self, runner):
         with patch("cli_anything.propertymeld.http_backend.set_coordinator",
                    return_value={"ok": True, "meld_id": 90000014,
-                                 "coordinator_id": 90025}) as mock_fn:
+                                 "coordinator_id": 90022}) as mock_fn:
             result = runner.invoke(cli, ["work-orders", "set-coordinator",
                                          "--meld-id", "90000014",
-                                         "--user-id", "90025"])
+                                         "--user-id", "90022"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data["coordinator_id"] == 90025
-        mock_fn.assert_called_once_with("90000014", 90025)
+        assert data["coordinator_id"] == 90022
+        mock_fn.assert_called_once_with("90000014", 90022)
 
     def test_merge_into_destination_legacy_flags(self, runner):
         """Backwards-compat path: --meld-id + --into are mapped to the captured
@@ -667,9 +667,9 @@ class TestTenantsCLI:
             result = runner.invoke(cli, [
                 "tenants", "invite",
                 "--unit-id", "9000005",
-                "--first-name", "Person031",
+                "--first-name", "Person038",
                 "--last-name", "Person020",
-                "--email", "david@example.com",
+                "--email", "alex@example.com",
                 "--cell", "2025550128",
                 "--home", "2025550130",
                 "--secondary-email", "alt@example.com",
@@ -680,9 +680,9 @@ class TestTenantsCLI:
         assert data["tenant_id"] == 9000020
         mock_fn.assert_called_once_with(
             unit_id=9000005,
-            first_name="Person031",
+            first_name="Person038",
             last_name="Person020",
-            email="david@example.com",
+            email="alex@example.com",
             cell_phone="2025550128",
             home_phone="2025550130",
             secondary_email="alt@example.com",
@@ -696,9 +696,9 @@ class TestTenantsCLI:
             result = runner.invoke(cli, [
                 "tenants", "invite",
                 "--unit-id", "9000005",
-                "--first-name", "Person031",
+                "--first-name", "Person038",
                 "--last-name", "Person020",
-                "--email", "david@example.com",
+                "--email", "alex@example.com",
                 "--cell", "2025550128",
                 "--no-invite",
             ])
@@ -936,7 +936,7 @@ class TestProjectsCreatePerson003CLI:
                 "--project-type", "TURN",
                 "--due-date", "2026-05-30T04:00:00.000Z",
                 "--start-date", "2026-05-14T10:30:00Z",
-                "--coordinator", "90025",
+                "--coordinator", "90022",
                 "--unit-id", "9000005",
                 "--unit-label", "123 Main St",
             ])
@@ -946,7 +946,7 @@ class TestProjectsCreatePerson003CLI:
         kw = mock_fn.call_args.kwargs
         assert kw["name"] == "Test"
         assert kw["project_type"] == "TURN"
-        assert kw["coordinators"] == [90025]
+        assert kw["coordinators"] == [90022]
         assert kw["unit"] == {"id": 9000005, "label": "123 Main St"}
         assert kw["meld_location"] == "Unit"
         assert kw["prop"] is None
@@ -959,7 +959,7 @@ class TestProjectsCreatePerson003CLI:
                 "--name", "P", "--project-type", "TURN",
                 "--due-date", "2026-05-30T04:00:00.000Z",
                 "--start-date", "2026-05-14T10:30:00Z",
-                "--coordinator", "90025",
+                "--coordinator", "90022",
                 "--unit-id", "9000005", "--unit-label", "L",
                 "--prop-id", "9999",
             ])
@@ -1035,13 +1035,13 @@ class TestProjectsCreateMeldInCLI:
                    return_value={"ok": True, "meld_id": 99, "project_id": "222959", "result": {}}) as mock_fn:
             result = runner.invoke(cli, self._COMMON_ARGS + [
                 "--unit-id", "9000005",
-                "--maintenance-id", "90025",
+                "--maintenance-id", "90022",
                 "--tenant-id", "9000009",
             ])
         assert result.exit_code == 0, result.output
         call = mock_fn.call_args
         assert call.kwargs["unit"] == {"id": 9000005}
-        assert call.kwargs["maintenance"] == [{"id": 90025}]
+        assert call.kwargs["maintenance"] == [{"id": 90022}]
         assert call.kwargs["tenants"] == [{"id": 9000009}]
 
     def test_multiple_maintenance_ids_repeatable(self, runner):
@@ -1049,13 +1049,13 @@ class TestProjectsCreateMeldInCLI:
                    return_value={"ok": True, "meld_id": 99, "project_id": "222959", "result": {}}) as mock_fn:
             result = runner.invoke(cli, self._COMMON_ARGS + [
                 "--unit-id", "9000005",
-                "--maintenance-id", "90025",
-                "--maintenance-id", "90028",
+                "--maintenance-id", "90022",
+                "--maintenance-id", "90024",
                 "--tenant-id", "9000009",
                 "--tenant-id", "9000010",
             ])
         assert result.exit_code == 0, result.output
-        assert mock_fn.call_args.kwargs["maintenance"] == [{"id": 90025}, {"id": 90028}]
+        assert mock_fn.call_args.kwargs["maintenance"] == [{"id": 90022}, {"id": 90024}]
         assert mock_fn.call_args.kwargs["tenants"] == [{"id": 9000009}, {"id": 9000010}]
 
     def test_json_flags_still_work_for_power_users(self, runner):
@@ -1074,7 +1074,7 @@ class TestProjectsCreateMeldInCLI:
 
     def test_missing_both_unit_flags_errors(self, runner):
         result = runner.invoke(cli, self._COMMON_ARGS + [
-            "--maintenance-id", "90025",
+            "--maintenance-id", "90022",
         ])
         assert result.exit_code != 0
         assert "--unit-id" in result.output and "--unit-json" in result.output
@@ -1083,7 +1083,7 @@ class TestProjectsCreateMeldInCLI:
         result = runner.invoke(cli, self._COMMON_ARGS + [
             "--unit-id", "9000005",
             "--unit-json", '{"id": 1}',
-            "--maintenance-id", "90025",
+            "--maintenance-id", "90022",
         ])
         assert result.exit_code != 0
         assert "--unit-id" in result.output and "--unit-json" in result.output
@@ -1100,7 +1100,7 @@ class TestProjectsCreateMeldInCLI:
                    return_value={"ok": True, "meld_id": 99, "project_id": "222959", "result": {}}) as mock_fn:
             result = runner.invoke(cli, self._COMMON_ARGS + [
                 "--unit-id", "9000005",
-                "--maintenance-id", "90025",
+                "--maintenance-id", "90022",
             ])
         assert result.exit_code == 0, result.output
         assert mock_fn.call_args.kwargs["tenants"] == []
@@ -1108,7 +1108,7 @@ class TestProjectsCreateMeldInCLI:
     def test_passing_both_tenant_id_and_tenants_json_errors(self, runner):
         result = runner.invoke(cli, self._COMMON_ARGS + [
             "--unit-id", "9000005",
-            "--maintenance-id", "90025",
+            "--maintenance-id", "90022",
             "--tenant-id", "9000009",
             "--tenants-json", '[{"id": 99}]',
         ])
@@ -1118,7 +1118,7 @@ class TestProjectsCreateMeldInCLI:
     def test_empty_tenants_json_still_parses_and_errors(self, runner):
         result = runner.invoke(cli, self._COMMON_ARGS + [
             "--unit-id", "9000005",
-            "--maintenance-id", "90025",
+            "--maintenance-id", "90022",
             "--tenants-json", "",
         ])
         assert result.exit_code != 0
@@ -1133,7 +1133,7 @@ class TestProjectsCreateMeldInCLI:
         with patch("cli_anything.propertymeld.http_backend.create_meld_in_project") as mock_fn:
             result = runner.invoke(cli, args + [
                 "--unit-id", "9000005",
-                "--maintenance-id", "90025",
+                "--maintenance-id", "90022",
             ])
         assert result.exit_code != 0
         assert "--work-location" in result.output
@@ -1146,7 +1146,7 @@ class TestProjectsCreateMeldInCLI:
         with patch("cli_anything.propertymeld.http_backend.create_meld_in_project") as mock_fn:
             result = runner.invoke(cli, args + [
                 "--unit-id", "9000005",
-                "--maintenance-id", "90025",
+                "--maintenance-id", "90022",
             ])
         assert result.exit_code != 0
         assert "work-location cannot be empty" in result.output
@@ -1157,7 +1157,7 @@ class TestProjectsCreateMeldInCLI:
         with patch("cli_anything.propertymeld.http_backend.create_meld_in_project") as mock_fn:
             result = runner.invoke(cli, args + [
                 "--unit-id", "9000005",
-                "--maintenance-id", "90025",
+                "--maintenance-id", "90022",
             ])
         assert result.exit_code != 0
         assert "work-location cannot be empty" in result.output
@@ -1182,13 +1182,13 @@ class TestWorkOrdersCreateCLI:
                    return_value={"ok": True, "meld_id": 12772803, "result": {}}) as mock_fn:
             result = runner.invoke(cli, self._COMMON_ARGS + [
                 "--unit-id", "9000005",
-                "--maintenance-id", "90025",
+                "--maintenance-id", "90022",
                 "--tenant-id", "9000009",
             ])
         assert result.exit_code == 0, result.output
         kwargs = mock_fn.call_args.kwargs
         assert kwargs["unit"] == {"id": 9000005}
-        assert kwargs["maintenance"] == [{"id": 90025}]
+        assert kwargs["maintenance"] == [{"id": 90022}]
         assert kwargs["tenants"] == [{"id": 9000009}]
 
     def test_work_orders_create_allows_unassigned_pending_assignment(self, runner):
@@ -1218,7 +1218,7 @@ class TestWorkOrdersCreateCLI:
                    return_value={"ok": True, "meld_id": 12772803, "result": {"id": 12772803}}):
             result = runner.invoke(cli, self._COMMON_ARGS + [
                 "--unit-id", "9000005",
-                "--maintenance-id", "90025",
+                "--maintenance-id", "90022",
             ])
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
@@ -1231,7 +1231,7 @@ class TestWorkOrdersCreateCLI:
         with patch("cli_anything.propertymeld.http_backend.create_meld") as mock_fn:
             result = runner.invoke(cli, args + [
                 "--unit-id", "9000005",
-                "--maintenance-id", "90025",
+                "--maintenance-id", "90022",
             ])
         assert result.exit_code != 0
         assert "--work-location" in result.output
@@ -1244,7 +1244,7 @@ class TestWorkOrdersCreateCLI:
         with patch("cli_anything.propertymeld.http_backend.create_meld") as mock_fn:
             result = runner.invoke(cli, args + [
                 "--unit-id", "9000005",
-                "--maintenance-id", "90025",
+                "--maintenance-id", "90022",
             ])
         assert result.exit_code != 0
         assert "work-location cannot be empty" in result.output
@@ -1255,7 +1255,7 @@ class TestWorkOrdersCreateCLI:
         with patch("cli_anything.propertymeld.http_backend.create_meld") as mock_fn:
             result = runner.invoke(cli, args + [
                 "--unit-id", "9000005",
-                "--maintenance-id", "90025",
+                "--maintenance-id", "90022",
             ])
         assert result.exit_code != 0
         assert "work-location cannot be empty" in result.output
@@ -1640,7 +1640,7 @@ class TestRequiredFreeTextNonEmpty:
                 "--project-type", "TURN",
                 "--due-date", "2026-05-30T04:00:00.000Z",
                 "--start-date", "2026-05-14T10:30:00Z",
-                "--coordinator", "90025",
+                "--coordinator", "90022",
                 "--unit-id", "9000005",
                 "--unit-label", "123 Main St",
             ])
@@ -1673,7 +1673,7 @@ class TestRequiredFreeTextNonEmpty:
                 "--due-date", "2026-05-16T02:52:41.393Z",
                 "--work-location", "Kitchen",
                 "--unit-id", "9000005",
-                "--maintenance-id", "90025",
+                "--maintenance-id", "90022",
             ])
         assert result.exit_code != 0
         assert "brief-description cannot be empty" in result.output

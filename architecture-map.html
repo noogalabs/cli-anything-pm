@@ -384,7 +384,7 @@ const nodes = [
     role:'Property Meld Nexus partner API over OAuth2 client-credentials; serves shallow reads at app.propertymeld.com/api/v2 with X-Multitenant-Id.',
     plain:'Property Meld\'s official read-only API. Logs in with a key and returns slimmed-down lists. This is where every standard list and lookup ends up.',
     path:'(external — app.propertymeld.com/api/v2)',
-    notes:['Token: POST /api/v2/oauth/token/','43-field shallow shape; omits nested relations','AscendOps convention: <=7 calls/day'],
+    notes:['Token: POST /api/v2/oauth/token/','43-field shallow shape; omits nested relations','Operator convention: <=7 calls/day'],
     tag:['overview','reads','schema','external','all'],
   }),
   N('ext-cookie','external','PM Cookie API','sessionid + CSRF · rich + writes',1510,212,240,88,'external',{

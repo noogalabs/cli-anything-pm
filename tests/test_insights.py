@@ -26,7 +26,7 @@ def _response(payload):
     response.__enter__.return_value = response
     response.__exit__.return_value = False
     response.geturl.return_value = (
-        "https://app.propertymeld.com/3287/m/3287/api/analytics/parquet/"
+        "https://app.propertymeld.com/1000/m/1000/api/analytics/parquet/"
         "raw_meld_data.parquet"
     )
     response.read.return_value = payload
@@ -43,8 +43,15 @@ def credentials(tmp_path, monkeypatch):
             "domain": ".propertymeld.com",
         }]
     }))
-    monkeypatch.setenv("PM_CREDS_PATH", str(path))
-    monkeypatch.setenv("PM_MULTITENANT_ID", "3287")
+    config = tmp_path / "propertymeld-config.json"
+    config.write_text(json.dumps({
+        "multitenant_id": "1000",
+        "nexus_account_id": "2000",
+        "credentials_path": str(path),
+    }))
+    monkeypatch.setenv("PROPERTYMELD_CONFIG", str(config))
+    from cli_anything.propertymeld.config import propertymeld_config
+    propertymeld_config.cache_clear()
     return path
 
 
@@ -510,7 +517,7 @@ def _invoke_recorded_cli(command, rows, *, roster=(), extra_args=()):
     response = _response(_parquet_bytes(rows))
     if command == "benchmarks":
         response.geturl.return_value = (
-            "https://app.propertymeld.com/3287/m/3287/api/analytics/parquet/"
+            "https://app.propertymeld.com/1000/m/1000/api/analytics/parquet/"
             "benchmarks.parquet"
         )
     with patch("urllib.request.urlopen", return_value=response), patch(
@@ -537,7 +544,7 @@ def test_melds_uses_exact_get_and_resolves_without_leaking_free_text(credentials
     assert request.get_method() == "GET"
     assert request.data is None
     assert request.full_url == (
-        "https://app.propertymeld.com/3287/m/3287/api/analytics/parquet/"
+        "https://app.propertymeld.com/1000/m/1000/api/analytics/parquet/"
         "raw_meld_data.parquet"
     )
     list_vendors.assert_called_once_with(limit=None)
@@ -597,7 +604,7 @@ def test_cli_preserves_missing_project_disclosure_for_every_mode(
     if command == "benchmarks":
         response = _response(_parquet_bytes(RECORDED_NAN_BENCHMARKS))
         response.geturl.return_value = (
-            "https://app.propertymeld.com/3287/m/3287/api/analytics/parquet/"
+            "https://app.propertymeld.com/1000/m/1000/api/analytics/parquet/"
             "benchmarks.parquet"
         )
     else:
@@ -622,7 +629,7 @@ def test_cli_preserves_every_named_output_member_from_recorded_parquet(
     if command == "benchmarks":
         response = _response(_parquet_bytes(RECORDED_CLI_BENCHMARKS))
         response.geturl.return_value = (
-            "https://app.propertymeld.com/3287/m/3287/api/analytics/parquet/"
+            "https://app.propertymeld.com/1000/m/1000/api/analytics/parquet/"
             "benchmarks.parquet"
         )
     else:
@@ -692,7 +699,7 @@ def test_cli_fails_closed_and_names_each_missing_required_member(
     response = _response(_parquet_bytes([row]))
     if command == "benchmarks":
         response.geturl.return_value = (
-            "https://app.propertymeld.com/3287/m/3287/api/analytics/parquet/"
+            "https://app.propertymeld.com/1000/m/1000/api/analytics/parquet/"
             "benchmarks.parquet"
         )
     with patch("urllib.request.urlopen", return_value=response), patch(
@@ -872,7 +879,7 @@ def test_benchmarks_exact_endpoint_and_recorded_shape(credentials):
     payload = _parquet_bytes(RECORDED_BENCHMARKS)
     response = _response(payload)
     response.geturl.return_value = (
-        "https://app.propertymeld.com/3287/m/3287/api/analytics/parquet/"
+        "https://app.propertymeld.com/1000/m/1000/api/analytics/parquet/"
         "benchmarks.parquet"
     )
     with patch("urllib.request.urlopen", return_value=response) as opener:
@@ -894,7 +901,7 @@ def test_benchmark_project_filter_treats_nan_as_non_project(credentials):
     payload = _parquet_bytes(RECORDED_NAN_BENCHMARKS)
     response = _response(payload)
     response.geturl.return_value = (
-        "https://app.propertymeld.com/3287/m/3287/api/analytics/parquet/"
+        "https://app.propertymeld.com/1000/m/1000/api/analytics/parquet/"
         "benchmarks.parquet"
     )
     with patch("urllib.request.urlopen", return_value=response):

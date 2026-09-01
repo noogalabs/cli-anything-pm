@@ -10,7 +10,7 @@ Usage:
     pm work-orders clone --meld-id 12345
     pm properties list --json
     pm vendors list --json
-    pm work-orders assign-tech --work-order-id 12345 --tech Person019 --json
+    pm work-orders assign-tech --work-order-id 12345 --tech Person021 --json
 """
 import json
 import sys
@@ -26,6 +26,34 @@ from .utils import output_json, print_error, resolve_meld_id
 def cli():
     """Property Meld CLI — read work orders, properties, vendors; assign techs."""
     pass
+
+
+def command_index(root: click.Group = cli) -> dict:
+    """Derive the public command catalog from the live Click tree."""
+    commands = []
+
+    def visit(command: click.Command, path: tuple[str, ...]) -> None:
+        if isinstance(command, click.Group):
+            for name, child in sorted(command.commands.items()):
+                visit(child, path + (name,))
+            return
+        commands.append({
+            "command": " ".join(path),
+            "help": command.help or "",
+        })
+
+    visit(root, ())
+    return {
+        "repository": "cli-anything-pm",
+        "commands": commands,
+    }
+
+
+@cli.command("index")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def command_index_cmd(as_json):
+    """Print the runtime-derived command index as JSON."""
+    output_json(command_index())
 
 
 # ── insights group (strictly read-only) ───────────────────────────────────────
@@ -49,7 +77,8 @@ def _output_insights(callable_, **kwargs):
 @click.option("--limit", type=click.IntRange(1, 10000), default=100, show_default=True)
 @click.option("--work-category", default=None, help="Exact work category filter.")
 @click.option("--project/--non-project", default=None, help="Filter project status.")
-def insights_melds(limit, work_category, project):
+@click.option("--json", "as_json", is_flag=True, default=True)
+def insights_melds(limit, work_category, project, as_json):
     """Return safe meld analytics with canonical vendor IDs."""
     _output_insights(
         insights_backend.get_melds,
@@ -63,7 +92,8 @@ def insights_melds(limit, work_category, project):
 @insights.command("turnovers")
 @click.option("--limit", type=click.IntRange(1, 10000), default=100, show_default=True)
 @click.option("--project/--non-project", default=None, help="Filter project status.")
-def insights_turnovers(limit, project):
+@click.option("--json", "as_json", is_flag=True, default=True)
+def insights_turnovers(limit, project, as_json):
     """Return TURNOVER analytics with canonical vendor IDs."""
     _output_insights(
         insights_backend.get_melds,
@@ -80,7 +110,8 @@ def insights_turnovers(limit, project):
 @click.option("--priority", default=None, help="Exact priority filter.")
 @click.option("--region", default=None, help="Exact region filter.")
 @click.option("--project/--non-project", default=None, help="Filter project status.")
-def insights_benchmarks(limit, work_category, priority, region, project):
+@click.option("--json", "as_json", is_flag=True, default=True)
+def insights_benchmarks(limit, work_category, priority, region, project, as_json):
     """Return PropertyMeld benchmark percentile rows."""
     _output_insights(
         insights_backend.get_benchmarks,
@@ -253,7 +284,7 @@ def list_work_entries_cmd(meld_id, as_json):
 @click.option("--meld-id", required=True, help="Meld ID")
 @click.option("--agent-id", "agent", required=True, type=int,
               help="Persona ID of the agent who performed the work "
-                   "(e.g. 90025=Person031, 90026=Person019)")
+                   "(e.g. 90022=Person038, 90023=Person021)")
 @click.option("--description", required=True, callback=_require_nonempty,
               help="Short summary, shown in the meld feed.")
 @click.option("--long-description", "long_description", default="",
@@ -880,7 +911,7 @@ def get_agent_cmd(agent_id, as_json):
 
     Phone-data caveat (Blue gap #N+3): the ``contact`` field on the agent
     detail endpoint is EITHER ``None`` (no contact record exists in PM —
-    observed on Person019 90026) OR an integer FK to a Person001 record that is
+    observed on Person021 90023) OR an integer FK to a Person001 record that is
     NOT exposed via the cookie-path ``/api/contacts/{id}/`` endpoint (404
     on probe). This means cell_phone / business_phone are NOT recoverable
     via this command alone for in-house techs whose contact lives in a
@@ -1006,7 +1037,8 @@ def list_api_keys(as_json):
 # ── probe ──────────────────────────────────────────────────────────────────────
 
 @cli.command()
-def probe():
+@click.option("--json", "as_json", is_flag=True, default=True)
+def probe(as_json):
     """Health check — verify API credentials and connectivity."""
     result = api_backend.probe()
     output_json(result)
@@ -1202,7 +1234,7 @@ def create_meld_in_project_cmd(
     ManagementAgent objects. Two paths:
 
     \b
-    - Ergonomic: --unit-id 9000005 --maintenance-id 90025 (repeatable)
+    - Ergonomic: --unit-id 9000005 --maintenance-id 90022 (repeatable)
       --tenant-id 9000009 (repeatable)
       → CLI auto-hydrates via GET /units/{id}/ and GET /agents/{id}/.
     - Power-user: --unit-json '<full obj>' --maintenance-json '<full list>'
