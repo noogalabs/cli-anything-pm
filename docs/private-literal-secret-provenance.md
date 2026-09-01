@@ -28,7 +28,10 @@ editing a hand-written name list. The phone/path/record-ID structural gate
 remains independent of the HMAC census.
 
 The source exports and pre-HMAC vocabulary contain private data and must
-remain untracked.
+remain untracked. Store conventional local inputs under the ignored
+`private-exports/` directory and store any local salt file with the ignored
+`*.vocab-salt` suffix. The contract test also rejects either pattern if a
+forced add ever makes one tracked.
 
 <!-- GENERATED_PRIVATE_LITERAL_PROVENANCE_START -->
 - Agent records: `10`

@@ -236,12 +236,48 @@ def _tracked_structural_private_matches(repo: Path):
     return matches
 
 
+def _is_fork_pull_request() -> bool:
+    if os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
+        return False
+    event_path = os.environ.get("GITHUB_EVENT_PATH")
+    if not event_path:
+        return False
+    try:
+        event = json.loads(Path(event_path).read_text(encoding="utf-8"))
+        pull = event["pull_request"]
+        return pull["head"]["repo"]["full_name"] != pull["base"]["repo"]["full_name"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+        # An unreadable event cannot prove this is a fork. Fail closed below.
+        return False
+
+
+def _tracked_private_export_paths(repo: Path) -> list[str]:
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=repo, check=True, capture_output=True
+    ).stdout.split(b"\0")
+    return sorted(
+        relative.decode("utf-8")
+        for relative in tracked
+        if relative
+        and (
+            relative.decode("utf-8").startswith("private-exports/")
+            or relative.decode("utf-8").endswith(".vocab-salt")
+        )
+    )
+
+
 def test_private_tenant_and_org_digests_do_not_match_tracked_files():
     repo = Path(__file__).parents[1]
     raw_salt = os.environ.get("PROPERTYMELD_VOCAB_SALT")
     if not raw_salt:
+        if os.environ.get("GITHUB_ACTIONS") == "true" and not _is_fork_pull_request():
+            pytest.fail(
+                "PROPERTYMELD_VOCAB_SALT is required in trusted GitHub Actions; "
+                "the private-digest census cannot run without it"
+            )
         pytest.skip(
-            "PROPERTYMELD_VOCAB_SALT is absent; private-digest census is armed in CI"
+            "PROPERTYMELD_VOCAB_SALT is absent locally or on a fork PR; "
+            "private-digest census did not run"
         )
     module = _private_vocab_module()
     salt = module.decode_salt(raw_salt)
@@ -263,9 +299,50 @@ def test_private_tenant_and_org_digests_do_not_match_tracked_files():
     assert _tracked_private_digest_matches(repo, set(decoded), salt) == []
 
 
+def test_trusted_ci_missing_salt_fails_instead_of_skipping(monkeypatch):
+    monkeypatch.delenv("PROPERTYMELD_VOCAB_SALT", raising=False)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+
+    try:
+        test_private_tenant_and_org_digests_do_not_match_tracked_files()
+    except BaseException as exc:
+        assert isinstance(exc, pytest.fail.Exception)
+        assert "PROPERTYMELD_VOCAB_SALT is required" in str(exc)
+    else:
+        pytest.fail("trusted CI missing-salt path did not fail")
+
+
+def test_fork_pull_request_missing_salt_skips_by_name(monkeypatch, tmp_path):
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({
+        "pull_request": {
+            "head": {"repo": {"full_name": "contributor/fork"}},
+            "base": {"repo": {"full_name": "noogalabs/cli-anything-pm"}},
+        }
+    }), encoding="utf-8")
+    monkeypatch.delenv("PROPERTYMELD_VOCAB_SALT", raising=False)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+
+    try:
+        test_private_tenant_and_org_digests_do_not_match_tracked_files()
+    except BaseException as exc:
+        assert isinstance(exc, pytest.skip.Exception)
+        assert "fork PR" in str(exc)
+    else:
+        pytest.fail("fork PR missing-salt path did not skip")
+
+
 def test_structural_private_data_shapes_are_absent_from_tracked_files():
     repo = Path(__file__).parents[1]
     assert _tracked_structural_private_matches(repo) == []
+
+
+def test_private_export_inputs_are_never_tracked():
+    repo = Path(__file__).parents[1]
+    assert _tracked_private_export_paths(repo) == []
 
 
 def _tracked_fixture(tmp_path: Path, text: str) -> Path:
@@ -289,6 +366,16 @@ def test_sourced_resident_name_is_visible_to_private_literal_census(tmp_path):
     )
 
     assert _tracked_private_digest_matches(repo, digests, salt) == ["fixture.py"]
+
+
+def test_tracked_private_export_path_is_visible_to_custody_census(tmp_path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    export = tmp_path / "private-exports" / "tenants.json"
+    export.parent.mkdir()
+    export.write_text("[]\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-f", str(export.relative_to(tmp_path))], cwd=tmp_path, check=True)
+
+    assert _tracked_private_export_paths(tmp_path) == ["private-exports/tenants.json"]
 
 
 def test_common_english_first_name_is_not_a_digest_subject(tmp_path):
