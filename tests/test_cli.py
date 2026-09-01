@@ -29,7 +29,7 @@ def runner():
 
 MOCK_WO_LIST = [{"id": 1001, "status": "open", "description": "Test WO"}]
 MOCK_PROPERTIES = [{"id": 5, "name": "123 Main St"}]
-MOCK_VENDORS = [{"id": 10, "name": "Example HVAC"}]
+MOCK_VENDORS = [{"id": 10, "name": "Fixture Service"}]
 
 
 class TestWorkOrdersCLI:
@@ -170,7 +170,7 @@ class TestVendorsCLI:
             result = runner.invoke(cli, ["vendors", "list"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data[0]["name"] == "Example HVAC"
+        assert data[0]["name"] == "Fixture Service"
 
     def test_invite_passes_captured_args(self, runner):
         with patch(
@@ -180,9 +180,9 @@ class TestVendorsCLI:
             result = runner.invoke(cli, [
                 "vendors", "invite",
                 "--email", "alex+zztest@example.com",
-                "--first-name", "ZZ TEST CAPTURE",
+                "--first-name", "Fixture Capture",
                 "--last-name", "test last name ",
-                "--company", "test company name",
+                "--company", "fixture business",
                 "--line1", "123 test address example city ",
                 "--postcode", "12345",
                 "--phone", "2025550133",
@@ -192,9 +192,9 @@ class TestVendorsCLI:
         assert data["ok"] is True
         mock_fn.assert_called_once_with(
             email="alex+zztest@example.com",
-            first_name="ZZ TEST CAPTURE",
+            first_name="Fixture Capture",
             last_name="test last name ",
-            company="test company name",
+            company="fixture business",
             line1="123 test address example city ",
             postcode="12345",
             phone="2025550133",
@@ -395,7 +395,7 @@ class TestAssignTechCLI:
 class TestAssignVendorCLI:
     def test_assign_vendor_passes_partial_name(self, runner):
         with patch("cli_anything.propertymeld.http_backend.assign_vendor_by_name",
-                   return_value={"ok": True, "vendor_id": 10, "matched_name": "Example HVAC"}) as mock_fn:
+                   return_value={"ok": True, "vendor_id": 10, "matched_name": "Fixture Service"}) as mock_fn:
             result = runner.invoke(cli, ["work-orders", "assign-vendor",
                                          "--work-order-id", "90000001",
                                          "--vendor", "dyer"])
@@ -405,7 +405,7 @@ class TestAssignVendorCLI:
         mock_fn.assert_called_once_with("90000001", "dyer", account_prefix="1")
 
     def test_assign_vendor_canonical_and_alias_stdout_match(self, runner):
-        payload = {"ok": True, "vendor_id": 10, "matched_name": "Example HVAC"}
+        payload = {"ok": True, "vendor_id": 10, "matched_name": "Fixture Service"}
         with patch("cli_anything.propertymeld.http_backend.assign_vendor_by_name",
                    return_value=payload) as mock_fn:
             canonical = runner.invoke(cli, ["work-orders", "assign-vendor",
@@ -714,13 +714,13 @@ class TestTenantsCLI:
 # Synthetic fixture covers the /api/tenants/ shape: flat email and phone at
 # the top level, with no nested contact/user.
 _TENANT_FIXTURE = [
-    {"id": 9000016, "first_name": "Resident", "last_name": "Alpha",
+    {"id": 9000016, "first_name": "Fixture", "last_name": "Alpha",
      "email": "resident.alpha@example.com", "phone": "(202) 555-0123"},
-    {"id": 9000017, "first_name": "Resident", "last_name": "Beta",
+    {"id": 9000017, "first_name": "Fixture", "last_name": "Beta",
      "email": "resident.beta@example.com", "phone": "+1 (202) 555-0100"},
-    {"id": 9000018, "first_name": "Resident", "last_name": "Gamma",
+    {"id": 9000018, "first_name": "Fixture", "last_name": "Gamma",
      "email": "resident.gamma@example.com", "phone": "(202) 555-0122"},
-    {"id": 9000019, "first_name": "Resident", "last_name": "Delta",
+    {"id": 9000019, "first_name": "Fixture", "last_name": "Delta",
      "email": "resident.delta@example.com", "phone": None},
 ]
 
@@ -735,12 +735,12 @@ class TestFilterTenants:
 
     def test_multi_word_name_match(self):
         from cli_anything.propertymeld.http_backend import _filter_tenants
-        out = _filter_tenants(_TENANT_FIXTURE, "Resident Alpha")
+        out = _filter_tenants(_TENANT_FIXTURE, "Fixture Alpha")
         assert [t["id"] for t in out] == [9000016]
 
     def test_multi_word_name_match_case_insensitive(self):
         from cli_anything.propertymeld.http_backend import _filter_tenants
-        out = _filter_tenants(_TENANT_FIXTURE, "resident beta")
+        out = _filter_tenants(_TENANT_FIXTURE, "fixture beta")
         assert [t["id"] for t in out] == [9000017]
 
     def test_email_substring_match(self):
@@ -805,12 +805,12 @@ class TestFilterTenants:
         from cli_anything.propertymeld.http_backend import _filter_tenants
         # A trailing-space first_name must still match its normalized form.
         # The combined-name match must collapse
-        # internal whitespace so "Resident Beta" still hits.
+        # internal whitespace so "Fixture Beta" still hits.
         fixture = [
-            {"id": 9000011, "first_name": "Resident ", "last_name": "Beta",
+            {"id": 9000011, "first_name": "Fixture ", "last_name": "Beta",
              "email": "resident.beta@example.com", "phone": None},
         ]
-        out = _filter_tenants(fixture, "Resident Beta")
+        out = _filter_tenants(fixture, "Fixture Beta")
         assert [t["id"] for t in out] == [9000011]
 
     def test_phone_none_tenant_is_safe(self):
@@ -830,7 +830,7 @@ class TestListTenantsIntegratesFilter:
              patch("cli_anything.propertymeld.http_backend._cookie_header", return_value=""), \
              patch("cli_anything.propertymeld.http_backend._paginate_all",
                    return_value=list(_TENANT_FIXTURE)) as mock_paginate:
-            out = http_backend.list_tenants(search="Resident Beta", limit=10)
+            out = http_backend.list_tenants(search="Fixture Beta", limit=10)
         mock_paginate.assert_called_once()
         assert [t["id"] for t in out] == [9000017]
 
@@ -1605,7 +1605,7 @@ class TestRequiredFreeTextNonEmpty:
             result = runner.invoke(cli, [
                 "vendors", "invite",
                 "--email", blank,
-                "--first-name", "ZZ",
+                "--first-name", "Fixture",
                 "--last-name", "Test",
                 "--company", "Test Co",
                 "--line1", "123 Test St",
@@ -1622,7 +1622,7 @@ class TestRequiredFreeTextNonEmpty:
             result = runner.invoke(cli, [
                 "tenants", "invite",
                 "--unit-id", "9000007",
-                "--first-name", "ZZ",
+                "--first-name", "Fixture",
                 "--last-name", "Test",
                 "--email", "zz@example.com",
                 "--cell", blank,

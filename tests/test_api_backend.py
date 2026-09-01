@@ -44,7 +44,7 @@ WO_LIST_RESPONSE = {
 }
 SINGLE_WO_RESPONSE = {"id": 1001, "status": "open", "description": "Leak in unit 2B"}
 PROPERTIES_RESPONSE = {"count": 1, "results": [{"id": 5, "name": "123 Main St"}]}
-VENDORS_RESPONSE = {"count": 1, "results": [{"id": 10, "name": "Example HVAC"}]}
+VENDORS_RESPONSE = {"count": 1, "results": [{"id": 10, "name": "Fixture Service"}]}
 
 
 class TestListWorkOrders:
@@ -114,7 +114,7 @@ class TestListWorkOrders:
     def test_vendor_filter_uses_cookie_rows_not_ignored_nexus_param(self):
         rich_results = [
             {"id": 1001, "vendor_assignment_requests": [
-                {"vendor": {"id": 99, "name": "Example HVAC"}}
+                {"vendor": {"id": 99, "name": "Fixture Service"}}
             ]},
             {"id": 1002, "vendor_assignment_requests": [
                 {"vendor": {"id": 44, "name": "Other Vendor"}}
@@ -197,7 +197,7 @@ class TestListWorkOrders:
         #                      documented in api_backend.list_work_orders).
         rich_results = [
             {"id": 1001, "tenants": []},
-            {"id": 1002, "tenants": [{"id": 5, "first_name": "Reece"}]},
+            {"id": 1002, "tenants": [{"id": 5, "first_name": "Fixture"}]},
             {"id": 1003, "tenants": None},
         ]
         with patch(
@@ -399,7 +399,7 @@ class TestListWorkOrders:
                 "in_house_servicers": [],
                 "managementappointment": [],
                 "vendor_assignment_requests": [
-                    {"id": 9001, "vendor": {"id": 44, "name": "Example HVAC"}}
+                    {"id": 9001, "vendor": {"id": 44, "name": "Fixture Service"}}
                 ],
                 "vendorappointment": [{"id": 8001, "meld": 1002}],
             },
@@ -624,7 +624,7 @@ class TestListVendors:
                 make_response(VENDORS_RESPONSE),
             ]
             results = api_backend.list_vendors()
-        assert results[0]["name"] == "Example HVAC"
+        assert results[0]["name"] == "Fixture Service"
 
 
 class TestProbe:
@@ -746,7 +746,7 @@ class TestScheduleVendorAppointment:
         "vendor_assignment_requests": [
             {
                 "id": 8000,
-                "vendor": {"id": 42, "name": "Example HVAC"},
+                "vendor": {"id": 42, "name": "Fixture Service"},
                 "accepted": "2026-05-13T12:59:15.615119Z",
                 "rejected": None,
                 "canceled": None,
@@ -867,8 +867,8 @@ class TestScheduleVendorAppointment:
             "id": 90000001,
             "status": "PENDING_TENANT_AVAILABILITY",
             "vendor_assignment_requests": [
-                {"id": 8000, "vendor": {"id": 10, "name": "First HVAC"}, "accepted": "2026-05-13T10:00:00Z", "rejected": None, "canceled": None},
-                {"id": 8001, "vendor": {"id": 42, "name": "Example HVAC"}, "accepted": "2026-05-13T11:00:00Z", "rejected": None, "canceled": None},
+                {"id": 8000, "vendor": {"id": 10, "name": "Fixture Primary"}, "accepted": "2026-05-13T10:00:00Z", "rejected": None, "canceled": None},
+                {"id": 8001, "vendor": {"id": 42, "name": "Fixture Service"}, "accepted": "2026-05-13T11:00:00Z", "rejected": None, "canceled": None},
             ],
             "vendorappointment": [
                 {"id": 7000, "meld": 90000001, "assignment_request": 8000},
@@ -901,8 +901,8 @@ class TestScheduleVendorAppointment:
             "id": 90000001,
             "status": "PENDING_ASSIGNMENT",
             "vendor_assignment_requests": [
-                {"id": 8000, "vendor": {"id": 10, "name": "First HVAC"}, "accepted": "2026-05-13T10:00:00Z", "rejected": None, "canceled": None},
-                {"id": 8001, "vendor": {"id": 42, "name": "Example HVAC"}, "accepted": None, "rejected": "2026-05-13T11:00:00Z", "canceled": None},
+                {"id": 8000, "vendor": {"id": 10, "name": "Fixture Primary"}, "accepted": "2026-05-13T10:00:00Z", "rejected": None, "canceled": None},
+                {"id": 8001, "vendor": {"id": 42, "name": "Fixture Service"}, "accepted": None, "rejected": "2026-05-13T11:00:00Z", "canceled": None},
             ],
             "vendorappointment": [
                 {"id": 7000, "meld": 90000001, "assignment_request": 8000},
@@ -936,7 +936,7 @@ class TestScheduleVendorAppointment:
             "id": 90000001,
             "status": "PENDING_TENANT_AVAILABILITY",
             "vendor_assignment_requests": [
-                {"id": 8000, "vendor": {"id": 42, "name": "Example HVAC"},
+                {"id": 8000, "vendor": {"id": 42, "name": "Fixture Service"},
                  "accepted": "2026-05-13T12:59:15Z", "rejected": None, "canceled": None},
             ],
             "vendorappointment": [
@@ -1030,7 +1030,7 @@ _FULL_UNIT_FIXTURE = {
     "building": None,
     "floor": None,
     "prop": {"id": 9000003, "line_1": "123 Main St"},
-    "current_tenants": [{"id": 9000013, "first_name": "Demo", "last_name": "Resident"}],
+    "current_tenants": [{"id": 9000013, "first_name": "Fixture", "last_name": "Fixture"}],
 }
 
 _FULL_AGENT_FIXTURE = {
@@ -1050,7 +1050,7 @@ _FULL_TENANT_FIXTURE = {
     "id": 99,
     "type": "Tenant",
     "composite_id": "3-99",
-    "first_name": "Resident",
+    "first_name": "Fixture",
     "last_name": "Epsilon",
     "prompt_for_mobile": False,
     "contact": {"email": "resident.epsilon@example.com", "phone": "2025550110"},
@@ -1351,7 +1351,7 @@ class TestCreateMeldInProject:
                 due_date="2026-05-16T00:00:00.000Z",
                 unit=_FULL_UNIT_FIXTURE,
                 maintenance=[_FULL_AGENT_FIXTURE],
-                tenants=[{"id": 99, "first_name": "Resident"}],
+                tenants=[{"id": 99, "first_name": "Fixture"}],
             )
 
     def test_empty_tenants_does_not_call_get(self):
@@ -1942,7 +1942,7 @@ class TestCloneMeldOverrides:
 
 _TENANT_FIXTURE = {
     "id": 9000014,
-    "user": {"id": 9001, "first_name": "Resident", "last_name": "Epsilon", "email": "resident.epsilon@example.com"},
+    "user": {"id": 9001, "first_name": "Fixture", "last_name": "Epsilon", "email": "resident.epsilon@example.com"},
     "contact": {"id": 4001, "home_phone": "+12025550114"},
     "is_active": True,
     "management": 1000,
@@ -2179,7 +2179,7 @@ class TestUpdateUnitNotes:
 
 _TENANT_NOTES_FIXTURE = {
     "id": 9000016,
-    "first_name": "Resident",
+    "first_name": "Fixture",
     "last_name": "Alpha",
     "middle_name": "",
     "notes": "",
@@ -2278,7 +2278,7 @@ class TestUpdateTenantNotes:
             patch_path, patch_payload, _, _ = mp.call_args[0]
             assert patch_path == "tenants/9000016/"
             # Full body sent — not a thin patch
-            assert patch_payload["first_name"] == "Resident"
+            assert patch_payload["first_name"] == "Fixture"
             assert patch_payload["last_name"] == "Alpha"
             assert patch_payload["id"] == 9000016
             assert patch_payload["contact"]["cell_phone"] == "(202) 555-0136"

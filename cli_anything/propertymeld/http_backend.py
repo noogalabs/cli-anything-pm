@@ -2073,7 +2073,7 @@ def _filter_tenants(tenants: list, search: str) -> list:
         last = (t.get("last_name") or "").lower()
         # Collapse runs of whitespace — real PM data has tenants with
         # trailing-space first_names (e.g. "Resident " / "Beta") that would
-        # otherwise produce "erica  mapp" and miss a "erica mapp" needle.
+        # otherwise produce "fixture  beta" and miss a "fixture beta" needle.
         full_name = " ".join(f"{first} {last}".split())
         email = (t.get("email") or "").lower()
         if needle in full_name or needle in email:
@@ -2097,7 +2097,7 @@ def list_tenants(search: Optional[str] = None, limit: int = 100) -> list:
 
     Search semantics (case-insensitive):
       * Name: matched against the combined ``"first_name last_name"`` string
-        so multi-word queries like ``"Resident Beta"`` work.
+        so multi-word queries like ``"Fixture Beta"`` work.
       * Email: substring match against top-level ``email``.
       * Phone: BOTH the needle and the stored phone are normalized to
         digits-only before substring match. The phone branch only fires
@@ -2537,7 +2537,7 @@ def assign_vendor_by_name(meld_id: str, vendor_name: str, account_prefix: str = 
 
     Args:
         meld_id: Meld ID to assign the vendor to.
-        vendor_name: Partial name match. e.g. "Rogers" or "Rogers Electric".
+        vendor_name: Partial name match. e.g. "Rogers" or "Fixture Electric".
         account_prefix: Account prefix for composite_id (default "1").
     """
     meld_id = _validate_meld_id(meld_id)
@@ -2593,7 +2593,7 @@ def schedule_vendor_appointment(meld_id: str, vendor_id: str, dtstart: str, dura
 
     Args:
         meld_id: Meld ID.
-        vendor_id: Vendor ID (the integer PK from PM, e.g. 6012 for Example HVAC).
+        vendor_id: Vendor ID (the integer PK from PM, e.g. 6012 for Fixture Service).
         dtstart: ISO 8601 datetime string, e.g. '2026-04-27T14:00:00-04:00'.
         duration_hours: Appointment duration in hours (default 2).
 

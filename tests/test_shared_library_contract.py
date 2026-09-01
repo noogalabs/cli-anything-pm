@@ -1,11 +1,10 @@
-import base64
 import importlib.util
 import hashlib
+import hmac
 import json
 import os
 import re
 import subprocess
-import zlib
 from pathlib import Path
 
 import click
@@ -106,29 +105,40 @@ def test_dummy_config_drives_real_manager_and_vendor_routing():
     )
 
 
-def _tracked_private_literal_matches(repo: Path, needles: tuple[str, ...]):
-    tenant_names = {
-        value.removeprefix("tenant-name:").casefold()
-        for value in needles if value.startswith("tenant-name:")
-    }
-    tenant_emails = {
-        value.removeprefix("tenant-email:").casefold()
-        for value in needles if value.startswith("tenant-email:")
-    }
-    tenant_phones = {
-        re.sub(r"\D", "", value.removeprefix("tenant-phone:"))
-        for value in needles if value.startswith("tenant-phone:")
-    }
-    general_needles = tuple(value for value in needles if not value.startswith("tenant-"))
+def _private_vocab_module():
+    script = Path(__file__).parents[1] / "scripts" / "build_private_literal_vocabulary.py"
+    spec = importlib.util.spec_from_file_location("private_vocab", script)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def _tracked_private_digest_matches(repo: Path, digests: set[str], salt: bytes):
+    module = _private_vocab_module()
+    phone_candidate = re.compile(
+        r"(?<![A-Za-z0-9])(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}(?![A-Za-z0-9])"
+    )
+    email_candidate = re.compile(
+        r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+    )
+    numeric_candidate = re.compile(r"(?<![A-Za-z0-9])\d{1,11}(?![A-Za-z0-9])")
     name_field = re.compile(
-        r"[\"'](?:first_name|last_name)[\"']\s*:\s*[\"']([^\"']+)[\"']"
+        r"[\"'](?:first_name|middle_name|last_name|name)[\"']\s*:\s*[\"']([^\"']+)[\"']"
+    )
+    full_name_fields = re.compile(
+        r"[\"']first_name[\"']\s*:\s*[\"']([^\"']+)[\"']"
+        r".{0,300}?"
+        r"[\"']last_name[\"']\s*:\s*[\"']([^\"']+)[\"']",
+        re.DOTALL,
     )
     name_argv = re.compile(
-        r"[\"']--(?:first|last)-name[\"']\s*,\s*[\"']([^\"']+)[\"']"
+        r"[\"']--(?:first|middle|last)-name[\"']\s*,\s*[\"']([^\"']+)[\"']"
     )
-    phone_candidate = re.compile(
-        r"(?<!\d)(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)"
-    )
+
+    def digest(token: str) -> str:
+        return hmac.new(salt, token.encode("utf-8"), hashlib.sha256).hexdigest()
+
     matches = []
     tracked = subprocess.run(
         ["git", "ls-files", "-z"],
@@ -144,43 +154,18 @@ def _tracked_private_literal_matches(repo: Path, needles: tuple[str, ...]):
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, FileNotFoundError):
             continue
-        folded = text.casefold()
-        matched = False
-        for needle in general_needles:
-            if needle.isdigit():
-                matched = re.search(rf"(?<!\d){re.escape(needle)}(?!\d)", text) is not None
-            elif "@" in needle or "/" in needle or "\\" in needle:
-                matched = needle.casefold() in folded
-            else:
-                matched = re.search(
-                    rf"(?<![A-Za-z]){re.escape(needle)}(?![A-Za-z])",
-                    text,
-                    re.IGNORECASE,
-                ) is not None
-            if matched:
-                break
-        if not matched:
-            names = {
-                value.strip().casefold()
-                for regex in (name_field, name_argv)
-                for value in regex.findall(text)
-            }
-            emails = {
-                value.casefold()
-                for value in re.findall(
-                    r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", text
-                )
-            }
-            phones = {
-                re.sub(r"\D", "", value)
-                for value in phone_candidate.findall(text)
-            }
-            matched = bool(
-                names & tenant_names
-                or emails & tenant_emails
-                or phones & tenant_phones
-            )
-        if matched:
+        # Global two-/three-word n-grams catch names leaked in prose while
+        # avoiding false positives from common one-word vendor-name fragments.
+        candidates = {token for token in module.name_ngrams(text) if " " in token}
+        for first, last in full_name_fields.findall(text):
+            candidates.update(module.name_ngrams(f"{first} {last}"))
+        for regex in (name_field, name_argv):
+            for value in regex.findall(text):
+                candidates.update(module.name_ngrams(value))
+        candidates.update(module.normalize_token(value) for value in email_candidate.findall(text))
+        candidates.update(re.sub(r"\D", "", value) for value in phone_candidate.findall(text))
+        candidates.update(numeric_candidate.findall(text))
+        if any(digest(token) in digests for token in candidates if token):
             matches.append(str(path.relative_to(repo)))
     return matches
 
@@ -202,7 +187,7 @@ def _tracked_structural_private_matches(repo: Path):
     )
     numeric_token = re.compile(r"(?<![A-Za-z0-9])\d{5,8}(?![A-Za-z0-9])")
     phone_candidate = re.compile(
-        r"(?<!\d)(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)"
+        r"(?<![A-Za-z0-9])(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}(?![A-Za-z0-9])"
     )
     allowed_non_id_tokens = {
         "123" + "45",  # intentionally synthetic postcode
@@ -251,30 +236,31 @@ def _tracked_structural_private_matches(repo: Path):
     return matches
 
 
-def test_private_tenant_and_org_literals_are_absent_from_tracked_files():
+def test_private_tenant_and_org_digests_do_not_match_tracked_files():
     repo = Path(__file__).parents[1]
-    raw = os.environ.get("PROPERTYMELD_PRIVATE_LITERALS")
-    if not raw:
+    raw_salt = os.environ.get("PROPERTYMELD_VOCAB_SALT")
+    if not raw_salt:
         pytest.skip(
-            "PROPERTYMELD_PRIVATE_LITERALS is absent; private-literal census is armed in CI via repository secret"
+            "PROPERTYMELD_VOCAB_SALT is absent; private-digest census is armed in CI"
         )
-    assert raw.startswith("zlib64:"), "private vocabulary secret uses an unknown encoding"
-    canonical = zlib.decompress(base64.b64decode(raw.removeprefix("zlib64:"))).decode("utf-8")
-    decoded = json.loads(canonical)
-    assert isinstance(decoded, list)
-    private_literals = tuple(decoded)
-    assert private_literals and all(isinstance(item, str) and item for item in private_literals)
+    module = _private_vocab_module()
+    salt = module.decode_salt(raw_salt)
+    digest_path = repo / "docs" / "private-literal-digests.json"
+    digest_json = digest_path.read_text(encoding="utf-8")
+    decoded = json.loads(digest_json)
+    assert isinstance(decoded, list) and decoded
+    assert all(re.fullmatch(r"[a-f0-9]{64}", item) for item in decoded)
     provenance = (repo / "docs" / "private-literal-secret-provenance.md").read_text(
         encoding="utf-8"
     )
     expected_digest = re.search(
-        r"Vocabulary SHA-256: `([a-f0-9]{64})`", provenance
+        r"Digest-list SHA-256: `([a-f0-9]{64})`", provenance
     )
-    assert expected_digest, "committed private-vocabulary provenance hash is missing"
-    assert hashlib.sha256(canonical.encode("utf-8")).hexdigest() == expected_digest.group(1), (
-        "PROPERTYMELD_PRIVATE_LITERALS is stale or was built from a partial export"
+    assert expected_digest, "committed private-digest provenance hash is missing"
+    assert hashlib.sha256(digest_json.encode("utf-8")).hexdigest() == expected_digest.group(1), (
+        "committed private digest list is stale or partial"
     )
-    assert _tracked_private_literal_matches(repo, private_literals) == []
+    assert _tracked_private_digest_matches(repo, set(decoded), salt) == []
 
 
 def test_structural_private_data_shapes_are_absent_from_tracked_files():
@@ -293,12 +279,33 @@ def _tracked_fixture(tmp_path: Path, text: str) -> Path:
 def test_sourced_resident_name_is_visible_to_private_literal_census(tmp_path):
     repo = _tracked_fixture(
         tmp_path,
-        'resident = {"first_name": "Resident", "last_name": "Leak"}\n',
+        'resident = {"first_name": "' + "Resi" + "dent" + '", "last_name": "' + "Le" + "ak" + '"}\n',
     )
 
-    assert _tracked_private_literal_matches(
-        repo, ("tenant-name:Resident", "tenant-name:Leak")
-    ) == ["fixture.py"]
+    module = _private_vocab_module()
+    salt = bytes(range(32))
+    digests = set(
+        module.digest_vocabulary(module.name_ngrams("Resi" + "dent Le" + "ak"), salt)
+    )
+
+    assert _tracked_private_digest_matches(repo, digests, salt) == ["fixture.py"]
+
+
+def test_common_english_first_name_is_not_a_digest_subject(tmp_path):
+    repo = _tracked_fixture(tmp_path, 'message = "mark this item green"\n')
+    module = _private_vocab_module()
+    salt = bytes(range(32))
+    # The authoritative roster may contain Mark Green. The full identity is
+    # sensitive; either common word in ordinary prose is not.
+    digests = set(module.digest_vocabulary(module.name_ngrams("Mark Green"), salt))
+
+    assert _tracked_private_digest_matches(repo, digests, salt) == []
+
+
+def test_name_vocabulary_excludes_bare_common_words():
+    module = _private_vocab_module()
+
+    assert module.name_ngrams("Mark Green") == {"mark green"}
 
 
 def test_non_reserved_phone_is_visible_to_structural_census(tmp_path):
@@ -308,12 +315,7 @@ def test_non_reserved_phone_is_visible_to_structural_census(tmp_path):
 
 
 def test_private_vocabulary_is_derived_from_complete_roster_shapes():
-    repo = Path(__file__).parents[1]
-    script = repo / "scripts" / "build_private_literal_vocabulary.py"
-    spec = importlib.util.spec_from_file_location("private_vocab", script)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
+    module = _private_vocab_module()
 
     vocabulary = module.build_vocabulary(
         [{
@@ -325,13 +327,13 @@ def test_private_vocabulary_is_derived_from_complete_roster_shapes():
         }],
         [{"id": 701, "name": "Vendor Example"}],
         [{
-            "first_name": "Fixture Resident",
-            "middle_name": "Fixture Middle",
-            "last_name": "Fixture Surname",
+            "first_name": "SyntheticFirst",
+            "middle_name": "SyntheticMiddle",
+            "last_name": "SyntheticLast",
             "user": {
-                "first_name": "Fixture Resident",
-                "last_name": "Fixture Surname",
-                "email": "fixture.resident@example.com",
+                "first_name": "SyntheticFirst",
+                "last_name": "SyntheticLast",
+                "email": "synthetic.person@example.com",
             },
             "contact": {
                 "cell_phone": "2025550101",
@@ -348,39 +350,36 @@ def test_private_vocabulary_is_derived_from_complete_roster_shapes():
 
     assert set(vocabulary) == {
         "501", "601", "701", "1000", "2000",
-        "Tech", "Operator", "Example", "Vendor Example",
-        "tenant-name:Fixture Resident", "tenant-name:Fixture Middle",
-        "tenant-name:Fixture Surname", "tenant-email:fixture.resident@example.com",
-        "tenant-email:fixture.contact@example.com", "tenant-phone:2025550101",
-        "/private/example/session.json", "Example Property Management", "orgs/example",
+        "tech example", "operator example", "vendor example",
+        "syntheticfirst syntheticmiddle", "syntheticmiddle syntheticlast",
+        "syntheticfirst syntheticmiddle syntheticlast",
+        "syntheticfirst syntheticlast",
+        "synthetic.person@example.com",
+        "fixture.contact@example.com", "2025550101",
+        "/private/example/session.json", "example property management", "orgs/example",
     }
 
 
 def test_private_vocabulary_provenance_records_counts_and_digest(tmp_path):
-    repo = Path(__file__).parents[1]
-    script = repo / "scripts" / "build_private_literal_vocabulary.py"
-    spec = importlib.util.spec_from_file_location("private_vocab_provenance", script)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
+    module = _private_vocab_module()
     doc = tmp_path / "provenance.md"
     doc.write_text(
         f"before\n{module.PROVENANCE_START}\nold\n{module.PROVENANCE_END}\nafter\n",
         encoding="utf-8",
     )
-    vocabulary_json = module.serialize_vocabulary(["Agent Example", "9000001"])
+    digest_json = module.serialize_digests(["a" * 64, "b" * 64])
 
     module.write_provenance(
         doc, agent_count=10, vendor_count=17, tenant_count=648,
-        vocabulary_json=vocabulary_json
+        digest_json=digest_json
     )
 
     text = doc.read_text(encoding="utf-8")
     assert "Agent records: `10`" in text
     assert "Vendor records: `17`" in text
     assert "Tenant records: `648`" in text
-    assert "Vocabulary entries: `2`" in text
-    assert hashlib.sha256(vocabulary_json.encode()).hexdigest() in text
+    assert "HMAC digests: `2`" in text
+    assert hashlib.sha256(digest_json.encode()).hexdigest() in text
 
 
 def test_supported_untracked_config_is_outside_source_census(tmp_path):
@@ -394,7 +393,9 @@ def test_supported_untracked_config_is_outside_source_census(tmp_path):
     }))
 
     assert load_propertymeld_config(config).multitenant_id == synthetic_id
-    assert _tracked_private_literal_matches(repo, (synthetic_id,)) == []
+    salt = bytes(range(32))
+    digest = hmac.new(salt, synthetic_id.encode(), hashlib.sha256).hexdigest()
+    assert _tracked_private_digest_matches(repo, {digest}, salt) == []
 
 
 def test_malformed_config_fails_closed_by_field(tmp_path):
