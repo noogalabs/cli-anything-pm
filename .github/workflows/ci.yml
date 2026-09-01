@@ -26,4 +26,6 @@ jobs:
           pip install pytest setuptools wheel
 
       - name: Run tests (pytest -x)
+        env:
+          PROPERTYMELD_PRIVATE_LITERALS: ${{ secrets.PROPERTYMELD_PRIVATE_LITERALS }}
         run: pytest tests/ -x
