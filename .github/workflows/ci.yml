@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main, 'feat/**', 'fix/**', 'chore/**', 'ci/**', 'docs/**']
   pull_request:

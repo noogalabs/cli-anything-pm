@@ -182,8 +182,12 @@ def _tracked_structural_private_matches(repo: Path):
     roster/config vocabulary by ``_tracked_private_literal_matches``.
     """
     patterns = (
-        re.compile(r"orgs[/]ascendops|Documents[/]AscendOps-Brain", re.IGNORECASE),
+        re.compile(
+            r"orgs[/]" + "asce" + r"ndops|Documents[/]" + "Asce" + "ndOps-Brain",
+            re.IGNORECASE,
+        ),
         re.compile(r"https?://[^\s\"']*propertymeld\.com/\d+/", re.IGNORECASE),
+        re.compile("Asce" + "nd", re.IGNORECASE),
     )
     numeric_token = re.compile(r"(?<![A-Za-z0-9])\d{5,8}(?![A-Za-z0-9])")
     phone_candidate = re.compile(
@@ -390,6 +394,12 @@ def test_sourced_resident_name_is_visible_to_private_literal_census(tmp_path):
     )
 
     assert _tracked_private_digest_matches(repo, digests, salt) == ["fixture.py"]
+
+
+def test_bare_org_token_is_visible_to_structural_private_literal_census(tmp_path):
+    repo = _tracked_fixture(tmp_path, 'account_match = "' + "Asce" + "nd" + '"\n')
+
+    assert _tracked_structural_private_matches(repo) == ["fixture.py"]
 
 
 def test_tracked_private_export_path_is_visible_to_custody_census(tmp_path):
