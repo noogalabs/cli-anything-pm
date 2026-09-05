@@ -18,9 +18,17 @@ jobs:
   # The branch is queried by NAME, not by head SHA: on a push the PR's head may
   # not have advanced yet, and a SHA query would race. If the query fails or
   # returns nothing the gate OPENS, so the failure direction is a redundant run,
-  # never a skipped one. Pushes with no open PR (including main) still run, and
-  # workflow_dispatch is never gated -- the rewrite runbook depends on a manual
-  # dispatch always executing.
+  # never a skipped one. workflow_dispatch is never gated -- the rewrite runbook
+  # depends on a manual dispatch always executing.
+  #
+  # TWO BOUNDARIES, both found in seat review of the first fold. Skipping here is
+  # only safe when a pull_request run actually covers the commit, and `on:` above
+  # fires pull_request for base=main ONLY:
+  #   - the query MUST filter base=main. An open PR from this branch to a
+  #     non-main base produces no covering run, so counting it would skip the
+  #     push build and the commit would get NO CI at all.
+  #   - main is exempt explicitly. A same-repo PR whose HEAD is main would
+  #     otherwise make a push to main skip its own build.
   gate:
     name: Duplicate-run gate
     runs-on: ubuntu-latest
@@ -44,8 +52,13 @@ jobs:
             echo "not a push event; running"
             exit 0
           fi
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "main is never gated; running"
+            exit 0
+          fi
           open=$(gh api \
-            "repos/${{ github.repository }}/pulls?state=open&head=${{ github.repository_owner }}:${{ github.ref_name }}" \
+            "repos/${{ github.repository }}/pulls?state=open&base=main&head=${{ github.repository_owner }}:${{ github.ref_name }}" \
             --jq 'length' 2>/dev/null || echo "")
           if [ "$open" = "" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
@@ -55,7 +68,7 @@ jobs:
             echo "no open PR for ${{ github.ref_name }}; running"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "${{ github.ref_name }} has $open open PR(s); the pull_request run covers this commit"
+            echo "${{ github.ref_name }} has $open open PR(s) targeting main; that pull_request run covers this commit"
           fi
 
   build-test:
