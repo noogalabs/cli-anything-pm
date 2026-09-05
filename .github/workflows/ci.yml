@@ -10,7 +10,7 @@ on:
 jobs:
   # A push to a branch that already has an open PR is covered by that PR's
   # `pull_request` run, so running the push copy too costs a full duplicate CI
-  # for every fold. Ported from ascendops-live PR350 (piper, 2026-09-04) after
+  # for every fold. Ported from the fleet's private live repo (PR350, 2026-09-04) after
   # the privacy-rewrite push billed two runs on main and the ci.yml here was
   # found to carry no gate at all. Actions minutes are paid spend against the
   # org's monthly cap, so a duplicate run is real money, not just noise.
