@@ -8,7 +8,72 @@ on:
     branches: [main]
 
 jobs:
+  # A push to a branch that already has an open PR is covered by that PR's
+  # `pull_request` run, so running the push copy too costs a full duplicate CI
+  # for every fold. Ported from the fleet's private live repo (PR350, 2026-09-04) after
+  # the privacy-rewrite push billed two runs on main and the ci.yml here was
+  # found to carry no gate at all. Actions minutes are paid spend against the
+  # org's monthly cap, so a duplicate run is real money, not just noise.
+  #
+  # The branch is queried by NAME, not by head SHA: on a push the PR's head may
+  # not have advanced yet, and a SHA query would race. If the query fails or
+  # returns nothing the gate OPENS, so the failure direction is a redundant run,
+  # never a skipped one. workflow_dispatch is never gated -- the rewrite runbook
+  # depends on a manual dispatch always executing.
+  #
+  # TWO BOUNDARIES, both found in seat review of the first fold. Skipping here is
+  # only safe when a pull_request run actually covers the commit, and `on:` above
+  # fires pull_request for base=main ONLY:
+  #   - the query MUST filter base=main. An open PR from this branch to a
+  #     non-main base produces no covering run, so counting it would skip the
+  #     push build and the commit would get NO CI at all.
+  #   - main is exempt explicitly. A same-repo PR whose HEAD is main would
+  #     otherwise make a push to main skip its own build.
+  gate:
+    name: Duplicate-run gate
+    runs-on: ubuntu-latest
+    # Scoped to THIS job on purpose: a workflow-level permissions block replaces
+    # the default GITHUB_TOKEN scope for EVERY job, and only the gate needs to
+    # read PRs.
+    permissions:
+      contents: read
+      pull-requests: read
+    timeout-minutes: 2
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "not a push event; running"
+            exit 0
+          fi
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "main is never gated; running"
+            exit 0
+          fi
+          open=$(gh api \
+            "repos/${{ github.repository }}/pulls?state=open&base=main&head=${{ github.repository_owner }}:${{ github.ref_name }}" \
+            --jq 'length' 2>/dev/null || echo "")
+          if [ "$open" = "" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "PR lookup failed; running rather than skipping"
+          elif [ "$open" = "0" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "no open PR for ${{ github.ref_name }}; running"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "${{ github.ref_name }} has $open open PR(s) targeting main; that pull_request run covers this commit"
+          fi
+
   build-test:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     name: Build & Test
     runs-on: ubuntu-latest
     steps:
