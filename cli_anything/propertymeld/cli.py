@@ -1058,10 +1058,20 @@ def rotate_api_key(update_railway, update_env, as_json):
         if update_railway:
             import subprocess
             for var, val in [("PM_CLIENT_ID", client_id), ("PM_CLIENT_SECRET", client_secret)]:
-                proc = subprocess.run(
-                    ["railway", "variables", "--set", f"{var}={val}"],
-                    capture_output=True, text=True
-                )
+                try:
+                    proc = subprocess.run(
+                        ["railway", "variables", "--set", f"{var}={val}"],
+                        capture_output=True, text=True
+                    )
+                except OSError as exc:
+                    # A missing or non-executable railway binary raises AFTER
+                    # minting. Uncaught it would abort before the remaining
+                    # destinations ran and lose the secret; record it and go on.
+                    deliveries.append({
+                        "path": "railway", "var": var, "status": "error",
+                        "detail": scrub_sensitive_text(f"railway could not be run: {exc}")[:300],
+                    })
+                    continue
                 entry = {"path": "railway", "var": var, "status": "ok" if proc.returncode == 0 else "error"}
                 if proc.returncode != 0:
                     entry["detail"] = scrub_sensitive_text((proc.stderr or "").strip())[:300]

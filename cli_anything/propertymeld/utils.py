@@ -105,25 +105,31 @@ SENSITIVE_KEY_PATTERN = re.compile(r"secret|token|password|api[_-]?key", re.IGNO
 REDACTED = "[REDACTED]"
 
 
-def redact_sensitive(data: Any) -> Any:
+def redact_sensitive(data: Any, *, string_scrub=None) -> Any:
     """Return a copy of ``data`` with every value under a sensitive key redacted.
 
     Walks dicts, lists and tuples recursively. A key matching
     SENSITIVE_KEY_PATTERN (case-insensitive substring) has its ENTIRE value
-    replaced with REDACTED, whatever that value's type. Non-container leaves
-    are returned unchanged. The input is never mutated.
+    replaced with REDACTED, whatever that value's type. When ``string_scrub``
+    is given it is applied to every remaining STRING leaf, so a credential
+    that arrives inside a string value (``{"detail": "client_secret=..."}``,
+    or a bare string element of a list) is caught too; the key walk alone
+    cannot see inside a string. Other leaves are returned unchanged. The input
+    is never mutated.
     """
     if isinstance(data, dict):
         return {
             key: (
                 REDACTED
                 if isinstance(key, str) and SENSITIVE_KEY_PATTERN.search(key)
-                else redact_sensitive(value)
+                else redact_sensitive(value, string_scrub=string_scrub)
             )
             for key, value in data.items()
         }
     if isinstance(data, (list, tuple)):
-        return [redact_sensitive(item) for item in data]
+        return [redact_sensitive(item, string_scrub=string_scrub) for item in data]
+    if string_scrub is not None and isinstance(data, str):
+        return string_scrub(data)
     return data
 
 
@@ -147,19 +153,31 @@ _TEXT_ENTROPY_RE = re.compile(
 )
 
 
-def scrub_sensitive_text(text: str) -> str:
+def scrub_sensitive_text(text: str, *, high_entropy: bool = True) -> str:
     """Replace credential-shaped values inside free text with REDACTED.
 
     Keeps the surrounding text (labels, separators, prose) so an error excerpt
     remains readable. Applied to excerpts BEFORE truncation so a value that
     would straddle the cap cannot leak a tail.
+
+    ``high_entropy=False`` applies only the precise shapes (Bearer/Basic runs
+    and key=value / key: value for the sensitive key pattern). That mode is
+    used on ordinary command output, where the high-entropy rule would redact
+    UUIDs and long identifiers that belong in the payload; the full mode is
+    reserved for error normalization, where over-redaction is acceptable.
     """
     if not text:
         return text
     text = _TEXT_AUTH_RE.sub(lambda m: f"{m.group(1)} {REDACTED}", text)
     text = _TEXT_KV_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{REDACTED}", text)
-    text = _TEXT_ENTROPY_RE.sub(REDACTED, text)
+    if high_entropy:
+        text = _TEXT_ENTROPY_RE.sub(REDACTED, text)
     return text
+
+
+def scrub_sensitive_text_narrow(text: str) -> str:
+    """Precise-shape scrub for ordinary output string leaves (no entropy rule)."""
+    return scrub_sensitive_text(text, high_entropy=False)
 
 
 def output_json(data: Any) -> None:
@@ -180,7 +198,7 @@ def output_json(data: Any) -> None:
     with no ``ok`` key (or ``ok`` True) and are unaffected. The exit decision
     reads the ORIGINAL payload so redaction can never mask a failure envelope.
     """
-    print(json.dumps(redact_sensitive(data), indent=2, default=str))
+    print(json.dumps(redact_sensitive(data, string_scrub=scrub_sensitive_text_narrow), indent=2, default=str))
     if isinstance(data, dict) and data.get("ok") is False:
         sys.exit(1)
 
@@ -281,7 +299,10 @@ def normalize_http_error(status_code: int, body: str) -> dict:
     print a sensitive-keyed field from a PM error body unredacted. Found in
     second-seat review: the first cut guarded one of the ten sites.
     """
-    return redact_sensitive(_normalize_http_error_raw(status_code, body))
+    # Full scrub on every string leaf as well as the key walk: a parsed error
+    # body can carry a credential INSIDE a string value or as a bare string
+    # element of a list, which keys cannot see (second Codex review, X2).
+    return redact_sensitive(_normalize_http_error_raw(status_code, body), string_scrub=scrub_sensitive_text)
 
 
 def _normalize_http_error_raw(status_code: int, body: str) -> dict:

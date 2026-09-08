@@ -33,6 +33,7 @@ from cli_anything.propertymeld.utils import (
     output_json,
     redact_sensitive,
     scrub_sensitive_text,
+    scrub_sensitive_text_narrow,
     update_env_file,
 )
 
@@ -469,6 +470,87 @@ def test_c3_duplicate_definitions_replaced_first_and_later_dropped(tmp_path):
     assert lines == ["PM_CLIENT_SECRET=" + SENTINEL, "BOT_TOKEN=keep", "PM_CLIENT_ID=id-new"]
     assert sum(1 for l in lines if l.split("=")[0].replace("export ", "") == "PM_CLIENT_SECRET") == 1
     assert "old-" not in env_path.read_text()
+
+
+# ── Codex X1/X2: credential-shaped STRING LEAVES inside parsed JSON ──────────
+
+def test_x2_dict_string_leaf_in_error_body_never_reaches_stderr(capsys):
+    body = json.dumps({"detail": f"denied: client_secret={CANARY} please retry"}).encode()
+    err = urllib.error.HTTPError("https://app.propertymeld.com/x", 403, "err", {}, io.BytesIO(body))
+    with patch("urllib.request.urlopen", side_effect=err):
+        with pytest.raises(SystemExit):
+            http_backend._http_get("/api/x", "sessionid=abc")
+    captured = capsys.readouterr()
+    assert CANARY not in captured.err
+    assert REDACTED in captured.err
+    assert "denied" in captured.err and "please retry" in captured.err  # control
+
+
+def test_x1_x2_bare_string_array_error_body_never_reaches_stderr(capsys):
+    # X1 second path: an array whose elements are bare strings has no keys
+    # for the key walk to see; the string-leaf scrub is what covers it.
+    body = json.dumps([f"client_secret={CANARY}", "field required"]).encode()
+    err = urllib.error.HTTPError("https://app.propertymeld.com/x", 400, "err", {}, io.BytesIO(body))
+    with patch("urllib.request.urlopen", side_effect=err):
+        with pytest.raises(SystemExit):
+            http_backend._http_get("/api/x", "sessionid=abc")
+    captured = capsys.readouterr()
+    assert CANARY not in captured.err
+    assert REDACTED in captured.err
+    printed = json.loads(captured.err.strip().splitlines()[-1])
+    assert isinstance(printed["detail"], list)
+    assert printed["detail"][1] == "field required"  # control: list + prose preserved
+
+
+def test_x2_high_entropy_string_leaf_in_error_body_is_scrubbed():
+    from cli_anything.propertymeld.utils import normalize_http_error
+    err = normalize_http_error(500, json.dumps({"message": f"trace {CANARY} end"}))
+    assert CANARY not in json.dumps(err)
+    assert "trace" in err["message"] and "end" in err["message"]
+
+
+def test_x2_output_json_string_leaves_get_precise_shapes_only(capsys):
+    # Ordinary output: Bearer/key=value shapes inside a string are scrubbed...
+    output_json({"description": f"call with Bearer {CANARY} now", "note": f"password: {CANARY}"})
+    out = capsys.readouterr().out
+    assert CANARY not in out
+    data = json.loads(out)
+    assert data["description"].startswith("call with Bearer") and data["description"].endswith("now")
+
+
+def test_x2_output_json_does_not_apply_entropy_rule_to_normal_ids(capsys):
+    # ...but a UUID or long identifier in a normal payload MUST survive, or
+    # the CLI is unusable. Pins the full/narrow split.
+    uuid = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+    long_id = "meld_20260908T045400Z_a1b2c3d4e5f6"
+    output_json({"id": uuid, "ref": long_id, "hash": "d41d8cd98f00b204e9800998ecf8427e"})
+    data = json.loads(capsys.readouterr().out)
+    assert data["id"] == uuid and data["ref"] == long_id
+    assert data["hash"] == "d41d8cd98f00b204e9800998ecf8427e"
+    assert scrub_sensitive_text_narrow(uuid) == uuid
+    assert scrub_sensitive_text(uuid) == REDACTED  # the full rule WOULD redact it
+
+
+# ── Codex X3: railway binary missing must not lose the secret ────────────────
+
+def test_x3_railway_oserror_recorded_env_still_written_exit_1(runner, tmp_path):
+    env_dir = tmp_path / "envdir"; env_dir.mkdir()
+    env_path = env_dir / "blue.env"
+    with patch.object(http_backend, "rotate_api_key", return_value=dict(ROTATE_RESULT)), \
+         patch("subprocess.run", side_effect=FileNotFoundError("railway: command not found")):
+        result = runner.invoke(cli, ["api-keys", "rotate", "--update-railway", "--update-env", str(env_path)])
+    assert result.exit_code == 1, result.output
+    assert SENTINEL not in result.output
+    data = json.loads(result.output)
+    assert data["ok"] is False
+    by = {(d["path"], d.get("var")): d for d in data["deliveries"]}
+    assert by[("railway", "PM_CLIENT_ID")]["status"] == "error"
+    assert by[("railway", "PM_CLIENT_SECRET")]["status"] == "error"
+    assert "could not be run" in by[("railway", "PM_CLIENT_SECRET")]["detail"]
+    env = [d for d in data["deliveries"] if d["path"] == "env"][0]
+    assert env["status"] == "ok"
+    # The fallback destination actually received the secret.
+    assert f"PM_CLIENT_SECRET={SENTINEL}\n" in env_path.read_text()
 
 
 def test_update_env_file_rejects_missing_directory(tmp_path):
