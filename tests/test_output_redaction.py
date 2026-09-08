@@ -553,6 +553,90 @@ def test_x3_railway_oserror_recorded_env_still_written_exit_1(runner, tmp_path):
     assert f"PM_CLIENT_SECRET={SENTINEL}\n" in env_path.read_text()
 
 
+# ── Codex N1: quoted credential values are redacted as a unit ────────────────
+
+PHRASE = "correct horse battery staple"
+
+
+@pytest.mark.parametrize(
+    "text,expect_gone,must_keep",
+    [
+        (f'password: "{PHRASE}" then more', [PHRASE, "horse"], ['password: "', '"', "then more"]),
+        (f"token='{PHRASE}; extra' tail", [PHRASE, "extra"], ["token='", "'", "tail"]),
+        (f'{{"api_key": "{PHRASE}", "ok": true}}', [PHRASE], ['"api_key": "', '"ok": true']),
+        (f'password: "say \\"hi\\" {PHRASE}" end', [PHRASE], ["end"]),
+    ],
+)
+def test_n1_quoted_values_fully_redacted(text, expect_gone, must_keep):
+    out = scrub_sensitive_text(text, high_entropy=False)
+    for g in expect_gone:
+        assert g not in out, (g, out)
+    assert REDACTED in out
+    for k in must_keep:
+        assert k in out, (k, out)
+
+
+def test_n1_unquoted_value_still_redacts_exactly_the_token():
+    out = scrub_sensitive_text("client_secret=abc123&next=1 rest", high_entropy=False)
+    assert out == f"client_secret={REDACTED}&next=1 rest"
+
+
+def test_n1_real_error_path_quoted_value_with_spaces_never_reaches_stderr(capsys):
+    body = json.dumps({"detail": f'auth failed for password: "{PHRASE}" retry'}).encode()
+    err = urllib.error.HTTPError("https://app.propertymeld.com/x", 403, "err", {}, io.BytesIO(body))
+    with patch("urllib.request.urlopen", side_effect=err):
+        with pytest.raises(SystemExit):
+            http_backend._http_get("/api/x", "sessionid=abc")
+    e = capsys.readouterr().err
+    assert PHRASE not in e and "horse" not in e
+    assert REDACTED in e and "auth failed" in e and "retry" in e
+
+
+def test_n1_output_json_quoted_value_with_semicolon_fully_redacted(capsys):
+    output_json({"note": f'reset token: "{PHRASE}; part2" done'})
+    out = capsys.readouterr().out
+    assert PHRASE not in out and "part2" not in out
+    data = json.loads(out)
+    assert data["note"].startswith('reset token: "') and data["note"].endswith("done")
+
+
+# ── Codex N2: incomplete rotate response must deliver nothing ────────────────
+
+@pytest.mark.parametrize("bad", [{"client_secret": None}, {"client_secret": ""}, {"client_id": None}, {"client_secret": "   "}])
+def test_n2_incomplete_rotate_response_delivers_nothing_and_exits_1(runner, tmp_path, bad):
+    env_dir = tmp_path / "envdir"; env_dir.mkdir()
+    env_path = env_dir / "blue.env"
+    original = "BOT_TOKEN=keep\nPM_CLIENT_SECRET=old\n"
+    env_path.write_text(original)
+    resp = dict(ROTATE_RESULT); resp.update(bad)
+    with patch.object(http_backend, "rotate_api_key", return_value=resp), \
+         patch("subprocess.run") as spawn:
+        result = runner.invoke(cli, ["api-keys", "rotate", "--update-railway", "--update-env", str(env_path)])
+    assert result.exit_code == 1, result.output
+    spawn.assert_not_called()
+    assert env_path.read_text() == original
+    data = json.loads(result.output)
+    assert data["ok"] is False and data["deliveries"] == []
+    missing = next(iter(bad))
+    assert missing in data["error"]
+    assert "minted server-side" in data["error"]
+    assert "None" not in result.output.replace("ok\": false", "")
+    assert SENTINEL not in result.output
+
+
+# ── Codex R1 control: the accepted narrow-scrub design on ordinary output ────
+
+def test_r1_bare_high_entropy_value_under_non_sensitive_key_survives_in_normal_output(capsys):
+    # By design (reviewed): ordinary output applies only precise shapes, never
+    # the entropy rule, so a bare high-entropy VALUE under a NON-sensitive key
+    # is not redacted there (UUIDs and long ids must survive). The same value
+    # IS redacted on the error path, where the full rule applies.
+    output_json({"description": CANARY})
+    assert CANARY in capsys.readouterr().out
+    from cli_anything.propertymeld.utils import normalize_http_error
+    assert CANARY not in json.dumps(normalize_http_error(500, json.dumps({"description": CANARY})))
+
+
 def test_update_env_file_rejects_missing_directory(tmp_path):
     with pytest.raises(FileNotFoundError):
         update_env_file(str(tmp_path / "missing" / "x.env"), {"PM_CLIENT_SECRET": "v"})

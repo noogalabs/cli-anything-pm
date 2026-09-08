@@ -1046,8 +1046,26 @@ def rotate_api_key(update_railway, update_env, as_json):
     result = http_backend.rotate_api_key()
 
     if result.get("ok"):
-        client_id = result["client_id"]
-        client_secret = result["client_secret"]
+        client_id = result.get("client_id")
+        client_secret = result.get("client_secret")
+        # A successful-but-incomplete API response would otherwise deliver the
+        # literal string "None" (or an empty value) to Railway or the env file
+        # and report success. Validate both fields BEFORE any delivery.
+        missing = [
+            name for name, value in (("client_id", client_id), ("client_secret", client_secret))
+            if not isinstance(value, str) or not value.strip()
+        ]
+        if missing:
+            result["ok"] = False
+            result["deliveries"] = []
+            result["error"] = (
+                "PropertyMeld reported success but the response is missing "
+                + ", ".join(missing)
+                + "; nothing was delivered and nothing was written. The key may have "
+                "been minted server-side, so run 'pm api-keys list' and rotate again."
+            )
+            output_json(result)
+            return
         # Delivery status lives under keys that do NOT match the sensitive
         # pattern (path/var/vars/status/detail), so the output boundary leaves
         # it readable. A status stored under a key like PM_CLIENT_SECRET would

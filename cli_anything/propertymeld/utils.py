@@ -143,11 +143,25 @@ def redact_sensitive(data: Any, *, string_scrub=None) -> Any:
 # Long URL-like runs that carry a digit are over-scrubbed on purpose: this is a
 # diagnostic excerpt, and under-scrubbing is the failure that matters.
 _TEXT_AUTH_RE = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9\-._~+/=]+")
+# The value is one of: a double-quoted string (escaped quotes allowed), a
+# single-quoted string, or a bare token. A quoted value is redacted as a
+# UNIT through its closing quote, so a credential containing spaces or
+# punctuation (password: "correct horse battery staple") does not leave its
+# tail behind; a bare value keeps the token rule and stops at a delimiter.
 _TEXT_KV_RE = re.compile(
     r"(?i)([A-Za-z0-9_\-]*(?:secret|token|password|api[_-]?key)[A-Za-z0-9_\-]*)"
-    r"(\s*[\"']?\s*[=:]\s*[\"']?)"
-    r"([^\s\"'&;,<>]+)"
+    r"(\s*[\"']?\s*[=:]\s*)"
+    r"(?:\"((?:[^\"\\]|\\.)*)\"|'((?:[^'\\]|\\.)*)'|([^\s\"'&;,<>]+))"
 )
+
+
+def _kv_redact(m) -> str:
+    key, sep = m.group(1), m.group(2)
+    if m.group(3) is not None:
+        return f'{key}{sep}"{REDACTED}"'
+    if m.group(4) is not None:
+        return f"{key}{sep}'{REDACTED}'"
+    return f"{key}{sep}{REDACTED}"
 _TEXT_ENTROPY_RE = re.compile(
     r"(?=[A-Za-z0-9\-._~+/=]*\d)(?=[A-Za-z0-9\-._~+/=]*[A-Za-z])[A-Za-z0-9\-._~+/=]{24,}"
 )
@@ -169,7 +183,7 @@ def scrub_sensitive_text(text: str, *, high_entropy: bool = True) -> str:
     if not text:
         return text
     text = _TEXT_AUTH_RE.sub(lambda m: f"{m.group(1)} {REDACTED}", text)
-    text = _TEXT_KV_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{REDACTED}", text)
+    text = _TEXT_KV_RE.sub(_kv_redact, text)
     if high_entropy:
         text = _TEXT_ENTROPY_RE.sub(REDACTED, text)
     return text
