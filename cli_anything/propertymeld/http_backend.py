@@ -134,11 +134,13 @@ def _attempt_recapture() -> bool:
         return False
 
     if result.returncode != 0:
-        tail = (result.stderr or "")[-300:]
-        print(
-            json.dumps({"error": "Recapture failed", "rc": result.returncode, "stderr_tail": tail}),
-            file=sys.stderr,
-        )
+        # The child's stderr is copied here; its MFA branches emit dynamic
+        # detail=str(exc) that can carry a credential. Scrub the FULL text
+        # BEFORE the 300-char tail cut (same order rule as Q2/O1, so a value
+        # straddling the cut cannot leak a fragment), then route through the
+        # scrubbed boundary. Survivor of the 38-writer census (aussie s8 seat).
+        tail = scrub_sensitive_text(result.stderr or "")[-300:]
+        emit_error({"error": "Recapture failed", "rc": result.returncode, "stderr_tail": tail})
         return False
 
     print(json.dumps({"event": "auto_recapture_ok"}), file=sys.stderr)

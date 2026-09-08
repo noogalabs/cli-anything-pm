@@ -1280,6 +1280,127 @@ def test_p1_print_error_now_scrubs_its_message(capsys):
     assert CANARY not in err and REDACTED in err
 
 
+# ── Aussie s8 survivor: the recapture retry copies child stderr ──────────────
+
+def test_p1b_recapture_stderr_tail_scrubbed_through_production_wrapper(capsys):
+    # The REAL machinery: with_recapture_retry (production) -> _attempt_recapture
+    # -> subprocess child returns nonzero with an mfa_relay_failed line carrying
+    # a credential -> the tail is copied to stderr. Drive it through the real
+    # decorator on a stub that raises SessionExpired once.
+    from cli_anything.propertymeld import http_backend as hb
+
+    calls = {"n": 0}
+
+    @hb.with_recapture_retry
+    def do_write():
+        calls["n"] += 1
+        raise hb.SessionExpired(type("E", (), {"code": 401})())
+
+    child = type("R", (), {"returncode": 1, "stderr": f'{{"error": "mfa_relay_failed", "detail": "client_secret={CANARY}"}}'})()
+    with patch("os.path.exists", return_value=True), \
+         patch("subprocess.run", return_value=child):
+        with pytest.raises(SystemExit) as exc:
+            do_write()
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    both = captured.out + captured.err
+    assert CANARY not in both               # canary on NEITHER stream
+    assert REDACTED in captured.err
+    # the recapture-failed line still carries its structured error, scrubbed
+    lines = [l for l in captured.err.strip().splitlines() if "Recapture failed" in l]
+    assert lines and CANARY not in lines[0]
+
+
+def test_p1b_recapture_tail_scrub_is_before_the_cut(capsys):
+    # A credential straddling the 300-char tail boundary must not leak a
+    # fragment: the scrub runs on the FULL child stderr before [-300:].
+    from cli_anything.propertymeld import http_backend as hb
+
+    @hb.with_recapture_retry
+    def do_write():
+        raise hb.SessionExpired(type("E", (), {"code": 401})())
+
+    padded = "x" * 320 + f"client_secret={CANARY}"   # canary sits past the -300 window head
+    child = type("R", (), {"returncode": 1, "stderr": padded})()
+    with patch("os.path.exists", return_value=True), patch("subprocess.run", return_value=child):
+        with pytest.raises(SystemExit):
+            do_write()
+    err = capsys.readouterr().err
+    assert CANARY not in err and CANARY[:16] not in err
+
+
+def test_config_error_line_is_scrubbed(capsys):
+    from cli_anything.propertymeld import config as cfg
+    def boom():
+        raise cfg.PropertyMeldConfigError(f"bad config token={CANARY}")
+    with patch.object(cfg, "propertymeld_config", side_effect=boom):
+        with pytest.raises(SystemExit):
+            cfg.require_propertymeld_config()
+    err = capsys.readouterr().err
+    assert CANARY not in err and REDACTED in err
+
+
+def test_recapture_spawn_oserror_detail_is_scrubbed(capsys):
+    from cli_anything.propertymeld import http_backend as hb
+    with patch("os.path.exists", return_value=True), \
+         patch("subprocess.run", side_effect=OSError(f"exec failed token={CANARY}")):
+        ok = hb._attempt_recapture()
+    assert ok is False
+    err = capsys.readouterr().err
+    assert CANARY not in err and REDACTED in err
+
+
+# ── The census, RE-PROVEN by evidence: no stderr writer copies dynamic data raw ─
+
+def test_census_no_stderr_writer_copies_dynamic_data_unscrubbed():
+    """Classify every stderr writer by EVIDENCE, not by reading (aussie s8).
+
+    A writer that embeds response bodies, child output, or exception text is
+    dynamic by definition and must pass through a scrubber (emit_error,
+    scrub_sensitive_text*, or normalize_http_error, which redacts its own
+    return). This AST walk fails on any print-to-stderr whose expression
+    references a known dynamic source without a scrub in the same statement.
+    It would have failed on the recapture stderr_tail before this commit.
+    """
+    import ast, pathlib
+    pkg = pathlib.Path(http_backend.__file__).parent
+    DYNAMIC = {"stderr", "text", "body", "detail", "tail", "exc", "excerpt", "message", "nb"}
+    SCRUBBERS = {"emit_error", "scrub_sensitive_text", "scrub_sensitive_text_narrow", "normalize_http_error", "print_error"}
+    offenders = []
+    for path in pkg.rglob("*.py"):
+        if "/tests/" in str(path) or "recapture/" in str(path):
+            continue  # the standalone recapture child is a separate process; its parent scrubs the tail
+        tree = ast.parse(path.read_text(), str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            is_stderr_print = (
+                isinstance(node.func, ast.Name) and node.func.id == "print"
+                and any(isinstance(k, ast.keyword) and k.arg == "file"
+                        and ast.unparse(k.value) == "sys.stderr" for k in node.keywords)
+            )
+            is_stderr_write = (
+                isinstance(node.func, ast.Attribute) and node.func.attr == "write"
+                and ast.unparse(node.func.value) == "sys.stderr"
+            )
+            if not (is_stderr_print or is_stderr_write):
+                continue
+            # Inspect only the PRINTED payload (positional args / write arg),
+            # not the file=sys.stderr keyword, so sys.stderr does not self-match.
+            payload_nodes = node.args
+            payload_src = " ".join(ast.unparse(a) for a in payload_nodes)
+            if any(sc in payload_src for sc in SCRUBBERS):
+                continue  # routed through a scrubber in the payload expression
+            names = set()
+            for a in payload_nodes:
+                names |= {n.attr for n in ast.walk(a) if isinstance(n, ast.Attribute)}
+                names |= {n.id for n in ast.walk(a) if isinstance(n, ast.Name)}
+            hit = names & DYNAMIC
+            if hit:
+                offenders.append(f"{path.name}:{node.lineno} references {sorted(hit)}: {payload_src[:90]}")
+    assert not offenders, "unscrubbed dynamic stderr writer(s):\n" + "\n".join(offenders)
+
+
 def test_s1_literal_backslash_escaped_pairs_in_free_text_redacted():
     # The text-level backstop: escaped quote delimiters around key and value.
     out = scrub_sensitive_text(LITERAL_ESCAPED, high_entropy=False)

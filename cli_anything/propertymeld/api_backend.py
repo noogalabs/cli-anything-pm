@@ -56,13 +56,12 @@ def _api_get(path: str, params: Optional[dict] = None) -> Any:
             body = e.read().decode("utf-8", errors="replace")
         except Exception:
             body = ""
-        from .utils import normalize_http_error
+        from .utils import normalize_http_error, emit_error
         try:
             detail = normalize_http_error(e.code, body)
         except Exception:
             detail = {"error": f"API error {e.code}: {e.reason}", "status_code": e.code}
-        print(json.dumps(detail), file=sys.stderr)
-        sys.exit(1)
+        emit_error(detail, exit_code=1)
     except urllib.error.URLError as e:
         print_error(f"Network error: {e.reason}")
         sys.exit(1)

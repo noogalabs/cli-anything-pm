@@ -536,7 +536,7 @@ def resolve_meld_id(maybe_ref_or_int: str) -> str:
         match = _find_matching_meld(_extract_results(data), raw)
         if match and match.get("id") is not None:
             resolved = str(match["id"])
-            print(f"[resolved {raw} -> {resolved}]", file=sys.stderr)
+            print(scrub_sensitive_text_narrow(f"[resolved {raw} -> {resolved}]"), file=sys.stderr)
             return resolved
 
     next_path = "/meld/?limit=100"
@@ -553,7 +553,7 @@ def resolve_meld_id(maybe_ref_or_int: str) -> str:
         match = _find_matching_meld(_extract_results(data), raw)
         if match and match.get("id") is not None:
             resolved = str(match["id"])
-            print(f"[resolved {raw} -> {resolved}]", file=sys.stderr)
+            print(scrub_sensitive_text_narrow(f"[resolved {raw} -> {resolved}]"), file=sys.stderr)
             return resolved
         if isinstance(data, dict) and data.get("next"):
             next_url = data["next"]
