@@ -129,40 +129,54 @@ def redact_sensitive(data: Any, *, string_scrub=None) -> Any:
     if isinstance(data, (list, tuple)):
         return [redact_sensitive(item, string_scrub=string_scrub) for item in data]
     if string_scrub is not None and isinstance(data, str):
-        parsed = _parse_json_leaf(data)
-        if parsed is not None:
-            # A string leaf that IS serialized JSON is walked with the key
-            # redactor and re-serialized, so a sensitive KEY inside it is
-            # caught whatever shape its value has (a short letter-only
-            # secret is invisible to every text rule). allow_nan=False: the
-            # default would emit Infinity/NaN for an out-of-range number
-            # (1e400), turning valid JSON into output a strict parser
-            # rejects; when that happens the leaf is scrubbed as text instead.
-            try:
-                return json.dumps(redact_sensitive(parsed, string_scrub=string_scrub), allow_nan=False)
-            except ValueError:
-                return string_scrub(data)
+        # A string leaf that IS serialized JSON is walked with the key
+        # redactor and re-serialized, so a sensitive KEY inside it is caught
+        # whatever shape its value has (a short letter-only secret is
+        # invisible to every text rule). Two ways the walk can fail, both of
+        # which fall back to scrubbing the leaf as text so the shared stdout
+        # boundary always produces output: allow_nan=False raises ValueError
+        # for an out-of-range number (the default would emit Infinity/NaN,
+        # which a strict parser rejects); and a pathologically deep leaf
+        # raises RecursionError from the parse, the walk or the dump.
+        try:
+            parsed = _parse_json_leaf(data)
+            if parsed is not None:
+                container, layers = parsed
+                out = json.dumps(redact_sensitive(container, string_scrub=string_scrub), allow_nan=False)
+                # Re-apply every string layer that was peeled, so a double-
+                # encoded leaf comes back double-encoded (W1).
+                for _ in range(layers - 1):
+                    out = json.dumps(out)
+                return out
+        except (ValueError, RecursionError):
+            pass
         return string_scrub(data)
     return data
 
 
 def _parse_json_leaf(text: str):
-    """Return the parsed container if ``text`` is serialized JSON, else None.
+    """Return ``(container, layers)`` if ``text`` is serialized JSON, else None.
 
-    Accepts one level of double encoding (a JSON string whose content is
-    itself a JSON document). Only containers are returned; scalars are not
+    ``layers`` is the number of string encodings that were peeled to reach
+    the container: 1 for an ordinary serialized document, 2 when the text is a
+    JSON string whose content is itself a JSON document (double encoding).
+    The caller re-encodes the redacted container the same number of times so
+    the layer count round-trips; deeper encodings are not accepted and fall
+    back to the text scrub. Only containers are returned; scalars are not
     treated as JSON so ordinary strings keep their normal text scrubbing.
     """
     stripped = text.strip()
     if not stripped or stripped[0] not in "{[\"":
         return None
+    layers = 0
     for _ in range(2):
         try:
             value = json.loads(stripped)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, RecursionError):
             return None
+        layers += 1
         if isinstance(value, (dict, list)):
-            return value
+            return value, layers
         if isinstance(value, str):
             stripped = value.strip()
             if not stripped or stripped[0] not in "{[":
@@ -191,13 +205,15 @@ _TEXT_AUTH_RE = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9\-._~+/=]+")
 #
 # S1 (escaped JSON): a string leaf can carry serialized JSON whose quotes are
 # backslash-escaped ({\"client_secret\": \"x\"}), which put a backslash
-# between the key and its quote. Key and value delimiters therefore accept an
-# optional backslash before the quote. The primary defence for that shape is
+# between the key and its quote, and a leaf encoded more than once carries
+# runs of several backslashes. Key and value delimiters therefore accept any
+# run of backslashes before the quote, and the opener's run must match the
+# closer's (backreference). The primary defence for that shape is
 # the JSON-leaf walk in redact_sensitive; this is the text-level backstop.
 _TEXT_KV_RE = re.compile(
     '(?i)(?<![A-Za-z0-9_\\-])([A-Za-z0-9_\\-]{0,64}?(?:secret|token|password|api[_-]?key)[A-Za-z0-9_\\-]{0,64})'
-    '(\\s*(?:\\\\?[\\"\'])?\\s*[=:]\\s*)'
-    '(?:(?P<dqe>\\\\?)\\"(?P<dq>(?:[^\\"\\\\]|\\\\.)*?)(?P=dqe)\\"|(?P<sqe>\\\\?)\'(?P<sq>(?:[^\'\\\\]|\\\\.)*?)(?P=sqe)\'|(?P<udqe>\\\\?)\\"(?P<udq>(?:[^\\"\\\\]|\\\\.)*)$|(?P<usqe>\\\\?)\'(?P<usq>(?:[^\'\\\\]|\\\\.)*)$|(?P<bare>[^\\s\\"\'&;,<>\\\\]+))'
+    '(\\s*(?:\\\\*[\\"\'])?\\s*[=:]\\s*)'
+    '(?:(?P<dqe>\\\\*)\\"(?P<dq>(?:[^\\"\\\\]|\\\\.)*?)(?P=dqe)\\"|(?P<sqe>\\\\*)\'(?P<sq>(?:[^\'\\\\]|\\\\.)*?)(?P=sqe)\'|(?P<udqe>\\\\*)\\"(?P<udq>(?:[^\\"\\\\]|\\\\.)*)$|(?P<usqe>\\\\*)\'(?P<usq>(?:[^\'\\\\]|\\\\.)*)$|(?P<bare>[^\\s\\"\'&;,<>\\\\]+))'
 )
 
 
@@ -287,7 +303,7 @@ def output_json(data: Any) -> None:
         sys.exit(1)
 
 
-_ENV_LINE_RE_TMPL = r"^(export\s+)?{key}\s*=.*$"
+_ENV_LINE_RE_TMPL = r"^(\s*(?:export\s+)?){key}\s*=.*$"
 
 
 def update_env_file(path: str, updates: dict) -> dict:
@@ -299,9 +315,11 @@ def update_env_file(path: str, updates: dict) -> dict:
     place, and missing keys are appended. The file is written to a temporary
     sibling in the same directory and then ``os.replace``d over the target, so
     a crash mid-write leaves the original intact and no reader ever sees a
-    half-written file. A replaced line keeps its ``export`` prefix if it had
-    one; the first definition of a key is replaced and any later duplicate
-    definitions are removed, so exactly one remains. Keys and values containing a newline or carriage return are refused
+    half-written file. A replaced line keeps its leading whitespace and its
+    ``export`` prefix if it had them; the first definition of a key is
+    replaced and any later duplicate definitions are removed, INCLUDING
+    indented ones (a shell sources an indented assignment just the same, and
+    the last one wins), so exactly one remains. Keys and values containing a newline or carriage return are refused
     BEFORE the file is touched: a newline would inject a line into a 0600
     credential file. The result carries names and metadata only.
     """

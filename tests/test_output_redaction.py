@@ -911,7 +911,8 @@ def _walk_spy():
     real = u._parse_json_leaf
     def spy(text):
         r = real(text)
-        calls.append((text, type(r).__name__))
+        container = r[0] if isinstance(r, tuple) else r
+        calls.append((text, type(container).__name__))
         return r
     return patch.object(u, "_parse_json_leaf", side_effect=spy), calls
 
@@ -963,77 +964,281 @@ def test_t1_real_error_path_out_of_range_leaf_is_strict(capsys):
     assert "1e400" in printed["detail"]
 
 
-# ── U1: the Railway pair lands or fails TOGETHER, never mixed ────────────────
+# ── U1 / V1: the Railway pair, batching and rollback, stated honestly ────────
+#
+# On a NON-atomic backend no implementation can avoid a transient mixed pair
+# when a batch partially applies, so "never mixed" is not an unconditional
+# claim. Two halves guard what is actually true:
+#   (a) success path, ATOMIC fake, snapshot after EVERY railway call: single-
+#       call yields no mixed snapshot; per-variable sets yield the inter-call
+#       snapshot NEWID+OLDSECRET even when both succeed. This guards batching.
+#   (b) failure path, NON-atomic fake that lands the id, rejects the secret and
+#       returns non-zero: the mixed window is exactly one call wide, the very
+#       next railway call is the rollback, and the end state is both-old.
+#       When the rollback itself fails the end state stays mixed and is
+#       recorded as rollback error (honest limit).
 
 OLD_PAIR = {"PM_CLIENT_ID": "old-id-111", "PM_CLIENT_SECRET": "old-secret-placeholder"}
+NEW_PAIR = {"PM_CLIENT_ID": "cid-123", "PM_CLIENT_SECRET": SENTINEL}
 
 
-def _railway_state_machine(fail_set=False, fail_read=False, fail_rollback=False):
-    """A fake railway CLI: records applied state, applies a --set batch atomically."""
+def _mixed(state):
+    return (state["PM_CLIENT_ID"] == NEW_PAIR["PM_CLIENT_ID"]) != (state["PM_CLIENT_SECRET"] == NEW_PAIR["PM_CLIENT_SECRET"])
+
+
+def _fake_railway(*, atomic=True, fail_secret=False, fail_read=False, fail_rollback=False,
+                  read_payload=None):
+    """A fake railway CLI recording applied state and a snapshot after every call.
+
+    atomic=True applies a --set batch all-or-nothing; atomic=False applies each
+    --set in order and stops at the first rejected one (non-atomic backend).
+    """
     state = dict(OLD_PAIR)
+    history = []   # (label, snapshot) after each railway invocation
     calls = []
     def run(cmd, **kw):
         calls.append(list(cmd))
         if "--json" in cmd:
             if fail_read:
-                return _Proc(1, "read failed")
-            return _Proc(0, stdout=json.dumps(state))
+                history.append(("read", dict(state))); return _Proc(1, "read failed")
+            payload = json.dumps(state) if read_payload is None else read_payload
+            history.append(("read", dict(state))); return _Proc(0, stdout=payload)
         sets = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--set"]
         is_rollback = any(v.split("=", 1)[1] == OLD_PAIR["PM_CLIENT_SECRET"] for v in sets)
-        if (fail_set and not is_rollback) or (fail_rollback and is_rollback):
-            return _Proc(1, "set failed")
-        for kv in sets:
-            k, v = kv.split("=", 1); state[k] = v
-        return _Proc(0)
-    return run, state, calls
+        rc = 0
+        if is_rollback:
+            if fail_rollback:
+                rc = 1
+            else:
+                for kv in sets:
+                    k, v = kv.split("=", 1); state[k] = v
+        else:
+            reject = {kv for kv in sets if kv.startswith("PM_CLIENT_SECRET=")} if fail_secret else set()
+            if atomic and reject:
+                rc = 1                                   # all-or-nothing: nothing lands
+            else:
+                for kv in sets:
+                    if kv in reject:
+                        rc = 1; break                    # non-atomic: earlier sets already landed
+                    k, v = kv.split("=", 1); state[k] = v
+        history.append(("rollback" if is_rollback else "set", dict(state)))
+        return _Proc(rc, "set failed" if rc else "")
+    return run, state, history, calls
 
 
-def test_u1_success_delivers_pair_in_one_call_no_rollback(runner):
-    run, state, calls = _railway_state_machine()
+def _rotate_railway(runner, run):
     with patch.object(http_backend, "rotate_api_key", return_value=dict(ROTATE_RESULT)), patch("subprocess.run", side_effect=run):
-        result = runner.invoke(cli, ["api-keys", "rotate", "--update-railway"])
+        return runner.invoke(cli, ["api-keys", "rotate", "--update-railway"])
+
+
+def test_v1a_success_history_never_holds_a_mixed_pair(runner):
+    # Guards the BATCHING: per-variable sets would leave the inter-call
+    # snapshot NEWID+OLDSECRET in the history even on full success.
+    run, state, history, calls = _fake_railway(atomic=True)
+    result = _rotate_railway(runner, run)
     assert result.exit_code == 0, result.output
+    assert state == NEW_PAIR
+    assert not any(_mixed(snap) for _, snap in history), history
     set_calls = [c for c in calls if "--set" in c]
-    assert len(set_calls) == 1 and set_calls[0].count("--set") == 2   # ONE invocation, both vars
-    assert state == {"PM_CLIENT_ID": "cid-123", "PM_CLIENT_SECRET": SENTINEL}  # both-new
+    assert len(set_calls) == 1 and set_calls[0].count("--set") == 2
     rail = [d for d in json.loads(result.output)["deliveries"] if d["path"] == "railway"][0]
     assert rail["status"] == "ok" and "rollback" not in rail
     assert SENTINEL not in result.output
 
 
-def test_u1_failed_set_rolls_back_to_both_old_never_mixed(runner):
-    run, state, calls = _railway_state_machine(fail_set=True)
-    with patch.object(http_backend, "rotate_api_key", return_value=dict(ROTATE_RESULT)), patch("subprocess.run", side_effect=run):
-        result = runner.invoke(cli, ["api-keys", "rotate", "--update-railway"])
+def test_v1b_non_atomic_failure_window_is_one_call_and_closed_by_rollback(runner):
+    run, state, history, calls = _fake_railway(atomic=False, fail_secret=True)
+    result = _rotate_railway(runner, run)
     assert result.exit_code == 1, result.output
-    assert state == OLD_PAIR                                            # both-old, never mixed
-    set_calls = [c for c in calls if "--set" in c]
-    assert len(set_calls) == 2                                           # the attempt and the rollback
-    rollback = set_calls[1]
-    assert any(OLD_PAIR["PM_CLIENT_SECRET"] in a for a in rollback)     # rollback carries the OLD values
-    assert not any(SENTINEL in a for a in rollback)                      # and never the new secret
+    labels = [l for l, _ in history]
+    mixed_idx = [i for i, (_, snap) in enumerate(history) if _mixed(snap)]
+    assert mixed_idx, "the non-atomic fake must have produced the transient mixed state"
+    # the window: exactly the failed batch call, immediately followed by the rollback
+    assert labels[mixed_idx[0]] == "set" and labels[mixed_idx[0] + 1] == "rollback"
+    assert len(mixed_idx) == 1
+    assert state == OLD_PAIR                                   # end state both-old
+    rollback = [c for c in calls if "--set" in c][-1]
+    assert any(OLD_PAIR["PM_CLIENT_SECRET"] in a for a in rollback) and not any(SENTINEL in a for a in rollback)
     rail = [d for d in json.loads(result.output)["deliveries"] if d["path"] == "railway"][0]
     assert rail["status"] == "error" and rail["rollback"] == "ok"
     assert SENTINEL not in result.output and OLD_PAIR["PM_CLIENT_SECRET"] not in result.output
 
 
-def test_u1_read_fails_then_set_fails_records_rollback_skipped(runner):
-    run, state, calls = _railway_state_machine(fail_set=True, fail_read=True)
-    with patch.object(http_backend, "rotate_api_key", return_value=dict(ROTATE_RESULT)), patch("subprocess.run", side_effect=run):
-        result = runner.invoke(cli, ["api-keys", "rotate", "--update-railway"])
+def test_v1c_non_atomic_failure_with_failed_rollback_leaves_mixed_and_records_it(runner):
+    # Honest limit: when the rollback itself fails the pair stays mixed; the
+    # command says so (rollback error) and exits 1 rather than claiming safety.
+    run, state, history, calls = _fake_railway(atomic=False, fail_secret=True, fail_rollback=True)
+    result = _rotate_railway(runner, run)
+    assert result.exit_code == 1, result.output
+    assert _mixed(state)
+    rail = [d for d in json.loads(result.output)["deliveries"] if d["path"] == "railway"][0]
+    assert rail["status"] == "error" and rail["rollback"] == "error" and "set failed" in rail["rollback_detail"]
+
+
+def test_v1d_read_returns_only_one_of_the_pair_records_rollback_skipped(runner):
+    run, state, history, calls = _fake_railway(atomic=False, fail_secret=True,
+                                               read_payload=json.dumps({"PM_CLIENT_ID": "old-id-111"}))
+    result = _rotate_railway(runner, run)
+    assert result.exit_code == 1, result.output
+    rail = [d for d in json.loads(result.output)["deliveries"] if d["path"] == "railway"][0]
+    assert rail["status"] == "error" and rail["rollback"] == "skipped"
+
+
+def test_v1e_read_returns_unparseable_json_records_rollback_skipped(runner):
+    run, state, history, calls = _fake_railway(atomic=False, fail_secret=True, read_payload="not json {")
+    result = _rotate_railway(runner, run)
+    assert result.exit_code == 1, result.output
+    rail = [d for d in json.loads(result.output)["deliveries"] if d["path"] == "railway"][0]
+    assert rail["status"] == "error" and rail["rollback"] == "skipped"
+
+
+def test_v1f_read_fails_then_set_fails_records_rollback_skipped(runner):
+    run, state, history, calls = _fake_railway(atomic=True, fail_secret=True, fail_read=True)
+    result = _rotate_railway(runner, run)
     assert result.exit_code == 1, result.output
     assert state == OLD_PAIR
     rail = [d for d in json.loads(result.output)["deliveries"] if d["path"] == "railway"][0]
     assert rail["status"] == "error" and rail["rollback"] == "skipped"
 
 
-def test_u1_rollback_failure_is_recorded_not_hidden(runner):
-    run, state, calls = _railway_state_machine(fail_set=True, fail_rollback=True)
-    with patch.object(http_backend, "rotate_api_key", return_value=dict(ROTATE_RESULT)), patch("subprocess.run", side_effect=run):
-        result = runner.invoke(cli, ["api-keys", "rotate", "--update-railway"])
-    assert result.exit_code == 1, result.output
-    rail = [d for d in json.loads(result.output)["deliveries"] if d["path"] == "railway"][0]
-    assert rail["status"] == "error" and rail["rollback"] == "error" and "set failed" in rail["rollback_detail"]
+# ── V2: a pathologically deep serialized leaf must not crash the stdout boundary ─
+
+def _deep_leaf(depth, secret):
+    return "[" * depth + json.dumps({"client_secret": secret}) + "]" * depth
+
+
+def test_v2_5000_deep_leaf_still_produces_output_with_credential_redacted(capsys):
+    # Without the guard, RecursionError escapes output_json and the command
+    # emits NOTHING; every pm command shares that boundary.
+    output_json({"note": _deep_leaf(5000, "hunter2")})
+    out = capsys.readouterr().out
+    assert out.strip(), "the boundary must always produce output"
+    assert "hunter2" not in out and REDACTED in out
+    json.loads(out)  # the envelope itself is intact
+
+
+def test_v2_depth_200_leaf_still_walks(capsys):
+    output_json({"note": _deep_leaf(200, "hunter2")})
+    out = capsys.readouterr().out
+    assert "hunter2" not in out
+    inner = json.loads(json.loads(out)["note"])
+    for _ in range(200):
+        inner = inner[0]
+    assert inner["client_secret"] == REDACTED  # walked (re-serialized, key-redacted), not text-scrubbed
+
+
+def _depth_where_parse_succeeds_but_walk_recurses():
+    """Find a depth at the default recursion limit where json.loads succeeds
+    but the key walk raises RecursionError (the walk uses more frames per
+    level than the C parser). Returns None if no such depth exists here."""
+    import sys
+    from cli_anything.propertymeld import utils as u
+    lo, hi, found = 50, 3000, None
+    for depth in range(lo, hi, 25):
+        leaf = _deep_leaf(depth, "x")
+        try:
+            parsed = json.loads(leaf)
+        except RecursionError:
+            break
+        try:
+            u.redact_sensitive(parsed, string_scrub=u.scrub_sensitive_text_narrow)
+            json.dumps(parsed)
+        except RecursionError:
+            found = depth
+            break
+    return found
+
+
+def test_v2_mid_depth_leaf_parse_succeeds_walk_recurses_still_produces_output(capsys):
+    # The catch must sit around the WALK and DUMP, not only the parse: at this
+    # depth json.loads succeeds and the recursion happens after it.
+    depth = _depth_where_parse_succeeds_but_walk_recurses()
+    if depth is None:
+        pytest.skip("no depth on this interpreter where the parse succeeds but the walk recurses")
+    from cli_anything.propertymeld import utils as u
+    reached = []
+    real = u._parse_json_leaf
+    def spy(text):
+        r = real(text)
+        reached.append(r is not None)
+        return r
+    with patch.object(u, "_parse_json_leaf", side_effect=spy):
+        output_json({"note": _deep_leaf(depth, "hunter2")})
+    out = capsys.readouterr().out
+    assert any(reached), "the leaf must have parsed and reached the walk"
+    assert out.strip() and "hunter2" not in out and REDACTED in out
+    json.loads(out)
+
+
+# ── W1: the walk round-trips the string-encoding layer count ────────────────
+
+SINGLE = json.dumps({"client_secret": "hunter2", "x": 1})
+DOUBLE = json.dumps(SINGLE)
+TRIPLE = json.dumps(DOUBLE)
+
+
+def _layers(text):
+    n, v = 0, text
+    while isinstance(v, str):
+        try:
+            v = json.loads(v); n += 1
+        except (TypeError, ValueError):
+            break
+    return n, v
+
+
+@pytest.mark.parametrize("leaf,expected_layers", [(SINGLE, 1), (DOUBLE, 2)])
+def test_w1_single_and_double_encoded_leaves_keep_their_layer_count(capsys, leaf, expected_layers):
+    output_json({"note": leaf})
+    note = json.loads(capsys.readouterr().out)["note"]
+    layers, inner = _layers(note)
+    assert layers == expected_layers, (layers, note)
+    assert inner["client_secret"] == REDACTED and inner["x"] == 1
+    assert "hunter2" not in note
+
+
+def test_w1_no_sensitive_data_double_encoded_leaf_round_trips_unchanged_layer_count(capsys):
+    leaf = json.dumps(json.dumps({"x": 1, "y": [1, 2]}))
+    output_json({"note": leaf})
+    note = json.loads(capsys.readouterr().out)["note"]
+    layers, inner = _layers(note)
+    assert layers == 2 and inner == {"x": 1, "y": [1, 2]}
+
+
+def test_w1_triple_encoded_leaf_is_beyond_accepted_depth_and_text_scrubbed(capsys):
+    # Declared limit: only two layers are peeled. A triple-encoded leaf is
+    # not walked; the text scrub still catches the quoted pair inside it.
+    output_json({"note": TRIPLE})
+    note = json.loads(capsys.readouterr().out)["note"]
+    assert "hunter2" not in note and REDACTED in note
+    assert note == scrub_sensitive_text_narrow(TRIPLE)  # text path, not the walk
+
+
+# ── W2: an INDENTED duplicate definition is matched and removed ─────────────
+
+def test_w2_indented_duplicate_is_removed_and_first_definition_replaced(tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("PM_CLIENT_SECRET=old1\nOTHER=keep\n  PM_CLIENT_SECRET=old2\n\texport PM_CLIENT_SECRET=old3\n")
+    update_env_file(str(env_path), {"PM_CLIENT_SECRET": SENTINEL})
+    lines = env_path.read_text().splitlines()
+    defs = [l for l in lines if l.strip().replace("export ", "").startswith("PM_CLIENT_SECRET=")]
+    assert defs == [f"PM_CLIENT_SECRET={SENTINEL}"]          # exactly one, the new one, column zero
+    assert "old1" not in env_path.read_text() and "old2" not in env_path.read_text() and "old3" not in env_path.read_text()
+    assert "OTHER=keep" in lines
+
+
+def test_w2_indented_first_definition_keeps_its_indentation_and_prefix(tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("  export PM_CLIENT_SECRET=old1\nPM_CLIENT_SECRET=old2\n")
+    update_env_file(str(env_path), {"PM_CLIENT_SECRET": SENTINEL})
+    assert env_path.read_text().splitlines() == [f"  export PM_CLIENT_SECRET={SENTINEL}"]
+
+
+def test_w2_indented_line_for_a_different_key_is_untouched(tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("PM_CLIENT_SECRET=old1\n  OTHER_INDENTED=keep2\n")
+    update_env_file(str(env_path), {"PM_CLIENT_SECRET": SENTINEL})
+    assert env_path.read_text().splitlines() == [f"PM_CLIENT_SECRET={SENTINEL}", "  OTHER_INDENTED=keep2"]
 
 
 def test_s1_literal_backslash_escaped_pairs_in_free_text_redacted():
