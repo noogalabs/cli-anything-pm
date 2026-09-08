@@ -15,10 +15,12 @@ Usage:
 import json
 import sys
 
+import os
+
 import click
 
 from . import api_backend, http_backend, insights_backend
-from .utils import output_json, print_error, resolve_meld_id
+from .utils import output_json, print_error, resolve_meld_id, update_env_file
 
 
 @click.group()
@@ -992,36 +994,83 @@ def api_keys():
 
 @api_keys.command("rotate")
 @click.option("--update-railway", is_flag=True, default=False,
-              help="Automatically push new credentials to Railway via 'railway variables --set'")
+              help="Push the new credentials to Railway via 'railway variables --set' "
+                   "(non-displaying delivery).")
+@click.option("--update-env", "update_env", type=click.Path(dir_okay=False), default=None,
+              help="Atomically write PM_CLIENT_ID and PM_CLIENT_SECRET into this env "
+                   "file, mode 0600 (non-displaying delivery). The value never "
+                   "reaches stdout.")
 @click.option("--json", "as_json", is_flag=True, default=True)
-def rotate_api_key(update_railway, as_json):
-    """Create a new Nexus partner API key and output client_id + client_secret.
+def rotate_api_key(update_railway, update_env, as_json):
+    """Create a new Nexus partner API key and deliver it without displaying it.
 
-    The client_secret is shown ONCE — this command captures it for you.
+    PropertyMeld shows the new client_secret exactly once and this CLI never
+    persists it, so the secret must have a destination BEFORE it is minted or
+    it is lost. This command therefore refuses to run unless at least one
+    non-displaying delivery path is given: --update-railway and/or
+    --update-env PATH. The secret is never printed; the output boundary
+    redacts it and there is no reveal flag.
 
-    With --update-railway, also runs:
+    With --update-railway, runs:
       railway variables --set PM_CLIENT_ID=<new_id>
       railway variables --set PM_CLIENT_SECRET=<new_secret>
 
-    These names match what utils.get_token() actually reads. Older versions
-    of this command wrote PM_NEXUS_CLIENT_ID/PM_NEXUS_CLIENT_SECRET, which
-    Railway accepted but the runtime ignored — silent rotation that never
-    took effect.
+    With --update-env PATH, atomically rewrites PATH (mode 0600) replacing or
+    appending PM_CLIENT_ID and PM_CLIENT_SECRET, preserving other lines. Both
+    names match what utils.get_token() reads; the id and secret are written
+    together because a mismatched pair breaks auth.
     """
+    if not update_railway and not update_env:
+        output_json({
+            "ok": False,
+            "error": (
+                "rotate never displays the new client_secret and PropertyMeld shows "
+                "it only once; pass --update-railway and/or --update-env PATH so the "
+                "minted secret has a destination. Nothing was minted."
+            ),
+        })
+        return
+
+    # Validate the env destination BEFORE minting so a credential is never
+    # minted into the void.
+    if update_env:
+        parent = os.path.dirname(os.path.abspath(update_env)) or "."
+        if not os.path.isdir(parent) or not os.access(parent, os.W_OK):
+            output_json({
+                "ok": False,
+                "error": f"--update-env destination directory is missing or not writable: {parent}. Nothing was minted.",
+            })
+            return
+
     result = http_backend.rotate_api_key()
 
-    if result.get("ok") and update_railway:
-        import subprocess
+    if result.get("ok"):
         client_id = result["client_id"]
         client_secret = result["client_secret"]
-        for var, val in [("PM_CLIENT_ID", client_id), ("PM_CLIENT_SECRET", client_secret)]:
-            proc = subprocess.run(
-                ["railway", "variables", "--set", f"{var}={val}"],
-                capture_output=True, text=True
-            )
-            result.setdefault("railway_updates", {})[var] = (
-                "ok" if proc.returncode == 0 else f"error: {proc.stderr.strip()}"
-            )
+
+        if update_railway:
+            import subprocess
+            for var, val in [("PM_CLIENT_ID", client_id), ("PM_CLIENT_SECRET", client_secret)]:
+                proc = subprocess.run(
+                    ["railway", "variables", "--set", f"{var}={val}"],
+                    capture_output=True, text=True
+                )
+                result.setdefault("railway_updates", {})[var] = (
+                    "ok" if proc.returncode == 0 else f"error: {proc.stderr.strip()}"
+                )
+
+        if update_env:
+            try:
+                result["env_update"] = update_env_file(
+                    update_env, {"PM_CLIENT_ID": client_id, "PM_CLIENT_SECRET": client_secret}
+                )
+            except OSError as exc:
+                result["env_update"] = {"ok": False, "error": str(exc)}
+
+        result["note"] = (
+            "client_secret was delivered to the requested destination(s) and is "
+            "redacted at the output boundary; it is never displayed"
+        )
 
     output_json(result)
 

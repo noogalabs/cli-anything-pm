@@ -1,6 +1,7 @@
 """Shared utilities: token cache, JSON output, error handling."""
 import json
 import os
+import re
 import sys
 from typing import Any
 
@@ -76,8 +77,64 @@ def get_token() -> str:
     return body["access_token"]
 
 
+# Output-boundary secret redaction.
+#
+# PropertyMeld responses can carry credentials that are not ours to print: the
+# work-orders comments payload nests the management company's OAuth client
+# secret under comment.agent.management, and every pm command prints its
+# response verbatim. Any process that captures stdout (agent transcripts, logs,
+# shell history) then holds the secret. The fix is one choke point: every
+# command already emits through output_json(), so redaction here covers all of
+# them without per-command code.
+#
+# Redaction is by KEY, recursive through dicts, lists and tuples, and replaces
+# the whole value under a matching key (a nested object under a key named
+# ``token_config`` is dropped entirely rather than descended into). It is
+# unconditional: there is no environment variable or global flag that turns it
+# off, because the caller most likely to want raw output is exactly the agent
+# whose transcript must not hold the value. There is no per-command reveal
+# either: a command that must deliver a secret (``pm api-keys rotate``) writes
+# it to a non-displaying destination (Railway, or an env file via
+# update_env_file) and stdout only ever shows it redacted.
+#
+# Pattern note: ``api[_-]?key`` is a strict superset of the specified
+# ``api_key`` so that camelCase ``apiKey`` and the header form ``x-api-key``
+# are also caught; the other three tokens already match their camelCase forms
+# as substrings (``clientSecret``, ``accessToken``, ``passWord``).
+SENSITIVE_KEY_PATTERN = re.compile(r"secret|token|password|api[_-]?key", re.IGNORECASE)
+REDACTED = "[REDACTED]"
+
+
+def redact_sensitive(data: Any) -> Any:
+    """Return a copy of ``data`` with every value under a sensitive key redacted.
+
+    Walks dicts, lists and tuples recursively. A key matching
+    SENSITIVE_KEY_PATTERN (case-insensitive substring) has its ENTIRE value
+    replaced with REDACTED, whatever that value's type. Non-container leaves
+    are returned unchanged. The input is never mutated.
+    """
+    if isinstance(data, dict):
+        return {
+            key: (
+                REDACTED
+                if isinstance(key, str) and SENSITIVE_KEY_PATTERN.search(key)
+                else redact_sensitive(value)
+            )
+            for key, value in data.items()
+        }
+    if isinstance(data, (list, tuple)):
+        return [redact_sensitive(item) for item in data]
+    return data
+
+
 def output_json(data: Any) -> None:
-    """Print data as JSON to stdout.
+    """Print data as JSON to stdout, redacting sensitive keys first.
+
+    Sensitive-key redaction (see redact_sensitive) is applied to every payload
+    before it is serialized, with no bypass parameter: a command that needs to
+    deliver a secret does so through a non-displaying path (see
+    update_env_file and ``pm api-keys rotate --update-railway/--update-env``),
+    never through stdout.
 
     Fail loud: if the payload is a result envelope reporting failure
     (a dict with ``ok`` explicitly False), exit non-zero AFTER printing so
@@ -85,11 +142,72 @@ def output_json(data: Any) -> None:
     write helpers return ``{"ok": False, ...}`` on 404/not-found/PM-4xx; without
     this, every such command printed the error but still exited 0, silently
     reporting failed assigns/schedules/merges as success. Reads pass payloads
-    with no ``ok`` key (or ``ok`` True) and are unaffected.
+    with no ``ok`` key (or ``ok`` True) and are unaffected. The exit decision
+    reads the ORIGINAL payload so redaction can never mask a failure envelope.
     """
-    print(json.dumps(data, indent=2, default=str))
+    print(json.dumps(redact_sensitive(data), indent=2, default=str))
     if isinstance(data, dict) and data.get("ok") is False:
         sys.exit(1)
+
+
+_ENV_LINE_RE_TMPL = r"^(?:export\s+)?{key}\s*=.*$"
+
+
+def update_env_file(path: str, updates: dict) -> dict:
+    """Atomically write ``KEY=value`` pairs into an env file, mode 0600.
+
+    Non-displaying delivery path for a credential: the values are written to
+    disk and NEVER returned or printed. Existing lines are preserved; a line
+    for a key in ``updates`` (plain or ``export KEY=`` form) is replaced in
+    place, and missing keys are appended. The file is written to a temporary
+    sibling in the same directory and then ``os.replace``d over the target, so
+    a crash mid-write leaves the original intact and no reader ever sees a
+    half-written file. The result carries names and metadata only.
+    """
+    target = os.path.abspath(path)
+    parent = os.path.dirname(target) or "."
+    if not os.path.isdir(parent):
+        raise FileNotFoundError(f"env file directory does not exist: {parent}")
+    if not os.access(parent, os.W_OK):
+        raise PermissionError(f"env file directory is not writable: {parent}")
+
+    existing = ""
+    if os.path.exists(target):
+        with open(target, "r", encoding="utf-8") as fh:
+            existing = fh.read()
+
+    lines = existing.splitlines()
+    remaining = dict(updates)
+    out_lines = []
+    for line in lines:
+        replaced = False
+        for key in list(remaining):
+            if re.match(_ENV_LINE_RE_TMPL.format(key=re.escape(key)), line):
+                out_lines.append(f"{key}={remaining.pop(key)}")
+                replaced = True
+                break
+        if not replaced:
+            out_lines.append(line)
+    for key, value in remaining.items():
+        out_lines.append(f"{key}={value}")
+    content = "\n".join(out_lines) + "\n"
+
+    import tempfile
+    fd, tmp = tempfile.mkstemp(prefix=".env-", suffix=".tmp", dir=parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    os.chmod(target, 0o600)
+    return {"path": target, "keys_written": sorted(updates), "mode": "0600"}
 
 
 def print_error(message: str) -> None:
@@ -103,7 +221,19 @@ def _is_html_response(body: str) -> bool:
 
 
 def normalize_http_error(status_code: int, body: str) -> dict:
-    """Normalize PM error bodies, especially raw HTML error pages."""
+    """Normalize PM error bodies, especially raw HTML error pages.
+
+    The returned dict is passed through redact_sensitive HERE, at the source,
+    because every error-emission site in http_backend and api_backend prints
+    this dict to stderr directly (ten sites, none via output_json). Redacting
+    once inside the normalizer means no call site, present or future, can
+    print a sensitive-keyed field from a PM error body unredacted. Found in
+    second-seat review: the first cut guarded one of the ten sites.
+    """
+    return redact_sensitive(_normalize_http_error_raw(status_code, body))
+
+
+def _normalize_http_error_raw(status_code: int, body: str) -> dict:
     if _is_html_response(body):
         excerpt = " ".join((body or "").split())[:200]
         return {
