@@ -56,13 +56,12 @@ def _api_get(path: str, params: Optional[dict] = None) -> Any:
             body = e.read().decode("utf-8", errors="replace")
         except Exception:
             body = ""
-        from .utils import normalize_http_error
+        from .utils import normalize_http_error, emit_error
         try:
             detail = normalize_http_error(e.code, body)
         except Exception:
             detail = {"error": f"API error {e.code}: {e.reason}", "status_code": e.code}
-        print(json.dumps(detail), file=sys.stderr)
-        sys.exit(1)
+        emit_error(detail, exit_code=1)
     except urllib.error.URLError as e:
         print_error(f"Network error: {e.reason}")
         sys.exit(1)
@@ -371,10 +370,15 @@ def _merge_assignment_fields(
 
 
 def _warn_include_tech_unavailable(reason: str) -> None:
+    # reason is caller-built and can interpolate an exception (str(exc)); scrub
+    # the whole line before it reaches stderr (name-alias-proof, successor-10).
+    from .utils import scrub_sensitive_text
     print(
-        "Warning: --include-tech could not verify cookie-path in-house tech "
-        f"fields ({reason}); empty in_house_servicers may mean unavailable "
-        "cookie data, not no tech assigned.",
+        scrub_sensitive_text(
+            "Warning: --include-tech could not verify cookie-path in-house tech "
+            f"fields ({reason}); empty in_house_servicers may mean unavailable "
+            "cookie data, not no tech assigned."
+        ),
         file=sys.stderr,
     )
 

@@ -97,18 +97,39 @@ Property Meld does not document a rate limit. Each installation must set its own
 
 ## API Key Rotation (CLI)
 
-When the Nexus OAuth credentials expire, use the CLI to rotate them:
+When the Nexus OAuth credentials expire, use the CLI to rotate them. The
+new client_secret is never printed: PropertyMeld shows it exactly once and
+the CLI redacts every sensitive key at its output boundary, so the command
+refuses to run unless you give it at least one non-displaying destination.
 
 ```bash
-# Rotate and print new credentials (then update Railway manually)
-pm api-keys rotate
+# Rotate and write PM_CLIENT_ID + PM_CLIENT_SECRET into an env file
+# (atomic, mode 0600; an existing definition is replaced in place)
+pm api-keys rotate --update-env /path/to/.env
 
-# Rotate AND push new credentials to Railway automatically
+# Rotate and push the new credentials to Railway
 pm api-keys rotate --update-railway
+
+# Both destinations in one run
+pm api-keys rotate --update-railway --update-env /path/to/.env
 
 # List existing API keys (names + client IDs, no secrets)
 pm api-keys list
 ```
+
+Output redaction note: every command's output passes through a redaction
+boundary that replaces values under sensitive keys and scrubs credential
+shapes inside free text. A string value that itself parses as a JSON object
+or array is parsed, walked and re-serialized, even when it contains no
+sensitive key, so its formatting (whitespace, key order preservation, float
+representation) can differ from the input on payloads that needed no
+redaction; a value that cannot be re-serialized as strict JSON is scrubbed
+as text instead.
+
+The result reports each delivery under `deliveries` (path, variable, status).
+If any requested delivery fails after the key is minted, the command exits 1
+and says so; the value is still never displayed. Running `pm api-keys rotate`
+with no destination exits 1 before minting anything.
 
 **Manual flow the CLI automates:**
 1. `app.propertymeld.com` → click user icon (top right) → Switch Account Type
@@ -116,7 +137,7 @@ pm api-keys list
 3. Navigate to Settings > API Keys (`/2000/n/2000/nexus/api-keys/`)
 4. Click "Create API Key"
 5. Copy Client ID and Client Secret (shown ONCE)
-6. Update Railway env vars: `PM_NEXUS_CLIENT_ID`, `PM_NEXUS_CLIENT_SECRET`
+6. Update the Railway env vars the runtime actually reads: `PM_CLIENT_ID`, `PM_CLIENT_SECRET` (NOT `PM_NEXUS_CLIENT_ID` / `PM_NEXUS_CLIENT_SECRET`, which the runtime ignores). Prefer `pm api-keys rotate --update-railway` over this manual step: it mints and delivers the pair in one call and never displays the secret.
 7. `railway redeploy --yes` in `emergency-dispatch-middleware/`
 
 **Notes:**

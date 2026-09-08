@@ -1,6 +1,7 @@
 """Shared utilities: token cache, JSON output, error handling."""
 import json
 import os
+import re
 import sys
 from typing import Any
 
@@ -76,8 +77,262 @@ def get_token() -> str:
     return body["access_token"]
 
 
+# Output-boundary secret redaction.
+#
+# PropertyMeld responses can carry credentials that are not ours to print: the
+# work-orders comments payload nests the management company's OAuth client
+# secret under comment.agent.management, and every pm command prints its
+# response verbatim. Any process that captures stdout (agent transcripts, logs,
+# shell history) then holds the secret. The fix is one choke point: every
+# command already emits through output_json(), so redaction here covers all of
+# them without per-command code.
+#
+# Redaction is by KEY, recursive through dicts, lists and tuples, and replaces
+# the whole value under a matching key (a nested object under a key named
+# ``token_config`` is dropped entirely rather than descended into). It is
+# unconditional: there is no environment variable or global flag that turns it
+# off, because the caller most likely to want raw output is exactly the agent
+# whose transcript must not hold the value. There is no per-command reveal
+# either: a command that must deliver a secret (``pm api-keys rotate``) writes
+# it to a non-displaying destination (Railway, or an env file via
+# update_env_file) and stdout only ever shows it redacted.
+#
+# Pattern note: ``api[_-]?key`` is a strict superset of the specified
+# ``api_key`` so that camelCase ``apiKey`` and the header form ``x-api-key``
+# are also caught; the other three tokens already match their camelCase forms
+# as substrings (``clientSecret``, ``accessToken``, ``passWord``).
+SENSITIVE_KEY_PATTERN = re.compile(r"secret|token|password|api[_-]?key", re.IGNORECASE)
+REDACTED = "[REDACTED]"
+
+
+def redact_sensitive(data: Any, *, string_scrub=None) -> Any:
+    """Return a copy of ``data`` with every value under a sensitive key redacted.
+
+    Walks dicts, lists and tuples recursively. A key matching
+    SENSITIVE_KEY_PATTERN (case-insensitive substring) has its ENTIRE value
+    replaced with REDACTED, whatever that value's type. When ``string_scrub``
+    is given it is applied to every remaining STRING leaf, so a credential
+    that arrives inside a string value (``{"detail": "client_secret=..."}``,
+    or a bare string element of a list) is caught too; the key walk alone
+    cannot see inside a string. Other leaves are returned unchanged. The input
+    is never mutated.
+    """
+    if isinstance(data, dict):
+        return {
+            key: (
+                REDACTED
+                if isinstance(key, str) and SENSITIVE_KEY_PATTERN.search(key)
+                else redact_sensitive(value, string_scrub=string_scrub)
+            )
+            for key, value in data.items()
+        }
+    if isinstance(data, (list, tuple)):
+        return [redact_sensitive(item, string_scrub=string_scrub) for item in data]
+    if string_scrub is not None and isinstance(data, str):
+        # A string leaf that IS serialized JSON is walked with the key
+        # redactor and re-serialized, so a sensitive KEY inside it is caught
+        # whatever shape its value has (a short letter-only secret is
+        # invisible to every text rule). Two ways the walk can fail, both of
+        # which fall back to scrubbing the leaf as text so the shared stdout
+        # boundary always produces output: allow_nan=False raises ValueError
+        # for an out-of-range number (the default would emit Infinity/NaN,
+        # which a strict parser rejects); and a pathologically deep leaf
+        # raises RecursionError from the parse, the walk or the dump.
+        try:
+            parsed = _parse_json_leaf(data)
+            if parsed is not None:
+                container, layers = parsed
+                out = json.dumps(redact_sensitive(container, string_scrub=string_scrub), allow_nan=False)
+                # Re-apply every string layer that was peeled, so a double-
+                # encoded leaf comes back double-encoded (W1).
+                for _ in range(layers - 1):
+                    out = json.dumps(out)
+                return out
+        except (ValueError, RecursionError):
+            pass
+        return string_scrub(data)
+    return data
+
+
+def _parse_json_leaf(text: str):
+    """Return ``(container, layers)`` if ``text`` is serialized JSON, else None.
+
+    ``layers`` is the number of string encodings that were peeled to reach
+    the container: 1 for an ordinary serialized document, 2 when the text is a
+    JSON string whose content is itself a JSON document (double encoding).
+    The caller re-encodes the redacted container the same number of times so
+    the layer count round-trips; deeper encodings are not accepted and fall
+    back to the text scrub. Only containers are returned; scalars are not
+    treated as JSON so ordinary strings keep their normal text scrubbing.
+    """
+    stripped = text.strip()
+    if not stripped or stripped[0] not in "{[\"":
+        return None
+    layers = 0
+    for _ in range(2):
+        try:
+            value = json.loads(stripped)
+        except (TypeError, ValueError, RecursionError):
+            return None
+        layers += 1
+        if isinstance(value, (dict, list)):
+            return value, layers
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or stripped[0] not in "{[":
+                return None
+            continue
+        return None
+    return None
+
+
+# Value-shape scrubbing for free text. Key-based redaction cannot see inside a
+# string, and normalize_http_error emits raw excerpts of NON-JSON error bodies
+# (an HTML gateway page, a plaintext proxy error). A realistic such page echoes
+# an Authorization header or a query string, so the excerpt is scrubbed by the
+# SHAPE of a credential before it is emitted: Bearer/Basic runs, key=value and
+# key: value pairs for the same key pattern (quoted or bare), and long
+# high-entropy runs. The surrounding text is kept so the excerpt stays useful.
+# Long URL-like runs that carry a digit are over-scrubbed on purpose: this is a
+# diagnostic excerpt, and under-scrubbing is the failure that matters.
+_TEXT_AUTH_RE = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9\-._~+/=]+")
+# S2 (performance): the key prefix and the entropy lookaheads used to be retried
+# from EVERY character, which is quadratic on a long letter-only string (an
+# 8 KB leaf took seconds, larger ones minutes). Both patterns are now anchored
+# to a token boundary with a lookbehind, so a match is attempted once per
+# token and each token is scanned once; the per-token scan is capped by the
+# {1,N} bounds so a pathological single token stays linear too.
+#
+# S1 (escaped JSON): a string leaf can carry serialized JSON whose quotes are
+# backslash-escaped ({\"client_secret\": \"x\"}), which put a backslash
+# between the key and its quote, and a leaf encoded more than once carries
+# runs of several backslashes. Key and value delimiters therefore accept any
+# run of backslashes before the quote, and the opener's run must match the
+# closer's (backreference). The primary defence for that shape is
+# the JSON-leaf walk in redact_sensitive; this is the text-level backstop.
+_TEXT_KV_RE = re.compile(
+    '(?i)(?<![A-Za-z0-9_\\-])([A-Za-z0-9_\\-]{0,64}?(?:secret|token|password|api[_-]?key)[A-Za-z0-9_\\-]{0,64})'
+    '(\\s*(?:\\\\*[\\"\'])?\\s*[=:]\\s*)'
+    '(?:(?P<dqe>\\\\*)\\"(?P<dq>(?:[^\\"\\\\]|\\\\.)*?)(?P=dqe)\\"|(?P<sqe>\\\\*)\'(?P<sq>(?:[^\'\\\\]|\\\\.)*?)(?P=sqe)\'|(?P<udqe>\\\\*)\\"(?P<udq>(?:[^\\"\\\\]|\\\\.)*)$|(?P<usqe>\\\\*)\'(?P<usq>(?:[^\'\\\\]|\\\\.)*)$|(?P<bare>[^\\r\\n&\"<>]+))'
+)
+
+
+# S2 (performance, second cut): the previous entropy rule used two unbounded
+# lookaheads that were retried from every character, quadratic on a long
+# letter-only string (a 64 KB leaf took 14 s). It is now a plain run pattern
+# plus a Python check, linear by construction: every run of 24+ token-alphabet
+# characters is redacted only if it carries both a digit and a letter. Same
+# semantics, no lookaheads.
+_TEXT_ENTROPY_RUN_RE = re.compile('[A-Za-z0-9\\-._~+/=]{24,}')
+
+
+def _kv_redact(m) -> str:
+    key, sep = m.group(1), m.group(2)
+    g = m.groupdict()
+    # The opener decides the closer: a plain quote closes on a plain quote (so
+    # an escaped quote INSIDE the value stays content), and a backslash-escaped
+    # opener closes on a backslash-escaped quote (serialized JSON embedded in
+    # text). The backreference in the pattern enforces it; here the same
+    # escaping is written back so the surrounding text keeps its shape.
+    if g["dq"] is not None:
+        return f'{key}{sep}{g["dqe"]}"{REDACTED}{g["dqe"]}"'
+    if g["sq"] is not None:
+        return f"{key}{sep}{g['sqe']}'{REDACTED}{g['sqe']}'"
+    # Unterminated quote: fail closed, the value runs to the end of the text.
+    if g["udq"] is not None:
+        return f'{key}{sep}{g["udqe"]}"{REDACTED}'
+    if g["usq"] is not None:
+        return f"{key}{sep}{g['usqe']}'{REDACTED}"
+    return f"{key}{sep}{REDACTED}"
+
+
+# Signed-URL credential redaction. A presigned S3 / storage URL carries its
+# credential in query params (X-Amz-Credential holds an AKIA... access key,
+# X-Amz-Signature the signature) that no key name or value shape matches, so
+# a normal files response would print it in the clear. Redact the sensitive
+# query params inside any URL while keeping scheme/host/path and benign params
+# (Expires, filename) so the field stays useful. Runs in BOTH scrub modes.
+import urllib.parse as _urlparse
+
+_URL_RE = re.compile(r"https?://[^\s\"'<>\\]+", re.IGNORECASE)
+_SENSITIVE_QUERY_PARAM = re.compile(
+    r"^(?:x-amz-(?:credential|signature|security-token)|signature|sig|token|"
+    r"awsaccesskeyid|password|secret|api[_-]?key)$",
+    re.IGNORECASE,
+)
+
+
+import html as _html
+
+
+def _norm_param(name: str) -> str:
+    # A signed URL embedded in an HTML field arrives with &amp; separators;
+    # even after html.unescape a stray "amp;" prefix can survive a double
+    # encoding, so strip it defensively before matching (successor-12).
+    return name[4:] if name.lower().startswith("amp;") else name
+
+
+def _redact_url_credentials(url: str) -> str:
+    # HTML-escaped separators (&amp;) make parse_qsl read "amp;X-Amz-Signature";
+    # unescape first so the param names match.
+    unescaped = _html.unescape(url)
+    try:
+        parts = _urlparse.urlsplit(unescaped)
+    except ValueError:
+        return url
+    if not parts.query:
+        return url
+    pairs = _urlparse.parse_qsl(parts.query, keep_blank_values=True)
+    if not any(_SENSITIVE_QUERY_PARAM.match(_norm_param(k)) for k, _ in pairs):
+        return url
+    redacted = [(_norm_param(k), REDACTED if _SENSITIVE_QUERY_PARAM.match(_norm_param(k)) else v) for k, v in pairs]
+    new_query = _urlparse.urlencode(redacted, safe="[]")
+    return _urlparse.urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
+
+
+def scrub_sensitive_text(text: str, *, high_entropy: bool = True) -> str:
+    """Replace credential-shaped values inside free text with REDACTED.
+
+    Keeps the surrounding text (labels, separators, prose) so an error excerpt
+    remains readable. Applied to excerpts BEFORE truncation so a value that
+    would straddle the cap cannot leak a tail.
+
+    ``high_entropy=False`` applies only the precise shapes (Bearer/Basic runs
+    and key=value / key: value for the sensitive key pattern). That mode is
+    used on ordinary command output, where the high-entropy rule would redact
+    UUIDs and long identifiers that belong in the payload; the full mode is
+    reserved for error normalization, where over-redaction is acceptable.
+    """
+    if not text:
+        return text
+    text = _URL_RE.sub(lambda m: _redact_url_credentials(m.group(0)), text)
+    text = _TEXT_AUTH_RE.sub(lambda m: f"{m.group(1)} {REDACTED}", text)
+    text = _TEXT_KV_RE.sub(_kv_redact, text)
+    if high_entropy:
+        text = _TEXT_ENTROPY_RUN_RE.sub(_entropy_redact, text)
+    return text
+
+
+def _entropy_redact(m) -> str:
+    run = m.group(0)
+    if any(c.isdigit() for c in run) and any(c.isalpha() for c in run):
+        return REDACTED
+    return run
+
+
+def scrub_sensitive_text_narrow(text: str) -> str:
+    """Precise-shape scrub for ordinary output string leaves (no entropy rule)."""
+    return scrub_sensitive_text(text, high_entropy=False)
+
+
 def output_json(data: Any) -> None:
-    """Print data as JSON to stdout.
+    """Print data as JSON to stdout, redacting sensitive keys first.
+
+    Sensitive-key redaction (see redact_sensitive) is applied to every payload
+    before it is serialized, with no bypass parameter: a command that needs to
+    deliver a secret does so through a non-displaying path (see
+    update_env_file and ``pm api-keys rotate --update-railway/--update-env``),
+    never through stdout.
 
     Fail loud: if the payload is a result envelope reporting failure
     (a dict with ``ok`` explicitly False), exit non-zero AFTER printing so
@@ -85,16 +340,256 @@ def output_json(data: Any) -> None:
     write helpers return ``{"ok": False, ...}`` on 404/not-found/PM-4xx; without
     this, every such command printed the error but still exited 0, silently
     reporting failed assigns/schedules/merges as success. Reads pass payloads
-    with no ``ok`` key (or ``ok`` True) and are unaffected.
+    with no ``ok`` key (or ``ok`` True) and are unaffected. The exit decision
+    reads the ORIGINAL payload so redaction can never mask a failure envelope.
     """
-    print(json.dumps(data, indent=2, default=str))
+    print(json.dumps(redact_sensitive(data, string_scrub=scrub_sensitive_text_narrow), indent=2, default=str))
     if isinstance(data, dict) and data.get("ok") is False:
         sys.exit(1)
 
 
+_ENV_LINE_RE_TMPL = r"^(\s*(?:export\s+)?){key}\s*=.*$"
+
+
+def update_env_file(path: str, updates: dict) -> dict:
+    """Atomically write ``KEY=value`` pairs into an env file, mode 0600.
+
+    Non-displaying delivery path for a credential: the values are written to
+    disk and NEVER returned or printed. Existing lines are preserved; a line
+    for a key in ``updates`` (plain or ``export KEY=`` form) is replaced in
+    place, and missing keys are appended. The file is written to a temporary
+    sibling in the same directory and then ``os.replace``d over the target, so
+    a crash mid-write leaves the original intact and no reader ever sees a
+    half-written file. A replaced line keeps its leading whitespace and its
+    ``export`` prefix if it had them; the first definition of a key is
+    replaced and any later duplicate definitions are removed, INCLUDING
+    indented ones (a shell sources an indented assignment just the same, and
+    the last one wins), so exactly one remains. Keys and values containing a newline or carriage return are refused
+    BEFORE the file is touched: a newline would inject a line into a 0600
+    credential file. The result carries names and metadata only.
+    """
+    for key, value in updates.items():
+        if any(ch in str(key) for ch in "\r\n") or any(ch in str(value) for ch in "\r\n"):
+            raise ValueError(f"env key/value for {key!r} must not contain a newline or carriage return")
+    target = os.path.abspath(path)
+    parent = os.path.dirname(target) or "."
+    if not os.path.isdir(parent):
+        raise FileNotFoundError(f"env file directory does not exist: {parent}")
+    if not os.access(parent, os.W_OK):
+        raise PermissionError(f"env file directory is not writable: {parent}")
+
+    existing = ""
+    if os.path.exists(target):
+        with open(target, "r", encoding="utf-8") as fh:
+            existing = fh.read()
+
+    lines = existing.splitlines()
+    remaining = dict(updates)
+    replaced_keys: set = set()
+    out_lines = []
+    for line in lines:
+        handled = False
+        for key in updates:
+            m = re.match(_ENV_LINE_RE_TMPL.format(key=re.escape(key)), line)
+            if m:
+                handled = True
+                if key in replaced_keys:
+                    # Duplicate definition: drop it. Shell loading lets the LAST
+                    # assignment win, so leaving a stale later line would let
+                    # the old secret survive a reported-successful rotation.
+                    break
+                prefix = m.group(1) or ""
+                out_lines.append(f"{prefix}{key}={remaining.pop(key)}")
+                replaced_keys.add(key)
+                break
+        if not handled:
+            out_lines.append(line)
+    for key, value in remaining.items():
+        out_lines.append(f"{key}={value}")
+    content = "\n".join(out_lines) + "\n"
+
+    import tempfile
+    fd, tmp = tempfile.mkstemp(prefix=".env-", suffix=".tmp", dir=parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    os.chmod(target, 0o600)
+    return {"path": target, "keys_written": sorted(updates), "mode": "0600"}
+
+
+class _ScrubbingBinaryBuffer:
+    """A scrubbing binary proxy for a text stream's .buffer.
+
+    Decodes with surrogateescape, line-buffers, scrubs complete lines and
+    re-encodes before delegating, so ``sys.stderr.buffer.write(b"...")`` and a
+    bytes credential split across two buffer writes are both caught.
+    """
+
+    def __init__(self, underlying, scrub):
+        self._u = underlying
+        self._scrub = scrub
+        self._buf = b""
+
+    def write(self, b):
+        b = bytes(b)
+        self._buf += b
+        if b"\n" in self._buf:
+            head, _, tail = self._buf.rpartition(b"\n")
+            text = (head + b"\n").decode("utf-8", "surrogateescape")
+            self._u.write(self._scrub(text).encode("utf-8", "surrogateescape"))
+            self._buf = tail
+        return len(b)
+
+    def flush(self):
+        try:
+            if self._buf:
+                text = self._buf.decode("utf-8", "surrogateescape")
+                self._u.write(self._scrub(text).encode("utf-8", "surrogateescape"))
+                self._buf = b""
+            self._u.flush()
+        except ValueError:
+            # closed underlying buffer at exit; a real OSError propagates so an
+            # undelivered write is never swallowed into an exit 0.
+            self._buf = b""
+
+    def __getattr__(self, name):
+        return getattr(self._u, name)
+
+
+class ScrubbingTextStream:
+    """A TextIO wrapper that scrubs every write before it reaches the stream.
+
+    The boundary is the STREAM, not the call sites: any write by any route
+    (print, a local alias of sys.stderr, a logging.StreamHandler, click's own
+    usage errors, a third-party library) passes the scrubber by construction,
+    which an AST allowlist over call sites cannot guarantee. Partial lines are
+    buffered so a credential split across two write() calls is assembled into a
+    full line before scrubbing (scrub on newline / flush). fd-level writes
+    (os.write(2, ...)) bypass this wrapper and are the declared limit.
+    """
+
+    def __init__(self, underlying, scrub):
+        self._underlying = underlying
+        self._scrub = scrub
+        self._buf = ""
+
+    def write(self, text):
+        # Some callers (click under its test runner) write bytes to a stream
+        # they treat as binary; decode, scrub as text, and re-emit in the
+        # underlying stream's own type.
+        if isinstance(text, (bytes, bytearray)):
+            text = bytes(text).decode("utf-8", "replace")
+        self._buf += text
+        if "\n" in self._buf:
+            head, _, tail = self._buf.rpartition("\n")
+            self._emit(self._scrub(head + "\n"))
+            self._buf = tail
+        return len(text)
+
+    def _emit(self, s):
+        try:
+            self._underlying.write(s)
+        except TypeError:
+            self._underlying.write(s.encode("utf-8"))
+
+    def writelines(self, lines):
+        # writelines delegates to the underlying stream on a raw TextIOWrapper,
+        # bypassing write(); route every item through the scrub instead.
+        for line in lines:
+            self.write(line)
+
+    @property
+    def buffer(self):
+        # sys.stderr.buffer.write(...) is a second bypass on a TextIOWrapper.
+        # Expose a scrubbing BINARY proxy over the real buffer, not the raw one.
+        underlying_buffer = getattr(self._underlying, "buffer", None)
+        if underlying_buffer is None:
+            raise AttributeError("buffer")
+        if getattr(self, "_binbuf", None) is None or self._binbuf._u is not underlying_buffer:
+            self._binbuf = _ScrubbingBinaryBuffer(underlying_buffer, self._scrub)
+        return self._binbuf
+
+    def flush(self):
+        # Drain BOTH buffers: a partial line written through the binary .buffer
+        # proxy lives in _binbuf, and a conventional sys.stderr.flush() (and the
+        # atexit flush) must emit it too, or a newline-free binary diagnostic or
+        # prompt is silently lost at exit.
+        binbuf = getattr(self, "_binbuf", None)
+        try:
+            if self._buf:
+                self._emit(self._scrub(self._buf))
+                self._buf = ""
+            if binbuf is not None:
+                binbuf.flush()
+            self._underlying.flush()
+        except ValueError:
+            # underlying stream closed (a transient test capture at interpreter
+            # exit) raises ValueError; nothing to flush. A real I/O failure is
+            # an OSError (ENOSPC on a redirected stdout, a broken pipe): it
+            # propagates so the CLI cannot exit 0 with output undelivered.
+            self._buf = ""
+
+    def __getattr__(self, name):
+        return getattr(self._underlying, name)
+
+
+def install_scrubbing_streams():
+    """Wrap sys.stdout/sys.stderr with the scrubbing stream, once, and flush on exit.
+
+    stderr uses the full scrubber (diagnostics, over-redaction acceptable);
+    stdout uses the narrow scrubber so ordinary identifiers and UUIDs survive
+    while a raw signed URL or key=value credential is still caught. output_json
+    already narrow-scrubs its payload, so the wrapper is idempotent over it.
+    Idempotent: a second call is a no-op.
+    """
+    import atexit
+    changed = False
+    if not isinstance(sys.stderr, ScrubbingTextStream):
+        sys.stderr = ScrubbingTextStream(sys.stderr, scrub_sensitive_text)
+        atexit.register(sys.stderr.flush)
+        changed = True
+    if not isinstance(sys.stdout, ScrubbingTextStream):
+        sys.stdout = ScrubbingTextStream(sys.stdout, scrub_sensitive_text_narrow)
+        atexit.register(sys.stdout.flush)
+        changed = True
+    return changed
+
+
+def emit_error(payload, *, exit_code=None) -> None:
+    """The single scrubbed boundary for every refusal / error written to stderr.
+
+    Aussie's PR66 seat found the real `pm work-orders complete` refusal path
+    printing a credential-shaped --notes value straight to stderr, bypassing
+    output_json's redaction. The fix is at the source shape, not the site:
+    every refusal / error emitter routes its payload through here, so a value
+    can never reach stderr unredacted regardless of which key it sits under.
+
+    A dict is walked by the key redactor AND every string leaf is scrubbed with
+    the full text scrubber (this is a diagnostic error line, so over-redaction
+    is acceptable, matching normalize_http_error); a bare string is scrubbed
+    directly. ``exit_code`` exits after printing when given.
+    """
+    if isinstance(payload, str):
+        printable = scrub_sensitive_text(payload)
+    else:
+        printable = redact_sensitive(payload, string_scrub=scrub_sensitive_text)
+    print(json.dumps(printable) if not isinstance(printable, str) else printable, file=sys.stderr)
+    if exit_code is not None:
+        sys.exit(exit_code)
+
+
 def print_error(message: str) -> None:
-    """Print error to stderr in JSON format."""
-    print(json.dumps({"error": message}), file=sys.stderr)
+    """Print error to stderr in JSON format (scrubbed via emit_error)."""
+    emit_error({"error": message})
 
 
 def _is_html_response(body: str) -> bool:
@@ -103,9 +598,26 @@ def _is_html_response(body: str) -> bool:
 
 
 def normalize_http_error(status_code: int, body: str) -> dict:
-    """Normalize PM error bodies, especially raw HTML error pages."""
+    """Normalize PM error bodies, especially raw HTML error pages.
+
+    The returned dict is passed through redact_sensitive HERE, at the source,
+    because every error-emission site in http_backend and api_backend prints
+    this dict to stderr directly (ten sites, none via output_json). Redacting
+    once inside the normalizer means no call site, present or future, can
+    print a sensitive-keyed field from a PM error body unredacted. Found in
+    second-seat review: the first cut guarded one of the ten sites.
+    """
+    # Full scrub on every string leaf as well as the key walk: a parsed error
+    # body can carry a credential INSIDE a string value or as a bare string
+    # element of a list, which keys cannot see (second Codex review, X2).
+    return redact_sensitive(_normalize_http_error_raw(status_code, body), string_scrub=scrub_sensitive_text)
+
+
+def _normalize_http_error_raw(status_code: int, body: str) -> dict:
     if _is_html_response(body):
-        excerpt = " ".join((body or "").split())[:200]
+        # Scrub BEFORE the 200-char cut so a credential straddling the cap
+        # cannot leak its tail; the pre-scrub slice bounds regex work.
+        excerpt = scrub_sensitive_text(" ".join((body or "").split())[:4000])[:200]
         return {
             "error": f"HTTP {status_code}",
             "status_code": status_code,
@@ -124,8 +636,15 @@ def normalize_http_error(status_code: int, body: str) -> dict:
         return parsed
 
     result = {"error": f"HTTP {status_code}", "status_code": status_code}
+    if isinstance(parsed, list):
+        # A JSON ARRAY error body (DRF returns these) must stay structured so
+        # the caller's redact_sensitive can walk its keys. Stringifying it into
+        # `detail` would hide every key from the key-match; the text scrubber
+        # is only the backstop for that case.
+        result["detail"] = parsed
+        return result
     if detail:
-        result["detail"] = detail[:300]
+        result["detail"] = scrub_sensitive_text(detail[:4000])[:300]
     return result
 
 
@@ -200,7 +719,7 @@ def resolve_meld_id(maybe_ref_or_int: str) -> str:
         match = _find_matching_meld(_extract_results(data), raw)
         if match and match.get("id") is not None:
             resolved = str(match["id"])
-            print(f"[resolved {raw} -> {resolved}]", file=sys.stderr)
+            print(scrub_sensitive_text_narrow(f"[resolved {raw} -> {resolved}]"), file=sys.stderr)
             return resolved
 
     next_path = "/meld/?limit=100"
@@ -217,7 +736,7 @@ def resolve_meld_id(maybe_ref_or_int: str) -> str:
         match = _find_matching_meld(_extract_results(data), raw)
         if match and match.get("id") is not None:
             resolved = str(match["id"])
-            print(f"[resolved {raw} -> {resolved}]", file=sys.stderr)
+            print(scrub_sensitive_text_narrow(f"[resolved {raw} -> {resolved}]"), file=sys.stderr)
             return resolved
         if isinstance(data, dict) and data.get("next"):
             next_url = data["next"]

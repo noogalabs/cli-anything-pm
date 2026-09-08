@@ -82,5 +82,6 @@ def require_propertymeld_config() -> PropertyMeldConfig:
     try:
         return propertymeld_config()
     except PropertyMeldConfigError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        from .utils import emit_error
+        emit_error(f"ERROR: {exc}")
         raise SystemExit(2) from None

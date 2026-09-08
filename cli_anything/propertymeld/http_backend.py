@@ -26,7 +26,7 @@ import uuid
 from typing import Any, Callable, Optional
 
 from .config import require_propertymeld_config
-from .utils import _is_html_response, normalize_http_error
+from .utils import _is_html_response, normalize_http_error, emit_error, scrub_sensitive_text
 
 # Optional test overrides. Production resolves all routing and credential
 # custody from PROPERTYMELD_CONFIG at action time, never during import/help.
@@ -101,13 +101,10 @@ _RECAPTURE_SCRIPT = os.path.join(
 def _attempt_recapture() -> bool:
     """Refresh the PM session cookie via the Playwright recapture helper."""
     if not os.path.exists(_RECAPTURE_SCRIPT):
-        print(
-            json.dumps({"error": "Playwright recapture script not found", "path": _RECAPTURE_SCRIPT}),
-            file=sys.stderr,
-        )
+        emit_error({"error": "Playwright recapture script not found", "path": _RECAPTURE_SCRIPT})
         return False
 
-    print(json.dumps({"event": "auto_recapture_attempt", "script": _RECAPTURE_SCRIPT}), file=sys.stderr)
+    emit_error({"event": "auto_recapture_attempt", "script": _RECAPTURE_SCRIPT})
     try:
         # --force: this caller only runs AFTER a real SessionExpired (401 on a
         # write), so the session is definitively stale. Bypass the script's own
@@ -130,15 +127,17 @@ def _attempt_recapture() -> bool:
         print(json.dumps({"error": "Recapture timed out (180s)"}), file=sys.stderr)
         return False
     except OSError as exc:
-        print(json.dumps({"error": "Recapture spawn failed", "detail": str(exc)}), file=sys.stderr)
+        emit_error({"error": "Recapture spawn failed", "detail": str(exc)})
         return False
 
     if result.returncode != 0:
-        tail = (result.stderr or "")[-300:]
-        print(
-            json.dumps({"error": "Recapture failed", "rc": result.returncode, "stderr_tail": tail}),
-            file=sys.stderr,
-        )
+        # The child's stderr is copied here; its MFA branches emit dynamic
+        # detail=str(exc) that can carry a credential. Scrub the FULL text
+        # BEFORE the 300-char tail cut (same order rule as Q2/O1, so a value
+        # straddling the cut cannot leak a fragment), then route through the
+        # scrubbed boundary. Survivor of the 38-writer census (aussie s8 seat).
+        tail = scrub_sensitive_text(result.stderr or "")[-300:]
+        emit_error({"error": "Recapture failed", "rc": result.returncode, "stderr_tail": tail})
         return False
 
     print(json.dumps({"event": "auto_recapture_ok"}), file=sys.stderr)
@@ -154,20 +153,14 @@ def with_recapture_retry(fn: Callable[..., Any]) -> Callable[..., Any]:
         try:
             return fn(*args, **kwargs)
         except SessionExpired:
-            print(json.dumps({"event": "session_expired_caught", "fn": fn.__name__}), file=sys.stderr)
+            emit_error({"event": "session_expired_caught", "fn": fn.__name__})
             if not _attempt_recapture():
-                print(
-                    json.dumps({"error": "Auto-recapture failed; manual intervention needed", "fn": fn.__name__}),
-                    file=sys.stderr,
-                )
+                emit_error({"error": "Auto-recapture failed; manual intervention needed", "fn": fn.__name__})
                 sys.exit(1)
             try:
                 return fn(*args, **kwargs)
             except SessionExpired:
-                print(
-                    json.dumps({"error": "Still 401 after recapture; manual intervention needed", "fn": fn.__name__}),
-                    file=sys.stderr,
-                )
+                emit_error({"error": "Still 401 after recapture; manual intervention needed", "fn": fn.__name__})
                 sys.exit(1)
 
     return wrapper
@@ -175,7 +168,7 @@ def with_recapture_retry(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 def _load_creds() -> dict:
     if not os.path.exists(_creds_path()):
-        print(json.dumps({"error": f"Credentials file not found: {_creds_path()}"}), file=sys.stderr)
+        emit_error({"error": f"Credentials file not found: {_creds_path()}"})
         sys.exit(2)
     with open(_creds_path()) as f:
         return json.load(f)
@@ -478,10 +471,13 @@ def _parse_json_body_or_exit(raw: bytes) -> Any:
         if nb.inferred_status is not None:
             print(json.dumps(normalize_http_error(nb.inferred_status, nb.text)), file=sys.stderr)
         else:
+            # Q2: this fallback builds its own excerpt and prints it directly,
+            # so it must scrub the same way the normalizer does, and BEFORE
+            # the 200-char cut so a straddling value cannot leak its head.
             print(
                 json.dumps({
                     "error": "Non-JSON response body",
-                    "body_excerpt": " ".join((nb.text or "").split())[:200],
+                    "body_excerpt": scrub_sensitive_text(" ".join((nb.text or "").split())[:4000])[:200],
                 }),
                 file=sys.stderr,
             )
@@ -1431,8 +1427,10 @@ def _complete_meld_fail(
     }
     if result is not None:
         body["result"] = result
-    print(json.dumps(body), file=sys.stderr)
-    sys.exit(1)
+    # P1 (aussie PR66 seat): this refusal path printed body, including the
+    # operator's credential-shaped completion_notes, straight to stderr.
+    # Route through the scrubbed error boundary instead.
+    emit_error(body, exit_code=1)
 
 
 @with_recapture_retry

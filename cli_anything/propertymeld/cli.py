@@ -15,16 +15,48 @@ Usage:
 import json
 import sys
 
+import os
+
 import click
 
 from . import api_backend, http_backend, insights_backend
-from .utils import output_json, print_error, resolve_meld_id
+from .utils import output_json, print_error, resolve_meld_id, scrub_sensitive_text, update_env_file
 
 
-@click.group()
+class _ScrubbingGroup(click.Group):
+    """A Group that installs the scrubbing stream wrapper BEFORE command
+    resolution, so an unknown-top-level-command error whose name carries a
+    credential is scrubbed on every entry path (console main() and the snapcli
+    harness dispatch). make_context runs before Group.invoke resolves the
+    subcommand; main and invoke are overridden too, all idempotent, so whichever
+    hook the harness enters through, the wrapper is up first.
+    """
+
+    def _install(self):
+        from .utils import install_scrubbing_streams
+        install_scrubbing_streams()
+
+    def make_context(self, *args, **kwargs):
+        self._install()
+        return super().make_context(*args, **kwargs)
+
+    def main(self, *args, **kwargs):
+        self._install()
+        return super().main(*args, **kwargs)
+
+    def invoke(self, ctx):
+        self._install()
+        return super().invoke(ctx)
+
+
+@click.group(cls=_ScrubbingGroup)
 @click.version_option("0.1.0", prog_name="pm")
 def cli():
     """Property Meld CLI — read work orders, properties, vendors; assign techs."""
+    # Stream boundary: any write by any route on stdout/stderr is scrubbed,
+    # including the snapcli harness path which dispatches through this group.
+    from .utils import install_scrubbing_streams
+    install_scrubbing_streams()
     pass
 
 
@@ -990,37 +1022,207 @@ def api_keys():
     pass
 
 
+def _preflight_env_target(path: str):
+    """Return a problem string if PATH cannot safely receive credentials, else None.
+
+    Runs BEFORE any key is minted. The parent must be a writable directory;
+    an existing target must be a regular file that opens, decodes as UTF-8
+    and is writable.
+    """
+    target = os.path.abspath(path)
+    parent = os.path.dirname(target) or "."
+    if not os.path.isdir(parent) or not os.access(parent, os.W_OK):
+        return f"destination directory is missing or not writable: {parent}"
+    if os.path.exists(target):
+        if not os.path.isfile(target):
+            return f"destination exists but is not a regular file: {target}"
+        if not os.access(target, os.W_OK):
+            return f"existing destination is not writable: {target}"
+        try:
+            with open(target, "rb") as fh:
+                fh.read().decode("utf-8")
+        except OSError as exc:
+            return f"existing destination cannot be read: {target} ({exc.__class__.__name__})"
+        except UnicodeDecodeError:
+            return f"existing destination is not valid UTF-8: {target}"
+    return None
+
+
 @api_keys.command("rotate")
 @click.option("--update-railway", is_flag=True, default=False,
-              help="Automatically push new credentials to Railway via 'railway variables --set'")
+              help="Push the new credentials to Railway via 'railway variables --set' "
+                   "(non-displaying delivery).")
+@click.option("--update-env", "update_env",
+              # readable=False: click would otherwise reject an unreadable
+              # existing file with a plain-text usage error (exit 2) before the
+              # preflight runs; _preflight_env_target performs the stricter
+              # check and reports it in the JSON envelope with exit 1.
+              type=click.Path(dir_okay=False, readable=False), default=None,
+              help="Atomically write PM_CLIENT_ID and PM_CLIENT_SECRET into this env "
+                   "file, mode 0600 (non-displaying delivery). The value never "
+                   "reaches stdout. An existing 'export KEY=' line keeps its "
+                   "export prefix; values with a newline are refused.")
 @click.option("--json", "as_json", is_flag=True, default=True)
-def rotate_api_key(update_railway, as_json):
-    """Create a new Nexus partner API key and output client_id + client_secret.
+def rotate_api_key(update_railway, update_env, as_json):
+    """Create a new Nexus partner API key and deliver it without displaying it.
 
-    The client_secret is shown ONCE — this command captures it for you.
+    PropertyMeld shows the new client_secret exactly once and this CLI never
+    persists it, so the secret must have a destination BEFORE it is minted or
+    it is lost. This command therefore refuses to run unless at least one
+    non-displaying delivery path is given: --update-railway and/or
+    --update-env PATH. The secret is never printed; the output boundary
+    redacts it and there is no reveal flag.
 
-    With --update-railway, also runs:
-      railway variables --set PM_CLIENT_ID=<new_id>
-      railway variables --set PM_CLIENT_SECRET=<new_secret>
+    With --update-railway, runs a single call so the pair lands or fails
+    together (the id and secret are never left mismatched):
+      railway variables --set PM_CLIENT_ID=<new_id> --set PM_CLIENT_SECRET=<new_secret>
 
-    These names match what utils.get_token() actually reads. Older versions
-    of this command wrote PM_NEXUS_CLIENT_ID/PM_NEXUS_CLIENT_SECRET, which
-    Railway accepted but the runtime ignored — silent rotation that never
-    took effect.
+    With --update-env PATH, atomically rewrites PATH (mode 0600) replacing or
+    appending PM_CLIENT_ID and PM_CLIENT_SECRET, preserving other lines. Both
+    names match what utils.get_token() reads; the id and secret are written
+    together because a mismatched pair breaks auth.
     """
+    if not update_railway and not update_env:
+        output_json({
+            "ok": False,
+            "error": (
+                "rotate never displays the new client_secret and PropertyMeld shows "
+                "it only once; pass --update-railway and/or --update-env PATH so the "
+                "minted secret has a destination. Nothing was minted."
+            ),
+        })
+        return
+
+    # Validate the env destination BEFORE minting so a credential is never
+    # minted into the void. This checks the parent directory AND, when the
+    # target already exists, that it can be read, decoded as UTF-8 and
+    # written: an unreadable or corrupt existing file would otherwise pass a
+    # directory-only check, the key would be minted, and update_env_file
+    # would fail while preserving the old contents, losing the secret when
+    # the env file is the sole destination.
+    if update_env:
+        problem = _preflight_env_target(update_env)
+        if problem:
+            output_json({"ok": False, "error": f"--update-env {problem}. Nothing was minted."})
+            return
+
     result = http_backend.rotate_api_key()
 
-    if result.get("ok") and update_railway:
-        import subprocess
-        client_id = result["client_id"]
-        client_secret = result["client_secret"]
-        for var, val in [("PM_CLIENT_ID", client_id), ("PM_CLIENT_SECRET", client_secret)]:
-            proc = subprocess.run(
-                ["railway", "variables", "--set", f"{var}={val}"],
-                capture_output=True, text=True
+    if result.get("ok"):
+        client_id = result.get("client_id")
+        client_secret = result.get("client_secret")
+        # A successful-but-incomplete API response would otherwise deliver the
+        # literal string "None" (or an empty value) to Railway or the env file
+        # and report success. Validate both fields BEFORE any delivery.
+        missing = [
+            name for name, value in (("client_id", client_id), ("client_secret", client_secret))
+            if not isinstance(value, str) or not value.strip()
+        ]
+        if missing:
+            result["ok"] = False
+            result["deliveries"] = []
+            result["error"] = (
+                "PropertyMeld reported success but the response is missing "
+                + ", ".join(missing)
+                + "; nothing was delivered and nothing was written. The key may have "
+                "been minted server-side, so run 'pm api-keys list' and rotate again."
             )
-            result.setdefault("railway_updates", {})[var] = (
-                "ok" if proc.returncode == 0 else f"error: {proc.stderr.strip()}"
+            output_json(result)
+            return
+        # Delivery status lives under keys that do NOT match the sensitive
+        # pattern (path/var/vars/status/detail), so the output boundary leaves
+        # it readable. A status stored under a key like PM_CLIENT_SECRET would
+        # itself be redacted and the operator could not read whether delivery
+        # succeeded.
+        deliveries = []
+
+        if update_railway:
+            import subprocess
+            # U1: deliver the PAIR in ONE railway invocation so it lands or
+            # fails together; a per-variable sequence could leave Railway with
+            # a new id and the old secret (or vice versa) when the second set
+            # failed, and the minted secret would be gone. Because the CLI
+            # cannot see Railway's server-side atomicity, the current pair is
+            # read first and re-asserted if the combined set fails; the
+            # rollback outcome is recorded. Values stay in memory only.
+            entry = {"path": "railway", "vars": ["PM_CLIENT_ID", "PM_CLIENT_SECRET"]}
+            old_pair = None
+            try:
+                read = subprocess.run(["railway", "variables", "--json"], capture_output=True, text=True)
+                if read.returncode == 0:
+                    current = json.loads(read.stdout or "{}")
+                    if isinstance(current, dict) and "PM_CLIENT_ID" in current and "PM_CLIENT_SECRET" in current:
+                        old_pair = (str(current["PM_CLIENT_ID"]), str(current["PM_CLIENT_SECRET"]))
+            except (OSError, ValueError):
+                old_pair = None
+            try:
+                proc = subprocess.run(
+                    ["railway", "variables",
+                     "--set", f"PM_CLIENT_ID={client_id}",
+                     "--set", f"PM_CLIENT_SECRET={client_secret}"],
+                    capture_output=True, text=True
+                )
+                ok = proc.returncode == 0
+                detail = scrub_sensitive_text((proc.stderr or "").strip())[:300] if not ok else None
+            except OSError as exc:
+                ok = False
+                detail = scrub_sensitive_text(f"railway could not be run: {exc}")[:300]
+            if ok:
+                entry["status"] = "ok"
+            else:
+                entry["status"] = "error"
+                if detail:
+                    entry["detail"] = detail
+                if old_pair is None:
+                    entry["rollback"] = "skipped"
+                    entry["rollback_detail"] = "previous pair could not be read, nothing to restore"
+                else:
+                    try:
+                        rb = subprocess.run(
+                            ["railway", "variables",
+                             "--set", f"PM_CLIENT_ID={old_pair[0]}",
+                             "--set", f"PM_CLIENT_SECRET={old_pair[1]}"],
+                            capture_output=True, text=True
+                        )
+                        entry["rollback"] = "ok" if rb.returncode == 0 else "error"
+                        if rb.returncode != 0:
+                            entry["rollback_detail"] = scrub_sensitive_text((rb.stderr or "").strip())[:300]
+                    except OSError as exc:
+                        entry["rollback"] = "error"
+                        entry["rollback_detail"] = scrub_sensitive_text(f"railway could not be run: {exc}")[:300]
+            deliveries.append(entry)
+
+        if update_env:
+            try:
+                info = update_env_file(
+                    update_env, {"PM_CLIENT_ID": client_id, "PM_CLIENT_SECRET": client_secret}
+                )
+                deliveries.append({
+                    "path": "env", "vars": info["keys_written"], "status": "ok",
+                    "file": info["path"], "mode": info["mode"],
+                })
+            except (OSError, ValueError) as exc:
+                deliveries.append({
+                    "path": "env", "vars": ["PM_CLIENT_ID", "PM_CLIENT_SECRET"],
+                    "status": "error", "detail": scrub_sensitive_text(str(exc))[:300],
+                })
+
+        result["deliveries"] = deliveries
+        failed = [d for d in deliveries if d["status"] != "ok"]
+        if failed:
+            # A minted-but-undelivered secret must never exit 0: the value is
+            # shown once by PropertyMeld and this CLI never displays it, so a
+            # silent delivery failure would strand the credential.
+            result["ok"] = False
+            result["error"] = (
+                "new key was minted but a requested delivery path failed, so the "
+                "secret may not be persisted anywhere: "
+                + "; ".join(f"{d['path']}:{d.get('var') or ','.join(d.get('vars', []))} {d.get('detail', 'error')}" for d in failed)
+            )
+        else:
+            result["note"] = (
+                "client_secret was delivered to the requested destination(s) and is "
+                "redacted at the output boundary; it is never displayed"
             )
 
     output_json(result)
@@ -1573,3 +1775,32 @@ def link_receipt(receipt_id, estimate_id, as_json):
     """Link a receipt to an invoice."""
     result = http_backend.link_receipt_to_invoice(receipt_id, estimate_id)
     output_json(result)
+
+
+def main() -> None:
+    """Console entry point that scrubs framework-generated error messages.
+
+    Click echoes rejected argument values verbatim in its own usage errors
+    (Invalid value for FILE_PATH: '<value>'), and those never pass through any
+    call the package controls, so the AST census cannot cover them. Running
+    Click with standalone_mode off lets us catch every ClickException and route
+    its message through the scrubbed boundary before it reaches stderr, while
+    preserving the exit code. This is the framework-boundary guard for that
+    class (successor-11).
+    """
+    from .utils import emit_error, install_scrubbing_streams
+    install_scrubbing_streams()
+    try:
+        cli.main(standalone_mode=False)
+    except click.exceptions.Exit as exc:  # --help / ctx.exit()
+        sys.exit(exc.exit_code)
+    except click.exceptions.Abort:
+        emit_error("Aborted!")
+        sys.exit(1)
+    except click.ClickException as exc:   # UsageError, BadParameter, etc.
+        emit_error(f"Error: {exc.format_message()}")
+        sys.exit(exc.exit_code)
+
+
+if __name__ == "__main__":
+    main()
