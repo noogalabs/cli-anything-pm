@@ -19,6 +19,7 @@ import io
 import json
 import os
 import stat
+import time
 import urllib.error
 from unittest.mock import patch
 
@@ -822,6 +823,115 @@ def test_o1_normalizer_plaintext_detail_bare_high_entropy_straddle_head_absent()
     text = "y " * 50 + text
     detail = normalize_http_error(502, text)["detail"]
     assert BARE[:16] not in detail and BARE not in detail
+
+
+# ── Codex S1: escaped serialized JSON inside a string leaf ───────────────────
+
+ESC_DICT = '{"client_secret": "hunter2", "ok": true}'        # a leaf whose VALUE is serialized JSON
+ESC_LIST = '[{"api_key": "hunter2"}, "field required"]'
+DOUBLE = json.dumps(ESC_DICT)                                  # double-encoded: a JSON string of JSON
+LITERAL_ESCAPED = 'msg={\\"client_secret\\": \\"hunter2\\"} end'  # literal backslash-quotes in the text
+
+
+@pytest.mark.parametrize("leaf", [ESC_DICT, ESC_LIST, DOUBLE])
+def test_s1_serialized_json_leaf_is_walked_on_ordinary_output(capsys, leaf):
+    output_json({"note": leaf})
+    out = capsys.readouterr().out
+    assert "hunter2" not in out
+    data = json.loads(out)
+    inner = json.loads(data["note"])
+    if isinstance(inner, str):
+        inner = json.loads(inner)
+    if isinstance(inner, dict):
+        assert inner["client_secret"] == REDACTED and inner["ok"] is True
+    else:
+        assert inner[0]["api_key"] == REDACTED and inner[1] == "field required"
+
+
+@pytest.mark.parametrize("leaf", [ESC_DICT, ESC_LIST])
+def test_s1_serialized_json_leaf_is_walked_on_real_error_path(capsys, leaf):
+    body = json.dumps({"detail": leaf}).encode()
+    err = urllib.error.HTTPError("https://app.propertymeld.com/x", 403, "err", {}, io.BytesIO(body))
+    with patch("urllib.request.urlopen", side_effect=err):
+        with pytest.raises(SystemExit):
+            http_backend._http_get("/api/x", "sessionid=abc")
+    e = capsys.readouterr().err
+    assert "hunter2" not in e and REDACTED in e
+
+
+# The flat text rule already catches a quoted "key": "value" pair, so the
+# JSON-leaf WALK needs shapes the text rule cannot see: a sensitive key whose
+# value is a nested object or a list. The text rule stops at the opening
+# brace or bracket and the credential inside leaks; the walk drops the whole
+# subtree under the key. These are the casualties that go red when the walk
+# is disabled (mutation M10).
+NESTED_OBJ = '{"token_config": {"inner": {"value": "hunter2"}}, "name": "svc"}'
+NESTED_LIST = '{"secrets": ["hunter2", "alsoSecret1"], "count": 2}'
+
+
+@pytest.mark.parametrize("leaf", [NESTED_OBJ, NESTED_LIST])
+def test_s1_walk_catches_nested_container_under_sensitive_key_on_ordinary_output(capsys, leaf):
+    output_json({"note": leaf})
+    out = capsys.readouterr().out
+    assert "hunter2" not in out and "alsoSecret1" not in out
+    inner = json.loads(json.loads(out)["note"])
+    key = "token_config" if "token_config" in leaf else "secrets"
+    assert inner[key] == REDACTED
+    assert inner.get("name") == "svc" or inner.get("count") == 2
+
+
+@pytest.mark.parametrize("leaf", [NESTED_OBJ, NESTED_LIST])
+def test_s1_walk_catches_nested_container_under_sensitive_key_on_real_error_path(capsys, leaf):
+    body = json.dumps({"detail": leaf}).encode()
+    err = urllib.error.HTTPError("https://app.propertymeld.com/x", 403, "err", {}, io.BytesIO(body))
+    with patch("urllib.request.urlopen", side_effect=err):
+        with pytest.raises(SystemExit):
+            http_backend._http_get("/api/x", "sessionid=abc")
+    e = capsys.readouterr().err
+    assert "hunter2" not in e and "alsoSecret1" not in e and REDACTED in e
+
+
+def test_s1_literal_backslash_escaped_pairs_in_free_text_redacted():
+    # The text-level backstop: escaped quote delimiters around key and value.
+    out = scrub_sensitive_text(LITERAL_ESCAPED, high_entropy=False)
+    assert "hunter2" not in out and REDACTED in out and out.startswith("msg=") and out.endswith("end")
+
+
+@pytest.mark.parametrize("text", ["C:\\Users\\dave\\file.txt", "line1\\nline2", "regex \\d+ here", "{not json", "[1, 2"])
+def test_s1_ordinary_strings_with_backslashes_or_braces_survive(capsys, text):
+    output_json({"note": text})
+    assert json.loads(capsys.readouterr().out)["note"] == text
+
+
+# ── Codex S2: free-text scanning is linear, a CLI-stalling input cannot stall ─
+
+def test_s2_64kb_letter_only_leaf_scrubs_fast_and_unchanged():
+    big = "a" * (64 * 1024)
+    t0 = time.perf_counter()
+    out = scrub_sensitive_text(big)
+    elapsed = time.perf_counter() - t0
+    assert out == big
+    # Generous bound so CI noise cannot flake it; the quadratic version took
+    # 14 seconds on this input and minutes on larger ones.
+    assert elapsed < 1.0, f"took {elapsed:.3f}s"
+
+
+def test_s2_64kb_leaf_with_one_credential_still_redacts_it_fast():
+    big = "a" * (30 * 1000) + " password=hunter2 " + "b" * (30 * 1000)
+    t0 = time.perf_counter()
+    out = scrub_sensitive_text(big)
+    elapsed = time.perf_counter() - t0
+    assert "hunter2" not in out and REDACTED in out
+    assert out.startswith("a" * 100) and out.endswith("b" * 100)
+    assert elapsed < 1.0, f"took {elapsed:.3f}s"
+
+
+def test_s2_64kb_leaf_through_output_json_is_fast(capsys):
+    t0 = time.perf_counter()
+    output_json({"blob": "a" * (64 * 1024), "note": "password=hunter2"})
+    elapsed = time.perf_counter() - t0
+    out = capsys.readouterr().out
+    assert "hunter2" not in out and elapsed < 1.0, f"took {elapsed:.3f}s"
 
 
 def test_update_env_file_rejects_missing_directory(tmp_path):

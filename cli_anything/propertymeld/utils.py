@@ -129,8 +129,41 @@ def redact_sensitive(data: Any, *, string_scrub=None) -> Any:
     if isinstance(data, (list, tuple)):
         return [redact_sensitive(item, string_scrub=string_scrub) for item in data]
     if string_scrub is not None and isinstance(data, str):
+        parsed = _parse_json_leaf(data)
+        if parsed is not None:
+            # A string leaf that IS serialized JSON is walked with the key
+            # redactor and re-serialized, so a sensitive KEY inside it is
+            # caught whatever shape its value has (a short letter-only
+            # secret is invisible to every text rule).
+            return json.dumps(redact_sensitive(parsed, string_scrub=string_scrub))
         return string_scrub(data)
     return data
+
+
+def _parse_json_leaf(text: str):
+    """Return the parsed container if ``text`` is serialized JSON, else None.
+
+    Accepts one level of double encoding (a JSON string whose content is
+    itself a JSON document). Only containers are returned; scalars are not
+    treated as JSON so ordinary strings keep their normal text scrubbing.
+    """
+    stripped = text.strip()
+    if not stripped or stripped[0] not in "{[\"":
+        return None
+    for _ in range(2):
+        try:
+            value = json.loads(stripped)
+        except (TypeError, ValueError):
+            return None
+        if isinstance(value, (dict, list)):
+            return value
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or stripped[0] not in "{[":
+                return None
+            continue
+        return None
+    return None
 
 
 # Value-shape scrubbing for free text. Key-based redaction cannot see inside a
@@ -143,35 +176,52 @@ def redact_sensitive(data: Any, *, string_scrub=None) -> Any:
 # Long URL-like runs that carry a digit are over-scrubbed on purpose: this is a
 # diagnostic excerpt, and under-scrubbing is the failure that matters.
 _TEXT_AUTH_RE = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9\-._~+/=]+")
-# The value is one of: a double-quoted string (escaped quotes allowed), a
-# single-quoted string, or a bare token. A quoted value is redacted as a
-# UNIT through its closing quote, so a credential containing spaces or
-# punctuation (password: "correct horse battery staple") does not leave its
-# tail behind; an UNTERMINATED opening quote fails closed and extends through
-# the remainder of the text; a bare value keeps the token rule and stops at a
-# delimiter.
+# S2 (performance): the key prefix and the entropy lookaheads used to be retried
+# from EVERY character, which is quadratic on a long letter-only string (an
+# 8 KB leaf took seconds, larger ones minutes). Both patterns are now anchored
+# to a token boundary with a lookbehind, so a match is attempted once per
+# token and each token is scanned once; the per-token scan is capped by the
+# {1,N} bounds so a pathological single token stays linear too.
+#
+# S1 (escaped JSON): a string leaf can carry serialized JSON whose quotes are
+# backslash-escaped ({\"client_secret\": \"x\"}), which put a backslash
+# between the key and its quote. Key and value delimiters therefore accept an
+# optional backslash before the quote. The primary defence for that shape is
+# the JSON-leaf walk in redact_sensitive; this is the text-level backstop.
 _TEXT_KV_RE = re.compile(
-    r"(?i)([A-Za-z0-9_\-]*(?:secret|token|password|api[_-]?key)[A-Za-z0-9_\-]*)"
-    r"(\s*[\"']?\s*[=:]\s*)"
-    r"(?:\"((?:[^\"\\]|\\.)*)\"|'((?:[^'\\]|\\.)*)'|\"((?:[^\"\\]|\\.)*)$|'((?:[^'\\]|\\.)*)$|([^\s\"'&;,<>]+))"
+    '(?i)(?<![A-Za-z0-9_\\-])([A-Za-z0-9_\\-]{0,64}?(?:secret|token|password|api[_-]?key)[A-Za-z0-9_\\-]{0,64})'
+    '(\\s*(?:\\\\?[\\"\'])?\\s*[=:]\\s*)'
+    '(?:(?P<dqe>\\\\?)\\"(?P<dq>(?:[^\\"\\\\]|\\\\.)*?)(?P=dqe)\\"|(?P<sqe>\\\\?)\'(?P<sq>(?:[^\'\\\\]|\\\\.)*?)(?P=sqe)\'|(?P<udqe>\\\\?)\\"(?P<udq>(?:[^\\"\\\\]|\\\\.)*)$|(?P<usqe>\\\\?)\'(?P<usq>(?:[^\'\\\\]|\\\\.)*)$|(?P<bare>[^\\s\\"\'&;,<>\\\\]+))'
 )
+
+
+# S2 (performance, second cut): the previous entropy rule used two unbounded
+# lookaheads that were retried from every character, quadratic on a long
+# letter-only string (a 64 KB leaf took 14 s). It is now a plain run pattern
+# plus a Python check, linear by construction: every run of 24+ token-alphabet
+# characters is redacted only if it carries both a digit and a letter. Same
+# semantics, no lookaheads.
+_TEXT_ENTROPY_RUN_RE = re.compile('[A-Za-z0-9\\-._~+/=]{24,}')
 
 
 def _kv_redact(m) -> str:
     key, sep = m.group(1), m.group(2)
-    if m.group(3) is not None:
-        return f'{key}{sep}"{REDACTED}"'
-    if m.group(4) is not None:
-        return f"{key}{sep}'{REDACTED}'"
+    g = m.groupdict()
+    # The opener decides the closer: a plain quote closes on a plain quote (so
+    # an escaped quote INSIDE the value stays content), and a backslash-escaped
+    # opener closes on a backslash-escaped quote (serialized JSON embedded in
+    # text). The backreference in the pattern enforces it; here the same
+    # escaping is written back so the surrounding text keeps its shape.
+    if g["dq"] is not None:
+        return f'{key}{sep}{g["dqe"]}"{REDACTED}{g["dqe"]}"'
+    if g["sq"] is not None:
+        return f"{key}{sep}{g['sqe']}'{REDACTED}{g['sqe']}'"
     # Unterminated quote: fail closed, the value runs to the end of the text.
-    if m.group(5) is not None:
-        return f'{key}{sep}"{REDACTED}'
-    if m.group(6) is not None:
-        return f"{key}{sep}'{REDACTED}"
+    if g["udq"] is not None:
+        return f'{key}{sep}{g["udqe"]}"{REDACTED}'
+    if g["usq"] is not None:
+        return f"{key}{sep}{g['usqe']}'{REDACTED}"
     return f"{key}{sep}{REDACTED}"
-_TEXT_ENTROPY_RE = re.compile(
-    r"(?=[A-Za-z0-9\-._~+/=]*\d)(?=[A-Za-z0-9\-._~+/=]*[A-Za-z])[A-Za-z0-9\-._~+/=]{24,}"
-)
 
 
 def scrub_sensitive_text(text: str, *, high_entropy: bool = True) -> str:
@@ -192,8 +242,15 @@ def scrub_sensitive_text(text: str, *, high_entropy: bool = True) -> str:
     text = _TEXT_AUTH_RE.sub(lambda m: f"{m.group(1)} {REDACTED}", text)
     text = _TEXT_KV_RE.sub(_kv_redact, text)
     if high_entropy:
-        text = _TEXT_ENTROPY_RE.sub(REDACTED, text)
+        text = _TEXT_ENTROPY_RUN_RE.sub(_entropy_redact, text)
     return text
+
+
+def _entropy_redact(m) -> str:
+    run = m.group(0)
+    if any(c.isdigit() for c in run) and any(c.isalpha() for c in run):
+        return REDACTED
+    return run
 
 
 def scrub_sensitive_text_narrow(text: str) -> str:
