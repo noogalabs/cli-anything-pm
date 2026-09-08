@@ -117,6 +117,15 @@ pm api-keys rotate --update-railway --update-env /path/to/.env
 pm api-keys list
 ```
 
+Output redaction note: every command's output passes through a redaction
+boundary that replaces values under sensitive keys and scrubs credential
+shapes inside free text. A string value that itself parses as a JSON object
+or array is parsed, walked and re-serialized, even when it contains no
+sensitive key, so its formatting (whitespace, key order preservation, float
+representation) can differ from the input on payloads that needed no
+redaction; a value that cannot be re-serialized as strict JSON is scrubbed
+as text instead.
+
 The result reports each delivery under `deliveries` (path, variable, status).
 If any requested delivery fails after the key is minted, the command exits 1
 and says so; the value is still never displayed. Running `pm api-keys rotate`

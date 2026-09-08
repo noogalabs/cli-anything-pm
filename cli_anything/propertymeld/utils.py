@@ -134,8 +134,14 @@ def redact_sensitive(data: Any, *, string_scrub=None) -> Any:
             # A string leaf that IS serialized JSON is walked with the key
             # redactor and re-serialized, so a sensitive KEY inside it is
             # caught whatever shape its value has (a short letter-only
-            # secret is invisible to every text rule).
-            return json.dumps(redact_sensitive(parsed, string_scrub=string_scrub))
+            # secret is invisible to every text rule). allow_nan=False: the
+            # default would emit Infinity/NaN for an out-of-range number
+            # (1e400), turning valid JSON into output a strict parser
+            # rejects; when that happens the leaf is scrubbed as text instead.
+            try:
+                return json.dumps(redact_sensitive(parsed, string_scrub=string_scrub), allow_nan=False)
+            except ValueError:
+                return string_scrub(data)
         return string_scrub(data)
     return data
 

@@ -398,9 +398,10 @@ def test_rotate_delivery_failure_exits_nonzero_and_never_prints_secret(runner, t
 # ── Codex C1: delivery status must SURVIVE redaction ─────────────────────────
 
 class _Proc:
-    def __init__(self, rc, stderr=""):
+    def __init__(self, rc, stderr="", stdout=""):
         self.returncode = rc
         self.stderr = stderr
+        self.stdout = stdout
 
 
 def test_c1_railway_delivery_status_survives_redaction_ok(runner):
@@ -410,17 +411,20 @@ def test_c1_railway_delivery_status_survives_redaction_ok(runner):
     assert result.exit_code == 0, result.output
     assert SENTINEL not in result.output
     data = json.loads(result.output)
-    by_var = {d["var"]: d for d in data["deliveries"] if d["path"] == "railway"}
-    # The status for PM_CLIENT_SECRET is READABLE: it sits under non-matching keys.
-    assert by_var["PM_CLIENT_SECRET"]["status"] == "ok"
-    assert by_var["PM_CLIENT_ID"]["status"] == "ok"
+    rail = [d for d in data["deliveries"] if d["path"] == "railway"]
+    # One entry for the PAIR (U1): status readable, no rollback on success.
+    assert len(rail) == 1 and rail[0]["vars"] == ["PM_CLIENT_ID", "PM_CLIENT_SECRET"]
+    assert rail[0]["status"] == "ok" and "rollback" not in rail[0]
     assert "railway_updates" not in data
     assert REDACTED not in json.dumps(data["deliveries"])
 
 
 def test_c1_railway_delivery_failure_readable_and_exits_1(runner):
+    # The combined set fails: the pair entry reads error, exit 1.
     def fake_run(cmd, **kw):
-        return _Proc(1, f"set failed for {cmd[3].split('=')[0]}") if "PM_CLIENT_SECRET" in cmd[3] else _Proc(0)
+        if "--json" in cmd:
+            return _Proc(0, stdout=json.dumps({"PM_CLIENT_ID": "old-id", "PM_CLIENT_SECRET": "old-secret"}))
+        return _Proc(1, "set failed")
     with patch.object(http_backend, "rotate_api_key", return_value=dict(ROTATE_RESULT)), \
          patch("subprocess.run", side_effect=fake_run):
         result = runner.invoke(cli, ["api-keys", "rotate", "--update-railway"])
@@ -428,10 +432,8 @@ def test_c1_railway_delivery_failure_readable_and_exits_1(runner):
     assert SENTINEL not in result.output
     data = json.loads(result.output)
     assert data["ok"] is False
-    by_var = {d["var"]: d for d in data["deliveries"] if d["path"] == "railway"}
-    assert by_var["PM_CLIENT_SECRET"]["status"] == "error"
-    assert "set failed" in by_var["PM_CLIENT_SECRET"]["detail"]
-    assert by_var["PM_CLIENT_ID"]["status"] == "ok"
+    rail = [d for d in data["deliveries"] if d["path"] == "railway"][0]
+    assert rail["status"] == "error" and "set failed" in rail["detail"]
 
 
 # ── Codex C2: JSON ARRAY error bodies stay structured and get redacted ───────
@@ -544,13 +546,11 @@ def test_x3_railway_oserror_recorded_env_still_written_exit_1(runner, tmp_path):
     assert SENTINEL not in result.output
     data = json.loads(result.output)
     assert data["ok"] is False
-    by = {(d["path"], d.get("var")): d for d in data["deliveries"]}
-    assert by[("railway", "PM_CLIENT_ID")]["status"] == "error"
-    assert by[("railway", "PM_CLIENT_SECRET")]["status"] == "error"
-    assert "could not be run" in by[("railway", "PM_CLIENT_SECRET")]["detail"]
+    rail = [d for d in data["deliveries"] if d["path"] == "railway"][0]
+    assert rail["status"] == "error" and "could not be run" in rail["detail"]
+    assert rail["rollback"] == "skipped"  # the read also failed, nothing to restore
     env = [d for d in data["deliveries"] if d["path"] == "env"][0]
     assert env["status"] == "ok"
-    # The fallback destination actually received the secret.
     assert f"PM_CLIENT_SECRET={SENTINEL}\n" in env_path.read_text()
 
 
@@ -889,6 +889,151 @@ def test_s1_walk_catches_nested_container_under_sensitive_key_on_real_error_path
             http_backend._http_get("/api/x", "sessionid=abc")
     e = capsys.readouterr().err
     assert "hunter2" not in e and "alsoSecret1" not in e and REDACTED in e
+
+
+# ── T1: the walk must not turn valid JSON into output a strict parser rejects ─
+#
+# Python's json.loads ACCEPTS Infinity and NaN, so a round-trip proves nothing
+# on the broken output; and "no Infinity" alone cannot tell the fallback apart
+# from a leaf that never reached the walk. So: parse with a STRICT reader,
+# prove the leaf reached the walk (spy), and prove the fallback ran (the
+# literal 1e400 survives only on the text path; the walk would re-serialize).
+
+def _strict_loads(text):
+    def _reject(c):
+        raise ValueError(f"non-finite literal {c}")
+    return json.loads(text, parse_constant=_reject)
+
+
+def _walk_spy():
+    from cli_anything.propertymeld import utils as u
+    calls = []
+    real = u._parse_json_leaf
+    def spy(text):
+        r = real(text)
+        calls.append((text, type(r).__name__))
+        return r
+    return patch.object(u, "_parse_json_leaf", side_effect=spy), calls
+
+
+def test_t1_out_of_range_number_leaf_is_strict_json_and_fallback_ran(capsys):
+    leaf = '{"x": 1e400, "name": "svc"}'
+    ctx, calls = _walk_spy()
+    with ctx:
+        output_json({"note": leaf})
+    out = capsys.readouterr().out
+    assert "Infinity" not in out and "NaN" not in out
+    note = json.loads(out)["note"]
+    _strict_loads(note)                       # strict reader accepts the emitted leaf
+    assert "1e400" in note and "svc" in note  # original text preserved => text fallback ran
+    assert any(t == leaf and kind == "dict" for t, kind in calls)  # the leaf reached the walk
+
+
+def test_t1_credential_inside_out_of_range_leaf_is_still_scrubbed_by_fallback(capsys):
+    leaf = '{"x": 1e400, "client_secret": "hunter2"}'
+    ctx, calls = _walk_spy()
+    with ctx:
+        output_json({"note": leaf})
+    out = capsys.readouterr().out
+    assert "hunter2" not in out and REDACTED in out
+    assert "Infinity" not in out and "NaN" not in out
+    note = json.loads(out)["note"]
+    _strict_loads(note)
+    assert "1e400" in note
+    assert any(t == leaf and kind == "dict" for t, kind in calls)
+
+
+def test_t1_normal_json_leaf_still_walks_and_is_strict(capsys):
+    leaf = '{"client_secret": "hunter2", "n": 1.5}'
+    output_json({"note": leaf})
+    out = capsys.readouterr().out
+    inner = _strict_loads(json.loads(out)["note"])
+    assert inner["client_secret"] == REDACTED and inner["n"] == 1.5
+
+
+def test_t1_real_error_path_out_of_range_leaf_is_strict(capsys):
+    body = json.dumps({"detail": '{"x": 1e400, "api_key": "hunter2"}'}).encode()
+    err = urllib.error.HTTPError("https://app.propertymeld.com/x", 403, "err", {}, io.BytesIO(body))
+    with patch("urllib.request.urlopen", side_effect=err):
+        with pytest.raises(SystemExit):
+            http_backend._http_get("/api/x", "sessionid=abc")
+    e = capsys.readouterr().err
+    assert "Infinity" not in e and "NaN" not in e and "hunter2" not in e
+    printed = _strict_loads(e.strip().splitlines()[-1])
+    assert "1e400" in printed["detail"]
+
+
+# ── U1: the Railway pair lands or fails TOGETHER, never mixed ────────────────
+
+OLD_PAIR = {"PM_CLIENT_ID": "old-id-111", "PM_CLIENT_SECRET": "old-secret-placeholder"}
+
+
+def _railway_state_machine(fail_set=False, fail_read=False, fail_rollback=False):
+    """A fake railway CLI: records applied state, applies a --set batch atomically."""
+    state = dict(OLD_PAIR)
+    calls = []
+    def run(cmd, **kw):
+        calls.append(list(cmd))
+        if "--json" in cmd:
+            if fail_read:
+                return _Proc(1, "read failed")
+            return _Proc(0, stdout=json.dumps(state))
+        sets = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--set"]
+        is_rollback = any(v.split("=", 1)[1] == OLD_PAIR["PM_CLIENT_SECRET"] for v in sets)
+        if (fail_set and not is_rollback) or (fail_rollback and is_rollback):
+            return _Proc(1, "set failed")
+        for kv in sets:
+            k, v = kv.split("=", 1); state[k] = v
+        return _Proc(0)
+    return run, state, calls
+
+
+def test_u1_success_delivers_pair_in_one_call_no_rollback(runner):
+    run, state, calls = _railway_state_machine()
+    with patch.object(http_backend, "rotate_api_key", return_value=dict(ROTATE_RESULT)), patch("subprocess.run", side_effect=run):
+        result = runner.invoke(cli, ["api-keys", "rotate", "--update-railway"])
+    assert result.exit_code == 0, result.output
+    set_calls = [c for c in calls if "--set" in c]
+    assert len(set_calls) == 1 and set_calls[0].count("--set") == 2   # ONE invocation, both vars
+    assert state == {"PM_CLIENT_ID": "cid-123", "PM_CLIENT_SECRET": SENTINEL}  # both-new
+    rail = [d for d in json.loads(result.output)["deliveries"] if d["path"] == "railway"][0]
+    assert rail["status"] == "ok" and "rollback" not in rail
+    assert SENTINEL not in result.output
+
+
+def test_u1_failed_set_rolls_back_to_both_old_never_mixed(runner):
+    run, state, calls = _railway_state_machine(fail_set=True)
+    with patch.object(http_backend, "rotate_api_key", return_value=dict(ROTATE_RESULT)), patch("subprocess.run", side_effect=run):
+        result = runner.invoke(cli, ["api-keys", "rotate", "--update-railway"])
+    assert result.exit_code == 1, result.output
+    assert state == OLD_PAIR                                            # both-old, never mixed
+    set_calls = [c for c in calls if "--set" in c]
+    assert len(set_calls) == 2                                           # the attempt and the rollback
+    rollback = set_calls[1]
+    assert any(OLD_PAIR["PM_CLIENT_SECRET"] in a for a in rollback)     # rollback carries the OLD values
+    assert not any(SENTINEL in a for a in rollback)                      # and never the new secret
+    rail = [d for d in json.loads(result.output)["deliveries"] if d["path"] == "railway"][0]
+    assert rail["status"] == "error" and rail["rollback"] == "ok"
+    assert SENTINEL not in result.output and OLD_PAIR["PM_CLIENT_SECRET"] not in result.output
+
+
+def test_u1_read_fails_then_set_fails_records_rollback_skipped(runner):
+    run, state, calls = _railway_state_machine(fail_set=True, fail_read=True)
+    with patch.object(http_backend, "rotate_api_key", return_value=dict(ROTATE_RESULT)), patch("subprocess.run", side_effect=run):
+        result = runner.invoke(cli, ["api-keys", "rotate", "--update-railway"])
+    assert result.exit_code == 1, result.output
+    assert state == OLD_PAIR
+    rail = [d for d in json.loads(result.output)["deliveries"] if d["path"] == "railway"][0]
+    assert rail["status"] == "error" and rail["rollback"] == "skipped"
+
+
+def test_u1_rollback_failure_is_recorded_not_hidden(runner):
+    run, state, calls = _railway_state_machine(fail_set=True, fail_rollback=True)
+    with patch.object(http_backend, "rotate_api_key", return_value=dict(ROTATE_RESULT)), patch("subprocess.run", side_effect=run):
+        result = runner.invoke(cli, ["api-keys", "rotate", "--update-railway"])
+    assert result.exit_code == 1, result.output
+    rail = [d for d in json.loads(result.output)["deliveries"] if d["path"] == "railway"][0]
+    assert rail["status"] == "error" and rail["rollback"] == "error" and "set failed" in rail["rollback_detail"]
 
 
 def test_s1_literal_backslash_escaped_pairs_in_free_text_redacted():

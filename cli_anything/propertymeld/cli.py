@@ -1108,25 +1108,59 @@ def rotate_api_key(update_railway, update_env, as_json):
 
         if update_railway:
             import subprocess
-            for var, val in [("PM_CLIENT_ID", client_id), ("PM_CLIENT_SECRET", client_secret)]:
-                try:
-                    proc = subprocess.run(
-                        ["railway", "variables", "--set", f"{var}={val}"],
-                        capture_output=True, text=True
-                    )
-                except OSError as exc:
-                    # A missing or non-executable railway binary raises AFTER
-                    # minting. Uncaught it would abort before the remaining
-                    # destinations ran and lose the secret; record it and go on.
-                    deliveries.append({
-                        "path": "railway", "var": var, "status": "error",
-                        "detail": scrub_sensitive_text(f"railway could not be run: {exc}")[:300],
-                    })
-                    continue
-                entry = {"path": "railway", "var": var, "status": "ok" if proc.returncode == 0 else "error"}
-                if proc.returncode != 0:
-                    entry["detail"] = scrub_sensitive_text((proc.stderr or "").strip())[:300]
-                deliveries.append(entry)
+            # U1: deliver the PAIR in ONE railway invocation so it lands or
+            # fails together; a per-variable sequence could leave Railway with
+            # a new id and the old secret (or vice versa) when the second set
+            # failed, and the minted secret would be gone. Because the CLI
+            # cannot see Railway's server-side atomicity, the current pair is
+            # read first and re-asserted if the combined set fails; the
+            # rollback outcome is recorded. Values stay in memory only.
+            entry = {"path": "railway", "vars": ["PM_CLIENT_ID", "PM_CLIENT_SECRET"]}
+            old_pair = None
+            try:
+                read = subprocess.run(["railway", "variables", "--json"], capture_output=True, text=True)
+                if read.returncode == 0:
+                    current = json.loads(read.stdout or "{}")
+                    if isinstance(current, dict) and "PM_CLIENT_ID" in current and "PM_CLIENT_SECRET" in current:
+                        old_pair = (str(current["PM_CLIENT_ID"]), str(current["PM_CLIENT_SECRET"]))
+            except (OSError, ValueError):
+                old_pair = None
+            try:
+                proc = subprocess.run(
+                    ["railway", "variables",
+                     "--set", f"PM_CLIENT_ID={client_id}",
+                     "--set", f"PM_CLIENT_SECRET={client_secret}"],
+                    capture_output=True, text=True
+                )
+                ok = proc.returncode == 0
+                detail = scrub_sensitive_text((proc.stderr or "").strip())[:300] if not ok else None
+            except OSError as exc:
+                ok = False
+                detail = scrub_sensitive_text(f"railway could not be run: {exc}")[:300]
+            if ok:
+                entry["status"] = "ok"
+            else:
+                entry["status"] = "error"
+                if detail:
+                    entry["detail"] = detail
+                if old_pair is None:
+                    entry["rollback"] = "skipped"
+                    entry["rollback_detail"] = "previous pair could not be read, nothing to restore"
+                else:
+                    try:
+                        rb = subprocess.run(
+                            ["railway", "variables",
+                             "--set", f"PM_CLIENT_ID={old_pair[0]}",
+                             "--set", f"PM_CLIENT_SECRET={old_pair[1]}"],
+                            capture_output=True, text=True
+                        )
+                        entry["rollback"] = "ok" if rb.returncode == 0 else "error"
+                        if rb.returncode != 0:
+                            entry["rollback_detail"] = scrub_sensitive_text((rb.stderr or "").strip())[:300]
+                    except OSError as exc:
+                        entry["rollback"] = "error"
+                        entry["rollback_detail"] = scrub_sensitive_text(f"railway could not be run: {exc}")[:300]
+            deliveries.append(entry)
 
         if update_env:
             try:
