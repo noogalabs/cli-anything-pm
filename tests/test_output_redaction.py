@@ -32,6 +32,7 @@ from cli_anything.propertymeld.utils import (
     SENSITIVE_KEY_PATTERN,
     output_json,
     redact_sensitive,
+    scrub_sensitive_text,
     update_env_file,
 )
 
@@ -228,9 +229,12 @@ def test_rotate_update_env_writes_pair_mode_0600_and_never_prints_secret(runner,
     data = json.loads(result.output)
     assert data["client_secret"] == REDACTED
     assert data["client_id"] == "cid-123"
-    assert data["env_update"]["keys_written"] == ["PM_CLIENT_ID", "PM_CLIENT_SECRET"]
-    assert data["env_update"]["mode"] == "0600"
-    assert SENTINEL not in json.dumps(data["env_update"])
+    env_delivery = [d for d in data["deliveries"] if d["path"] == "env"]
+    assert len(env_delivery) == 1
+    assert env_delivery[0]["status"] == "ok"
+    assert env_delivery[0]["vars"] == ["PM_CLIENT_ID", "PM_CLIENT_SECRET"]
+    assert env_delivery[0]["mode"] == "0600"
+    assert SENTINEL not in json.dumps(data["deliveries"])
     content = env_path.read_text()
     assert "PM_CLIENT_ID=cid-123\n" in content
     assert f"PM_CLIENT_SECRET={SENTINEL}\n" in content
@@ -264,7 +268,8 @@ def test_update_env_file_replaces_in_place_preserves_others_and_export_form(tmp_
     assert res["keys_written"] == ["PM_CLIENT_ID", "PM_CLIENT_SECRET"]
     assert SENTINEL not in json.dumps(res)
     lines = env_path.read_text().splitlines()
-    assert lines == ["BOT_TOKEN=keepme", "PM_CLIENT_ID=new-id", "CHAT_ID=1", f"PM_CLIENT_SECRET={SENTINEL}"]
+    # F2: a replaced line keeps its export prefix; a plain line stays plain.
+    assert lines == ["BOT_TOKEN=keepme", "export PM_CLIENT_ID=new-id", "CHAT_ID=1", f"PM_CLIENT_SECRET={SENTINEL}"]
     assert stat.S_IMODE(env_path.stat().st_mode) == 0o600
 
 
@@ -273,6 +278,197 @@ def test_update_env_file_appends_missing_keys_and_creates_file(tmp_path):
     update_env_file(str(env_path), {"PM_CLIENT_SECRET": SENTINEL})
     assert env_path.read_text() == f"PM_CLIENT_SECRET={SENTINEL}\n"
     assert stat.S_IMODE(env_path.stat().st_mode) == 0o600
+
+
+# ── F1: credential SHAPES inside free-text error excerpts ───────────────────
+
+CANARY = "CANARY0notARealSecret9f3c2b7a1d4e5f6a7b8c"  # labelled synthetic, high-entropy shape
+
+
+@pytest.mark.parametrize(
+    "text,must_keep",
+    [
+        (f"Forbidden. Authorization: Bearer {CANARY} try again", ["Forbidden", "Authorization: Bearer", "try again"]),
+        (f"proxy error basic {CANARY} upstream", ["proxy error", "basic", "upstream"]),
+        (f"bad request client_secret={CANARY}&next=1", ["bad request", "client_secret=", "next=1"]),
+        (f'{{"error": "x", "api_key": "{CANARY}"}}', ['"error": "x"', '"api_key": "']),
+        (f"token: {CANARY} expired", ["token: ", "expired"]),
+        (f"see {CANARY} in the log", ["see", "in the log"]),
+    ],
+)
+def test_scrub_sensitive_text_removes_value_shapes_but_keeps_surroundings(text, must_keep):
+    out = scrub_sensitive_text(text)
+    assert CANARY not in out
+    assert REDACTED in out
+    for piece in must_keep:
+        assert piece in out, (piece, out)
+
+
+def test_scrub_sensitive_text_leaves_ordinary_prose_alone():
+    prose = "HTTP 502 Bad Gateway: the upstream server is temporarily unavailable, retry in 30 seconds"
+    assert scrub_sensitive_text(prose) == prose
+    assert scrub_sensitive_text("") == ""
+
+
+def test_real_http_backend_html_error_body_canary_never_reaches_stderr(capsys):
+    # The F1 path: a NON-JSON (HTML) error page echoing an Authorization header.
+    # Key-match cannot see inside a string; the excerpt scrubber must.
+    html = f"<html><body><h1>403 Forbidden</h1><p>Authorization: Bearer {CANARY}</p><p>Contact support</p></body></html>"
+    err = urllib.error.HTTPError("https://app.propertymeld.com/x", 403, "err", {}, io.BytesIO(html.encode()))
+    with patch("urllib.request.urlopen", side_effect=err):
+        with pytest.raises(SystemExit):
+            http_backend._http_get("/api/x", "sessionid=abc")
+    captured = capsys.readouterr()
+    assert CANARY not in captured.err
+    assert CANARY not in captured.out
+    assert REDACTED in captured.err
+    # CONTROL: the excerpt still carries its surrounding text.
+    assert "403 Forbidden" in captured.err
+    assert "Contact support" in captured.err
+
+
+def test_real_http_backend_plaintext_error_body_canary_never_reaches_stderr(capsys):
+    # The `detail` path: non-JSON, non-HTML plaintext body with key=value.
+    body = f"upstream rejected: client_secret={CANARY} please retry later"
+    err = urllib.error.HTTPError("https://app.propertymeld.com/x", 502, "err", {}, io.BytesIO(body.encode()))
+    with patch("urllib.request.urlopen", side_effect=err):
+        with pytest.raises(SystemExit):
+            http_backend._http_get("/api/x", "sessionid=abc")
+    captured = capsys.readouterr()
+    assert CANARY not in captured.err
+    assert REDACTED in captured.err
+    assert "upstream rejected" in captured.err
+    assert "please retry later" in captured.err
+
+
+def test_excerpt_is_scrubbed_before_truncation_so_no_head_leaks():
+    # A value that STRADDLES the 200-char cap: a truncate-first implementation
+    # would keep the head of the credential inside the excerpt. Scrubbing first
+    # replaces the whole value, so no prefix of it can survive the cut. The
+    # canary is positioned to start before char 200 and end after it; with the
+    # scrubber neutered this test goes red (verified by mutation).
+    from cli_anything.propertymeld.utils import normalize_http_error
+    prefix = "<html>" + ("x " * 78) + "Authorization: Bearer "
+    start = len(" ".join(prefix.split()))
+    assert 150 < start < 200, start  # canary begins inside the excerpt window
+    html = f"{prefix}{CANARY}</html>"
+    excerpt = normalize_http_error(403, html)["body_excerpt"]
+    assert len(excerpt) <= 200
+    assert CANARY[:16] not in excerpt  # the head that truncate-first would leak
+    assert CANARY not in excerpt
+    assert REDACTED in excerpt or excerpt.endswith("Bearer") or "Bearer" in excerpt
+
+
+# ── F3: newline injection refused before the file is touched ────────────────
+
+@pytest.mark.parametrize("bad", ["v\nINJECTED=1", "v\rINJECTED=1", "v\r\n"])
+def test_update_env_file_refuses_newline_in_value_and_leaves_file_untouched(tmp_path, bad):
+    env_path = tmp_path / ".env"
+    original = "BOT_TOKEN=keepme\nPM_CLIENT_SECRET=old\n"
+    env_path.write_text(original)
+    with pytest.raises(ValueError):
+        update_env_file(str(env_path), {"PM_CLIENT_SECRET": bad})
+    assert env_path.read_text() == original
+    assert [p.name for p in tmp_path.iterdir() if p.name != "propertymeld-config.json"] == [".env"]
+
+
+def test_update_env_file_refuses_newline_in_key(tmp_path):
+    with pytest.raises(ValueError):
+        update_env_file(str(tmp_path / ".env"), {"PM_CLIENT_SECRET\nX": "v"})
+
+
+def test_rotate_delivery_failure_exits_nonzero_and_never_prints_secret(runner, tmp_path):
+    # Minted but undelivered must never exit 0.
+    env_dir = tmp_path / "envdir"; env_dir.mkdir()
+    env_path = env_dir / "blue.env"
+    with patch.object(http_backend, "rotate_api_key", return_value=dict(ROTATE_RESULT)), \
+         patch("cli_anything.propertymeld.cli.update_env_file", side_effect=ValueError("simulated write refusal")):
+        result = runner.invoke(cli, ["api-keys", "rotate", "--update-env", str(env_path)])
+    assert result.exit_code == 1, result.output
+    assert SENTINEL not in result.output
+    data = json.loads(result.output)
+    assert data["ok"] is False
+    assert "delivery path failed" in data["error"]
+    env_delivery = [d for d in data["deliveries"] if d["path"] == "env"]
+    assert env_delivery[0]["status"] == "error"
+
+
+# ── Codex C1: delivery status must SURVIVE redaction ─────────────────────────
+
+class _Proc:
+    def __init__(self, rc, stderr=""):
+        self.returncode = rc
+        self.stderr = stderr
+
+
+def test_c1_railway_delivery_status_survives_redaction_ok(runner):
+    with patch.object(http_backend, "rotate_api_key", return_value=dict(ROTATE_RESULT)), \
+         patch("subprocess.run", return_value=_Proc(0)):
+        result = runner.invoke(cli, ["api-keys", "rotate", "--update-railway"])
+    assert result.exit_code == 0, result.output
+    assert SENTINEL not in result.output
+    data = json.loads(result.output)
+    by_var = {d["var"]: d for d in data["deliveries"] if d["path"] == "railway"}
+    # The status for PM_CLIENT_SECRET is READABLE: it sits under non-matching keys.
+    assert by_var["PM_CLIENT_SECRET"]["status"] == "ok"
+    assert by_var["PM_CLIENT_ID"]["status"] == "ok"
+    assert "railway_updates" not in data
+    assert REDACTED not in json.dumps(data["deliveries"])
+
+
+def test_c1_railway_delivery_failure_readable_and_exits_1(runner):
+    def fake_run(cmd, **kw):
+        return _Proc(1, f"set failed for {cmd[3].split('=')[0]}") if "PM_CLIENT_SECRET" in cmd[3] else _Proc(0)
+    with patch.object(http_backend, "rotate_api_key", return_value=dict(ROTATE_RESULT)), \
+         patch("subprocess.run", side_effect=fake_run):
+        result = runner.invoke(cli, ["api-keys", "rotate", "--update-railway"])
+    assert result.exit_code == 1, result.output
+    assert SENTINEL not in result.output
+    data = json.loads(result.output)
+    assert data["ok"] is False
+    by_var = {d["var"]: d for d in data["deliveries"] if d["path"] == "railway"}
+    assert by_var["PM_CLIENT_SECRET"]["status"] == "error"
+    assert "set failed" in by_var["PM_CLIENT_SECRET"]["detail"]
+    assert by_var["PM_CLIENT_ID"]["status"] == "ok"
+
+
+# ── Codex C2: JSON ARRAY error bodies stay structured and get redacted ───────
+
+def test_c2_array_error_body_is_redacted_structurally():
+    from cli_anything.propertymeld.utils import normalize_http_error
+    err = normalize_http_error(400, json.dumps([{"client_secret": CANARY, "field": "x"}, {"ok": 1}]))
+    assert isinstance(err["detail"], list)
+    assert err["detail"][0]["client_secret"] == REDACTED
+    assert err["detail"][0]["field"] == "x"
+    assert CANARY not in json.dumps(err)
+
+
+def test_c2_real_http_backend_array_error_body_canary_never_reaches_stderr(capsys):
+    body = json.dumps([{"client_secret": CANARY, "message": "denied"}]).encode()
+    err = urllib.error.HTTPError("https://app.propertymeld.com/x", 400, "err", {}, io.BytesIO(body))
+    with patch("urllib.request.urlopen", side_effect=err):
+        with pytest.raises(SystemExit):
+            http_backend._http_get("/api/x", "sessionid=abc")
+    captured = capsys.readouterr()
+    assert CANARY not in captured.err
+    assert REDACTED in captured.err
+    printed = json.loads(captured.err.strip().splitlines()[-1])
+    assert isinstance(printed["detail"], list)
+    assert printed["detail"][0]["message"] == "denied"
+
+
+# ── Codex C3: duplicate definitions collapse to exactly one, the new one ────
+
+def test_c3_duplicate_definitions_replaced_first_and_later_dropped(tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "PM_CLIENT_SECRET=old-1\nBOT_TOKEN=keep\nexport PM_CLIENT_SECRET=old-2\nPM_CLIENT_ID=id-old\nPM_CLIENT_SECRET=old-3\n"
+    )
+    update_env_file(str(env_path), {"PM_CLIENT_ID": "id-new", "PM_CLIENT_SECRET": SENTINEL})
+    lines = env_path.read_text().splitlines()
+    assert lines == ["PM_CLIENT_SECRET=" + SENTINEL, "BOT_TOKEN=keep", "PM_CLIENT_ID=id-new"]
+    assert sum(1 for l in lines if l.split("=")[0].replace("export ", "") == "PM_CLIENT_SECRET") == 1
+    assert "old-" not in env_path.read_text()
 
 
 def test_update_env_file_rejects_missing_directory(tmp_path):

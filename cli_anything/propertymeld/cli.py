@@ -20,7 +20,7 @@ import os
 import click
 
 from . import api_backend, http_backend, insights_backend
-from .utils import output_json, print_error, resolve_meld_id, update_env_file
+from .utils import output_json, print_error, resolve_meld_id, scrub_sensitive_text, update_env_file
 
 
 @click.group()
@@ -999,7 +999,8 @@ def api_keys():
 @click.option("--update-env", "update_env", type=click.Path(dir_okay=False), default=None,
               help="Atomically write PM_CLIENT_ID and PM_CLIENT_SECRET into this env "
                    "file, mode 0600 (non-displaying delivery). The value never "
-                   "reaches stdout.")
+                   "reaches stdout. An existing 'export KEY=' line keeps its "
+                   "export prefix; values with a newline are refused.")
 @click.option("--json", "as_json", is_flag=True, default=True)
 def rotate_api_key(update_railway, update_env, as_json):
     """Create a new Nexus partner API key and deliver it without displaying it.
@@ -1047,6 +1048,12 @@ def rotate_api_key(update_railway, update_env, as_json):
     if result.get("ok"):
         client_id = result["client_id"]
         client_secret = result["client_secret"]
+        # Delivery status lives under keys that do NOT match the sensitive
+        # pattern (path/var/vars/status/detail), so the output boundary leaves
+        # it readable. A status stored under a key like PM_CLIENT_SECRET would
+        # itself be redacted and the operator could not read whether delivery
+        # succeeded.
+        deliveries = []
 
         if update_railway:
             import subprocess
@@ -1055,22 +1062,43 @@ def rotate_api_key(update_railway, update_env, as_json):
                     ["railway", "variables", "--set", f"{var}={val}"],
                     capture_output=True, text=True
                 )
-                result.setdefault("railway_updates", {})[var] = (
-                    "ok" if proc.returncode == 0 else f"error: {proc.stderr.strip()}"
-                )
+                entry = {"path": "railway", "var": var, "status": "ok" if proc.returncode == 0 else "error"}
+                if proc.returncode != 0:
+                    entry["detail"] = scrub_sensitive_text((proc.stderr or "").strip())[:300]
+                deliveries.append(entry)
 
         if update_env:
             try:
-                result["env_update"] = update_env_file(
+                info = update_env_file(
                     update_env, {"PM_CLIENT_ID": client_id, "PM_CLIENT_SECRET": client_secret}
                 )
-            except OSError as exc:
-                result["env_update"] = {"ok": False, "error": str(exc)}
+                deliveries.append({
+                    "path": "env", "vars": info["keys_written"], "status": "ok",
+                    "file": info["path"], "mode": info["mode"],
+                })
+            except (OSError, ValueError) as exc:
+                deliveries.append({
+                    "path": "env", "vars": ["PM_CLIENT_ID", "PM_CLIENT_SECRET"],
+                    "status": "error", "detail": scrub_sensitive_text(str(exc))[:300],
+                })
 
-        result["note"] = (
-            "client_secret was delivered to the requested destination(s) and is "
-            "redacted at the output boundary; it is never displayed"
-        )
+        result["deliveries"] = deliveries
+        failed = [d for d in deliveries if d["status"] != "ok"]
+        if failed:
+            # A minted-but-undelivered secret must never exit 0: the value is
+            # shown once by PropertyMeld and this CLI never displays it, so a
+            # silent delivery failure would strand the credential.
+            result["ok"] = False
+            result["error"] = (
+                "new key was minted but a requested delivery path failed, so the "
+                "secret may not be persisted anywhere: "
+                + "; ".join(f"{d['path']}:{d.get('var') or ','.join(d.get('vars', []))} {d.get('detail', 'error')}" for d in failed)
+            )
+        else:
+            result["note"] = (
+                "client_secret was delivered to the requested destination(s) and is "
+                "redacted at the output boundary; it is never displayed"
+            )
 
     output_json(result)
 

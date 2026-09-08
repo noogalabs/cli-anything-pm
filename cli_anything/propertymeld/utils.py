@@ -127,6 +127,41 @@ def redact_sensitive(data: Any) -> Any:
     return data
 
 
+# Value-shape scrubbing for free text. Key-based redaction cannot see inside a
+# string, and normalize_http_error emits raw excerpts of NON-JSON error bodies
+# (an HTML gateway page, a plaintext proxy error). A realistic such page echoes
+# an Authorization header or a query string, so the excerpt is scrubbed by the
+# SHAPE of a credential before it is emitted: Bearer/Basic runs, key=value and
+# key: value pairs for the same key pattern (quoted or bare), and long
+# high-entropy runs. The surrounding text is kept so the excerpt stays useful.
+# Long URL-like runs that carry a digit are over-scrubbed on purpose: this is a
+# diagnostic excerpt, and under-scrubbing is the failure that matters.
+_TEXT_AUTH_RE = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9\-._~+/=]+")
+_TEXT_KV_RE = re.compile(
+    r"(?i)([A-Za-z0-9_\-]*(?:secret|token|password|api[_-]?key)[A-Za-z0-9_\-]*)"
+    r"(\s*[\"']?\s*[=:]\s*[\"']?)"
+    r"([^\s\"'&;,<>]+)"
+)
+_TEXT_ENTROPY_RE = re.compile(
+    r"(?=[A-Za-z0-9\-._~+/=]*\d)(?=[A-Za-z0-9\-._~+/=]*[A-Za-z])[A-Za-z0-9\-._~+/=]{24,}"
+)
+
+
+def scrub_sensitive_text(text: str) -> str:
+    """Replace credential-shaped values inside free text with REDACTED.
+
+    Keeps the surrounding text (labels, separators, prose) so an error excerpt
+    remains readable. Applied to excerpts BEFORE truncation so a value that
+    would straddle the cap cannot leak a tail.
+    """
+    if not text:
+        return text
+    text = _TEXT_AUTH_RE.sub(lambda m: f"{m.group(1)} {REDACTED}", text)
+    text = _TEXT_KV_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}{REDACTED}", text)
+    text = _TEXT_ENTROPY_RE.sub(REDACTED, text)
+    return text
+
+
 def output_json(data: Any) -> None:
     """Print data as JSON to stdout, redacting sensitive keys first.
 
@@ -150,7 +185,7 @@ def output_json(data: Any) -> None:
         sys.exit(1)
 
 
-_ENV_LINE_RE_TMPL = r"^(?:export\s+)?{key}\s*=.*$"
+_ENV_LINE_RE_TMPL = r"^(export\s+)?{key}\s*=.*$"
 
 
 def update_env_file(path: str, updates: dict) -> dict:
@@ -162,8 +197,15 @@ def update_env_file(path: str, updates: dict) -> dict:
     place, and missing keys are appended. The file is written to a temporary
     sibling in the same directory and then ``os.replace``d over the target, so
     a crash mid-write leaves the original intact and no reader ever sees a
-    half-written file. The result carries names and metadata only.
+    half-written file. A replaced line keeps its ``export`` prefix if it had
+    one; the first definition of a key is replaced and any later duplicate
+    definitions are removed, so exactly one remains. Keys and values containing a newline or carriage return are refused
+    BEFORE the file is touched: a newline would inject a line into a 0600
+    credential file. The result carries names and metadata only.
     """
+    for key, value in updates.items():
+        if any(ch in str(key) for ch in "\r\n") or any(ch in str(value) for ch in "\r\n"):
+            raise ValueError(f"env key/value for {key!r} must not contain a newline or carriage return")
     target = os.path.abspath(path)
     parent = os.path.dirname(target) or "."
     if not os.path.isdir(parent):
@@ -178,15 +220,24 @@ def update_env_file(path: str, updates: dict) -> dict:
 
     lines = existing.splitlines()
     remaining = dict(updates)
+    replaced_keys: set = set()
     out_lines = []
     for line in lines:
-        replaced = False
-        for key in list(remaining):
-            if re.match(_ENV_LINE_RE_TMPL.format(key=re.escape(key)), line):
-                out_lines.append(f"{key}={remaining.pop(key)}")
-                replaced = True
+        handled = False
+        for key in updates:
+            m = re.match(_ENV_LINE_RE_TMPL.format(key=re.escape(key)), line)
+            if m:
+                handled = True
+                if key in replaced_keys:
+                    # Duplicate definition: drop it. Shell loading lets the LAST
+                    # assignment win, so leaving a stale later line would let
+                    # the old secret survive a reported-successful rotation.
+                    break
+                prefix = m.group(1) or ""
+                out_lines.append(f"{prefix}{key}={remaining.pop(key)}")
+                replaced_keys.add(key)
                 break
-        if not replaced:
+        if not handled:
             out_lines.append(line)
     for key, value in remaining.items():
         out_lines.append(f"{key}={value}")
@@ -235,7 +286,9 @@ def normalize_http_error(status_code: int, body: str) -> dict:
 
 def _normalize_http_error_raw(status_code: int, body: str) -> dict:
     if _is_html_response(body):
-        excerpt = " ".join((body or "").split())[:200]
+        # Scrub BEFORE the 200-char cut so a credential straddling the cap
+        # cannot leak its tail; the pre-scrub slice bounds regex work.
+        excerpt = scrub_sensitive_text(" ".join((body or "").split())[:4000])[:200]
         return {
             "error": f"HTTP {status_code}",
             "status_code": status_code,
@@ -254,8 +307,15 @@ def _normalize_http_error_raw(status_code: int, body: str) -> dict:
         return parsed
 
     result = {"error": f"HTTP {status_code}", "status_code": status_code}
+    if isinstance(parsed, list):
+        # A JSON ARRAY error body (DRF returns these) must stay structured so
+        # the caller's redact_sensitive can walk its keys. Stringifying it into
+        # `detail` would hide every key from the key-match; the text scrubber
+        # is only the backstop for that case.
+        result["detail"] = parsed
+        return result
     if detail:
-        result["detail"] = detail[:300]
+        result["detail"] = scrub_sensitive_text(detail[:4000])[:300]
     return result
 
 
