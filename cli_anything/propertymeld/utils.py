@@ -213,7 +213,7 @@ _TEXT_AUTH_RE = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9\-._~+/=]+")
 _TEXT_KV_RE = re.compile(
     '(?i)(?<![A-Za-z0-9_\\-])([A-Za-z0-9_\\-]{0,64}?(?:secret|token|password|api[_-]?key)[A-Za-z0-9_\\-]{0,64})'
     '(\\s*(?:\\\\*[\\"\'])?\\s*[=:]\\s*)'
-    '(?:(?P<dqe>\\\\*)\\"(?P<dq>(?:[^\\"\\\\]|\\\\.)*?)(?P=dqe)\\"|(?P<sqe>\\\\*)\'(?P<sq>(?:[^\'\\\\]|\\\\.)*?)(?P=sqe)\'|(?P<udqe>\\\\*)\\"(?P<udq>(?:[^\\"\\\\]|\\\\.)*)$|(?P<usqe>\\\\*)\'(?P<usq>(?:[^\'\\\\]|\\\\.)*)$|(?P<bare>[^\\s\\"\'&;,<>\\\\]+))'
+    '(?:(?P<dqe>\\\\*)\\"(?P<dq>(?:[^\\"\\\\]|\\\\.)*?)(?P=dqe)\\"|(?P<sqe>\\\\*)\'(?P<sq>(?:[^\'\\\\]|\\\\.)*?)(?P=sqe)\'|(?P<udqe>\\\\*)\\"(?P<udq>(?:[^\\"\\\\]|\\\\.)*)$|(?P<usqe>\\\\*)\'(?P<usq>(?:[^\'\\\\]|\\\\.)*)$|(?P<bare>[^\\r\\n&\"<>]+))'
 )
 
 
@@ -456,7 +456,9 @@ class _ScrubbingBinaryBuffer:
                 self._u.write(self._scrub(text).encode("utf-8", "surrogateescape"))
                 self._buf = b""
             self._u.flush()
-        except (ValueError, OSError):
+        except ValueError:
+            # closed underlying buffer at exit; a real OSError propagates so an
+            # undelivered write is never swallowed into an exit 0.
             self._buf = b""
 
     def __getattr__(self, name):
@@ -517,14 +519,23 @@ class ScrubbingTextStream:
         return self._binbuf
 
     def flush(self):
+        # Drain BOTH buffers: a partial line written through the binary .buffer
+        # proxy lives in _binbuf, and a conventional sys.stderr.flush() (and the
+        # atexit flush) must emit it too, or a newline-free binary diagnostic or
+        # prompt is silently lost at exit.
+        binbuf = getattr(self, "_binbuf", None)
         try:
             if self._buf:
                 self._emit(self._scrub(self._buf))
                 self._buf = ""
+            if binbuf is not None:
+                binbuf.flush()
             self._underlying.flush()
-        except (ValueError, OSError):
-            # underlying stream closed (e.g. a transient test capture at
-            # interpreter exit); nothing to flush.
+        except ValueError:
+            # underlying stream closed (a transient test capture at interpreter
+            # exit) raises ValueError; nothing to flush. A real I/O failure is
+            # an OSError (ENOSPC on a redirected stdout, a broken pipe): it
+            # propagates so the CLI cannot exit 0 with output undelivered.
             self._buf = ""
 
     def __getattr__(self, name):

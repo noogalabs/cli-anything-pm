@@ -294,7 +294,7 @@ CANARY = "CANARY0notARealSecret9f3c2b7a1d4e5f6a7b8c"  # labelled synthetic, high
         (f"proxy error basic {CANARY} upstream", ["proxy error", "basic", "upstream"]),
         (f"bad request client_secret={CANARY}&next=1", ["bad request", "client_secret=", "next=1"]),
         (f'{{"error": "x", "api_key": "{CANARY}"}}', ['"error": "x"', '"api_key": "']),
-        (f"token: {CANARY} expired", ["token: ", "expired"]),
+        (f"token: {CANARY} expired", ["token: "]),  # bare value redacts to EOL (s14): "expired" over-redacted
         (f"see {CANARY} in the log", ["see", "in the log"]),
     ],
 )
@@ -340,7 +340,7 @@ def test_real_http_backend_plaintext_error_body_canary_never_reaches_stderr(caps
     assert CANARY not in captured.err
     assert REDACTED in captured.err
     assert "upstream rejected" in captured.err
-    assert "please retry later" in captured.err
+    assert "please retry later" not in captured.err  # bare value redacts to EOL (s14)
 
 
 def test_excerpt_is_scrubbed_before_truncation_so_no_head_leaks():
@@ -486,7 +486,7 @@ def test_x2_dict_string_leaf_in_error_body_never_reaches_stderr(capsys):
     captured = capsys.readouterr()
     assert CANARY not in captured.err
     assert REDACTED in captured.err
-    assert "denied" in captured.err and "please retry" in captured.err  # control
+    assert "denied" in captured.err and "please retry" not in captured.err  # bare value redacts to EOL (s14)
 
 
 def test_x1_x2_bare_string_array_error_body_never_reaches_stderr(capsys):
@@ -766,7 +766,7 @@ def test_q2_plaintext_200_body_fallback_never_prints_secret_to_stderr(capsys):
     assert REDACTED in captured.err
     printed = json.loads(captured.err.strip().splitlines()[-1])
     assert printed["error"] == "Non-JSON response body"
-    assert "gateway notice" in printed["body_excerpt"] and "please retry" in printed["body_excerpt"]
+    assert "gateway notice" in printed["body_excerpt"] and "please retry" not in printed["body_excerpt"]  # EOL (s14)
 
 
 def test_q2_fallback_excerpt_is_scrubbed_before_truncation(capsys):
@@ -1686,7 +1686,7 @@ def test_p1b_buffer_credential_split_across_two_writes_is_scrubbed():
     b.write(f"{CANARY[14:]} tail\n".encode())          # completes the credential + line
     b.flush()
     out = sink.buffer.getvalue().decode()
-    assert CANARY not in out and REDACTED in out and "tail" in out
+    assert CANARY not in out and REDACTED in out and "tail" not in out and out.startswith("line token=")  # tail over-redacted to EOL (s14)
 
 
 # ── Stream boundary: the guard for the uncensussable classes (successor-12) ──
@@ -1780,7 +1780,7 @@ def test_stream_boundary_scrubs_a_credential_split_across_two_writes():
     w.write(f"{CANARY[12:]} tail\n")                 # completes the credential + line
     w.flush()
     out = real.getvalue()
-    assert CANARY not in out and REDACTED in out and "tail" in out
+    assert CANARY not in out and REDACTED in out and "tail" not in out and out.startswith("line token=")  # tail over-redacted to EOL (s14)
 
 
 def test_s1_literal_backslash_escaped_pairs_in_free_text_redacted():
@@ -1814,7 +1814,7 @@ def test_s2_64kb_leaf_with_one_credential_still_redacts_it_fast():
     out = scrub_sensitive_text(big)
     elapsed = time.perf_counter() - t0
     assert "hunter2" not in out and REDACTED in out
-    assert out.startswith("a" * 100) and out.endswith("b" * 100)
+    assert out.startswith("a" * 100) and out.endswith("[REDACTED]") and "b" not in out  # tail over-redacted to EOL (s14)
     assert elapsed < 1.0, f"took {elapsed:.3f}s"
 
 
@@ -1901,3 +1901,123 @@ def test_probe_token_prefix_is_over_redacted_by_design(capsys):
     # an allowlist later is a deliberate, reviewed change rather than drift.
     output_json({"ok": True, "token_prefix": "abcdefgh..."})
     assert json.loads(capsys.readouterr().out)["token_prefix"] == REDACTED
+
+
+# ── Successor-14: unquoted credential values redact to end of line (Codex P1) ──
+#
+# The bare-value branch of the key=value rule stopped at the first whitespace /
+# ; / , so an UNQUOTED credential with spaces or punctuation leaked its tail.
+# An unquoted value now redacts to end of line (newline or end of leaf). The
+# over-redaction of the rest of that line is the accepted cost. Boundaries that
+# stay: & (URL query delimiter), " (JSON structure on stdout), < > (HTML and
+# help placeholders), CR/LF (the line itself).
+
+def test_s14_p1_bare_value_with_spaces_redacts_to_end_of_line():
+    from cli_anything.propertymeld.utils import scrub_sensitive_text
+    out = scrub_sensitive_text("password=correct horse battery staple")
+    assert out == "password=[REDACTED]"
+    for w in ("correct", "horse", "battery", "staple"):
+        assert w not in out
+
+
+def test_s14_p1_bare_value_with_punctuation_redacts_to_end_of_line():
+    from cli_anything.propertymeld.utils import scrub_sensitive_text
+    out = scrub_sensitive_text("password=p@ss;word,more here")
+    assert out == "password=[REDACTED]"
+    assert ";word" not in out and "more" not in out
+
+
+def test_s14_p1_multiline_leaf_next_line_survives():
+    from cli_anything.propertymeld.utils import scrub_sensitive_text
+    out = scrub_sensitive_text("api_key=leaked value tail\nkeep this whole next line")
+    assert out == "api_key=[REDACTED]\nkeep this whole next line"
+
+
+def test_s14_p1_bare_eol_through_output_json_leaf(capsys):
+    output_json({"note": "password=hunter2 and more secrets\nsecond line kept"})
+    got = json.loads(capsys.readouterr().out)["note"]
+    assert got == "password=[REDACTED]\nsecond line kept"
+
+
+def test_s14_p1_bare_eol_on_normalized_stderr(capsys):
+    body = json.dumps({"detail": "password=hunter2 please rotate now"}).encode()
+    err = urllib.error.HTTPError("https://app.propertymeld.com/x", 403, "err", {}, io.BytesIO(body))
+    with patch("urllib.request.urlopen", side_effect=err):
+        with pytest.raises(SystemExit):
+            http_backend._http_get("/api/x", "sessionid=abc")
+    e = capsys.readouterr().err
+    assert "hunter2" not in e and REDACTED in e
+    assert "please rotate now" not in e   # tail over-redacted to end of line
+
+
+def test_s14_p1_url_query_semantics_kept_separate():
+    # & stays a delimiter: the signed-URL redaction handles the credential
+    # param and benign params after & survive; the bare EOL rule does not eat them.
+    from cli_anything.propertymeld.utils import scrub_sensitive_text
+    out = scrub_sensitive_text("https://ex/f?a=1&X-Amz-Signature=SIGVAL&Expires=99")
+    assert "SIGVAL" not in out and REDACTED in out
+    assert "a=1" in out and "Expires=99" in out
+
+
+# ── Successor-14 P2-a: flush() drains the binary buffer too ──
+#
+# A partial (newline-free) line written through the binary .buffer proxy lives
+# in _binbuf; a conventional flush() (and the atexit flush) must emit it, or a
+# newline-free binary diagnostic/prompt is silently lost at exit.
+
+def test_s14_p2a_binary_buffer_partial_line_flushed_by_text_stream():
+    import io as _io
+    from cli_anything.propertymeld.utils import ScrubbingTextStream, scrub_sensitive_text
+
+    class _Sink:
+        def __init__(self):
+            self.buffer = _io.BytesIO()
+            self.flushed = False
+        def write(self, s):
+            return self.buffer.write(s.encode() if isinstance(s, str) else s)
+        def flush(self):
+            self.flushed = True
+
+    sink = _Sink()
+    w = ScrubbingTextStream(sink, scrub_sensitive_text)
+    w.buffer.write(b"password=SEKRETpartialnoeol")   # no newline: sits in _binbuf
+    assert sink.buffer.getvalue() == b""             # nothing emitted yet
+    w.flush()                                        # text-stream flush must drain binary too
+    out = sink.buffer.getvalue().decode()
+    assert "SEKRETpartial" not in out and REDACTED in out
+
+
+# ── Successor-14 P2-b: a real I/O error on flush propagates ──
+#
+# The broad except swallowed OSError, so ENOSPC on a redirected stdout let the
+# CLI exit 0 with output undelivered. Only the closed-capture ValueError is
+# suppressed now; OSError propagates.
+
+def test_s14_p2b_oserror_on_flush_propagates():
+    from cli_anything.propertymeld.utils import ScrubbingTextStream, scrub_sensitive_text
+
+    class _ENoSpc:
+        buffer = None
+        def write(self, s):
+            return len(s)
+        def flush(self):
+            raise OSError(28, "No space left on device")
+
+    w = ScrubbingTextStream(_ENoSpc(), scrub_sensitive_text)
+    with pytest.raises(OSError):
+        w.flush()
+
+
+def test_s14_p2b_closed_capture_valueerror_still_swallowed():
+    from cli_anything.propertymeld.utils import ScrubbingTextStream, scrub_sensitive_text
+
+    class _Closed:
+        buffer = None
+        def write(self, s):
+            raise ValueError("I/O operation on closed file")
+        def flush(self):
+            raise ValueError("I/O operation on closed file")
+
+    w = ScrubbingTextStream(_Closed(), scrub_sensitive_text)
+    w._buf = "pending"
+    w.flush()   # must not raise
