@@ -1043,9 +1043,9 @@ def rotate_api_key(update_railway, update_env, as_json):
     --update-env PATH. The secret is never printed; the output boundary
     redacts it and there is no reveal flag.
 
-    With --update-railway, runs:
-      railway variables --set PM_CLIENT_ID=<new_id>
-      railway variables --set PM_CLIENT_SECRET=<new_secret>
+    With --update-railway, runs a single call so the pair lands or fails
+    together (the id and secret are never left mismatched):
+      railway variables --set PM_CLIENT_ID=<new_id> --set PM_CLIENT_SECRET=<new_secret>
 
     With --update-env PATH, atomically rewrites PATH (mode 0600) replacing or
     appending PM_CLIENT_ID and PM_CLIENT_SECRET, preserving other lines. Both

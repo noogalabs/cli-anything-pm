@@ -1241,6 +1241,45 @@ def test_w2_indented_line_for_a_different_key_is_untouched(tmp_path):
     assert env_path.read_text().splitlines() == [f"PM_CLIENT_SECRET={SENTINEL}", "  OTHER_INDENTED=keep2"]
 
 
+# ── Aussie P1: the pm work-orders complete refusal path scrubs BOTH streams ──
+
+def test_p1_complete_refusal_credential_notes_absent_from_both_streams(runner):
+    # The REAL path: pm work-orders complete -> http_backend.complete_meld ->
+    # _complete_meld_fail -> emit_error. A credential-shaped --notes value must
+    # not reach stdout OR stderr, and a redaction marker must be present.
+    notes = f"Bearer {CANARY} client_secret={CANARY}"
+    result = runner.invoke(cli, ["work-orders", "complete", "--meld-id", "1", "--notes", notes])
+    assert result.exit_code == 1, result.output
+    combined = result.stdout + (result.stderr or "")
+    assert CANARY not in combined
+    assert REDACTED in (result.stderr or "")
+    # The refusal still says what it refused and why.
+    err = json.loads((result.stderr or "").strip().splitlines()[-1])
+    assert err["ok"] is False and str(err["meld_id"]) == "1"
+    assert "completion_notes" in err and CANARY not in json.dumps(err)
+
+
+def test_p1_emit_error_scrubs_dict_and_string_payloads():
+    import io, contextlib
+    from cli_anything.propertymeld.utils import emit_error
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        emit_error({"note": f"password={CANARY}", "meld_id": "1"})
+    out = buf.getvalue()
+    assert CANARY not in out and REDACTED in out and json.loads(out.strip())["meld_id"] == "1"
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        emit_error(f"failed with token {CANARY}")
+    assert CANARY not in buf.getvalue() and REDACTED in buf.getvalue()
+
+
+def test_p1_print_error_now_scrubs_its_message(capsys):
+    from cli_anything.propertymeld.utils import print_error
+    print_error(f"denied: api_key={CANARY}")
+    err = capsys.readouterr().err
+    assert CANARY not in err and REDACTED in err
+
+
 def test_s1_literal_backslash_escaped_pairs_in_free_text_redacted():
     # The text-level backstop: escaped quote delimiters around key and value.
     out = scrub_sensitive_text(LITERAL_ESCAPED, high_entropy=False)

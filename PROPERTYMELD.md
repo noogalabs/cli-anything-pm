@@ -137,7 +137,7 @@ with no destination exits 1 before minting anything.
 3. Navigate to Settings > API Keys (`/2000/n/2000/nexus/api-keys/`)
 4. Click "Create API Key"
 5. Copy Client ID and Client Secret (shown ONCE)
-6. Update Railway env vars: `PM_NEXUS_CLIENT_ID`, `PM_NEXUS_CLIENT_SECRET`
+6. Update the Railway env vars the runtime actually reads: `PM_CLIENT_ID`, `PM_CLIENT_SECRET` (NOT `PM_NEXUS_CLIENT_ID` / `PM_NEXUS_CLIENT_SECRET`, which the runtime ignores). Prefer `pm api-keys rotate --update-railway` over this manual step: it mints and delivers the pair in one call and never displays the secret.
 7. `railway redeploy --yes` in `emergency-dispatch-middleware/`
 
 **Notes:**

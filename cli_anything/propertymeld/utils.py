@@ -381,9 +381,32 @@ def update_env_file(path: str, updates: dict) -> dict:
     return {"path": target, "keys_written": sorted(updates), "mode": "0600"}
 
 
+def emit_error(payload, *, exit_code=None) -> None:
+    """The single scrubbed boundary for every refusal / error written to stderr.
+
+    Aussie's PR66 seat found the real `pm work-orders complete` refusal path
+    printing a credential-shaped --notes value straight to stderr, bypassing
+    output_json's redaction. The fix is at the source shape, not the site:
+    every refusal / error emitter routes its payload through here, so a value
+    can never reach stderr unredacted regardless of which key it sits under.
+
+    A dict is walked by the key redactor AND every string leaf is scrubbed with
+    the full text scrubber (this is a diagnostic error line, so over-redaction
+    is acceptable, matching normalize_http_error); a bare string is scrubbed
+    directly. ``exit_code`` exits after printing when given.
+    """
+    if isinstance(payload, str):
+        printable = scrub_sensitive_text(payload)
+    else:
+        printable = redact_sensitive(payload, string_scrub=scrub_sensitive_text)
+    print(json.dumps(printable) if not isinstance(printable, str) else printable, file=sys.stderr)
+    if exit_code is not None:
+        sys.exit(exit_code)
+
+
 def print_error(message: str) -> None:
-    """Print error to stderr in JSON format."""
-    print(json.dumps({"error": message}), file=sys.stderr)
+    """Print error to stderr in JSON format (scrubbed via emit_error)."""
+    emit_error({"error": message})
 
 
 def _is_html_response(body: str) -> bool:

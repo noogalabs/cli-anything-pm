@@ -26,7 +26,7 @@ import uuid
 from typing import Any, Callable, Optional
 
 from .config import require_propertymeld_config
-from .utils import _is_html_response, normalize_http_error, scrub_sensitive_text
+from .utils import _is_html_response, normalize_http_error, emit_error, scrub_sensitive_text
 
 # Optional test overrides. Production resolves all routing and credential
 # custody from PROPERTYMELD_CONFIG at action time, never during import/help.
@@ -130,7 +130,7 @@ def _attempt_recapture() -> bool:
         print(json.dumps({"error": "Recapture timed out (180s)"}), file=sys.stderr)
         return False
     except OSError as exc:
-        print(json.dumps({"error": "Recapture spawn failed", "detail": str(exc)}), file=sys.stderr)
+        emit_error({"error": "Recapture spawn failed", "detail": str(exc)})
         return False
 
     if result.returncode != 0:
@@ -1434,8 +1434,10 @@ def _complete_meld_fail(
     }
     if result is not None:
         body["result"] = result
-    print(json.dumps(body), file=sys.stderr)
-    sys.exit(1)
+    # P1 (aussie PR66 seat): this refusal path printed body, including the
+    # operator's credential-shaped completion_notes, straight to stderr.
+    # Route through the scrubbed error boundary instead.
+    emit_error(body, exit_code=1)
 
 
 @with_recapture_retry
