@@ -370,10 +370,15 @@ def _merge_assignment_fields(
 
 
 def _warn_include_tech_unavailable(reason: str) -> None:
+    # reason is caller-built and can interpolate an exception (str(exc)); scrub
+    # the whole line before it reaches stderr (name-alias-proof, successor-10).
+    from .utils import scrub_sensitive_text
     print(
-        "Warning: --include-tech could not verify cookie-path in-house tech "
-        f"fields ({reason}); empty in_house_servicers may mean unavailable "
-        "cookie data, not no tech assigned.",
+        scrub_sensitive_text(
+            "Warning: --include-tech could not verify cookie-path in-house tech "
+            f"fields ({reason}); empty in_house_servicers may mean unavailable "
+            "cookie data, not no tech assigned."
+        ),
         file=sys.stderr,
     )
 

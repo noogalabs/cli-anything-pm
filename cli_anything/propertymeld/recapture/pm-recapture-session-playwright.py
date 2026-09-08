@@ -58,6 +58,7 @@ import sys
 import time
 
 from cli_anything.propertymeld.config import require_propertymeld_config
+from cli_anything.propertymeld.utils import emit_error
 
 CREDS_PATH = None
 
@@ -152,14 +153,11 @@ def _load_http_backend():
             from cli_anything.propertymeld import http_backend
             return http_backend
         except ImportError as exc:
-            print(
-                json.dumps(
-                    {
-                        "error": "cannot import cli_anything.propertymeld.http_backend",
-                        "detail": str(exc),
-                    }
-                ),
-                file=sys.stderr,
+            emit_error(
+                {
+                    "error": "cannot import cli_anything.propertymeld.http_backend",
+                    "detail": str(exc),
+                }
             )
             sys.exit(1)
 
@@ -468,17 +466,17 @@ def main(argv=None) -> None:
     except MfaRequired as exc:
         _restore(backup_path, backup_created)
         backup_created = False
-        print(json.dumps({"error": "mfa_required", "detail": str(exc)}), file=sys.stderr)
+        emit_error({"error": "mfa_required", "detail": str(exc)})
         sys.exit(2)
     except RelayAuthFailed as exc:
         _restore(backup_path, backup_created)
         backup_created = False
-        print(json.dumps({"error": "mfa_relay_failed", "detail": str(exc)}), file=sys.stderr)
+        emit_error({"error": "mfa_relay_failed", "detail": str(exc)})
         sys.exit(3)
     except Exception as exc:
         _restore(backup_path, backup_created)
         backup_created = False
-        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        emit_error({"error": str(exc)})
         sys.exit(1)
     finally:
         if backup_created and os.path.exists(backup_path) and os.path.exists(_creds_path()):

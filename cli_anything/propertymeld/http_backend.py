@@ -101,13 +101,10 @@ _RECAPTURE_SCRIPT = os.path.join(
 def _attempt_recapture() -> bool:
     """Refresh the PM session cookie via the Playwright recapture helper."""
     if not os.path.exists(_RECAPTURE_SCRIPT):
-        print(
-            json.dumps({"error": "Playwright recapture script not found", "path": _RECAPTURE_SCRIPT}),
-            file=sys.stderr,
-        )
+        emit_error({"error": "Playwright recapture script not found", "path": _RECAPTURE_SCRIPT})
         return False
 
-    print(json.dumps({"event": "auto_recapture_attempt", "script": _RECAPTURE_SCRIPT}), file=sys.stderr)
+    emit_error({"event": "auto_recapture_attempt", "script": _RECAPTURE_SCRIPT})
     try:
         # --force: this caller only runs AFTER a real SessionExpired (401 on a
         # write), so the session is definitively stale. Bypass the script's own
@@ -156,20 +153,14 @@ def with_recapture_retry(fn: Callable[..., Any]) -> Callable[..., Any]:
         try:
             return fn(*args, **kwargs)
         except SessionExpired:
-            print(json.dumps({"event": "session_expired_caught", "fn": fn.__name__}), file=sys.stderr)
+            emit_error({"event": "session_expired_caught", "fn": fn.__name__})
             if not _attempt_recapture():
-                print(
-                    json.dumps({"error": "Auto-recapture failed; manual intervention needed", "fn": fn.__name__}),
-                    file=sys.stderr,
-                )
+                emit_error({"error": "Auto-recapture failed; manual intervention needed", "fn": fn.__name__})
                 sys.exit(1)
             try:
                 return fn(*args, **kwargs)
             except SessionExpired:
-                print(
-                    json.dumps({"error": "Still 401 after recapture; manual intervention needed", "fn": fn.__name__}),
-                    file=sys.stderr,
-                )
+                emit_error({"error": "Still 401 after recapture; manual intervention needed", "fn": fn.__name__})
                 sys.exit(1)
 
     return wrapper
@@ -177,7 +168,7 @@ def with_recapture_retry(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 def _load_creds() -> dict:
     if not os.path.exists(_creds_path()):
-        print(json.dumps({"error": f"Credentials file not found: {_creds_path()}"}), file=sys.stderr)
+        emit_error({"error": f"Credentials file not found: {_creds_path()}"})
         sys.exit(2)
     with open(_creds_path()) as f:
         return json.load(f)
