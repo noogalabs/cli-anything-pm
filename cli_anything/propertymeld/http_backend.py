@@ -26,7 +26,7 @@ import uuid
 from typing import Any, Callable, Optional
 
 from .config import require_propertymeld_config
-from .utils import _is_html_response, normalize_http_error
+from .utils import _is_html_response, normalize_http_error, scrub_sensitive_text
 
 # Optional test overrides. Production resolves all routing and credential
 # custody from PROPERTYMELD_CONFIG at action time, never during import/help.
@@ -478,10 +478,13 @@ def _parse_json_body_or_exit(raw: bytes) -> Any:
         if nb.inferred_status is not None:
             print(json.dumps(normalize_http_error(nb.inferred_status, nb.text)), file=sys.stderr)
         else:
+            # Q2: this fallback builds its own excerpt and prints it directly,
+            # so it must scrub the same way the normalizer does, and BEFORE
+            # the 200-char cut so a straddling value cannot leak its head.
             print(
                 json.dumps({
                     "error": "Non-JSON response body",
-                    "body_excerpt": " ".join((nb.text or "").split())[:200],
+                    "body_excerpt": scrub_sensitive_text(" ".join((nb.text or "").split())[:4000])[:200],
                 }),
                 file=sys.stderr,
             )

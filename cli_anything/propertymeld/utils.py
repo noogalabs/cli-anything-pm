@@ -147,11 +147,13 @@ _TEXT_AUTH_RE = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9\-._~+/=]+")
 # single-quoted string, or a bare token. A quoted value is redacted as a
 # UNIT through its closing quote, so a credential containing spaces or
 # punctuation (password: "correct horse battery staple") does not leave its
-# tail behind; a bare value keeps the token rule and stops at a delimiter.
+# tail behind; an UNTERMINATED opening quote fails closed and extends through
+# the remainder of the text; a bare value keeps the token rule and stops at a
+# delimiter.
 _TEXT_KV_RE = re.compile(
     r"(?i)([A-Za-z0-9_\-]*(?:secret|token|password|api[_-]?key)[A-Za-z0-9_\-]*)"
     r"(\s*[\"']?\s*[=:]\s*)"
-    r"(?:\"((?:[^\"\\]|\\.)*)\"|'((?:[^'\\]|\\.)*)'|([^\s\"'&;,<>]+))"
+    r"(?:\"((?:[^\"\\]|\\.)*)\"|'((?:[^'\\]|\\.)*)'|\"((?:[^\"\\]|\\.)*)$|'((?:[^'\\]|\\.)*)$|([^\s\"'&;,<>]+))"
 )
 
 
@@ -161,6 +163,11 @@ def _kv_redact(m) -> str:
         return f'{key}{sep}"{REDACTED}"'
     if m.group(4) is not None:
         return f"{key}{sep}'{REDACTED}'"
+    # Unterminated quote: fail closed, the value runs to the end of the text.
+    if m.group(5) is not None:
+        return f'{key}{sep}"{REDACTED}'
+    if m.group(6) is not None:
+        return f"{key}{sep}'{REDACTED}"
     return f"{key}{sep}{REDACTED}"
 _TEXT_ENTROPY_RE = re.compile(
     r"(?=[A-Za-z0-9\-._~+/=]*\d)(?=[A-Za-z0-9\-._~+/=]*[A-Za-z])[A-Za-z0-9\-._~+/=]{24,}"

@@ -992,11 +992,42 @@ def api_keys():
     pass
 
 
+def _preflight_env_target(path: str):
+    """Return a problem string if PATH cannot safely receive credentials, else None.
+
+    Runs BEFORE any key is minted. The parent must be a writable directory;
+    an existing target must be a regular file that opens, decodes as UTF-8
+    and is writable.
+    """
+    target = os.path.abspath(path)
+    parent = os.path.dirname(target) or "."
+    if not os.path.isdir(parent) or not os.access(parent, os.W_OK):
+        return f"destination directory is missing or not writable: {parent}"
+    if os.path.exists(target):
+        if not os.path.isfile(target):
+            return f"destination exists but is not a regular file: {target}"
+        if not os.access(target, os.W_OK):
+            return f"existing destination is not writable: {target}"
+        try:
+            with open(target, "rb") as fh:
+                fh.read().decode("utf-8")
+        except OSError as exc:
+            return f"existing destination cannot be read: {target} ({exc.__class__.__name__})"
+        except UnicodeDecodeError:
+            return f"existing destination is not valid UTF-8: {target}"
+    return None
+
+
 @api_keys.command("rotate")
 @click.option("--update-railway", is_flag=True, default=False,
               help="Push the new credentials to Railway via 'railway variables --set' "
                    "(non-displaying delivery).")
-@click.option("--update-env", "update_env", type=click.Path(dir_okay=False), default=None,
+@click.option("--update-env", "update_env",
+              # readable=False: click would otherwise reject an unreadable
+              # existing file with a plain-text usage error (exit 2) before the
+              # preflight runs; _preflight_env_target performs the stricter
+              # check and reports it in the JSON envelope with exit 1.
+              type=click.Path(dir_okay=False, readable=False), default=None,
               help="Atomically write PM_CLIENT_ID and PM_CLIENT_SECRET into this env "
                    "file, mode 0600 (non-displaying delivery). The value never "
                    "reaches stdout. An existing 'export KEY=' line keeps its "
@@ -1033,14 +1064,16 @@ def rotate_api_key(update_railway, update_env, as_json):
         return
 
     # Validate the env destination BEFORE minting so a credential is never
-    # minted into the void.
+    # minted into the void. This checks the parent directory AND, when the
+    # target already exists, that it can be read, decoded as UTF-8 and
+    # written: an unreadable or corrupt existing file would otherwise pass a
+    # directory-only check, the key would be minted, and update_env_file
+    # would fail while preserving the old contents, losing the secret when
+    # the env file is the sole destination.
     if update_env:
-        parent = os.path.dirname(os.path.abspath(update_env)) or "."
-        if not os.path.isdir(parent) or not os.access(parent, os.W_OK):
-            output_json({
-                "ok": False,
-                "error": f"--update-env destination directory is missing or not writable: {parent}. Nothing was minted.",
-            })
+        problem = _preflight_env_target(update_env)
+        if problem:
+            output_json({"ok": False, "error": f"--update-env {problem}. Nothing was minted."})
             return
 
     result = http_backend.rotate_api_key()

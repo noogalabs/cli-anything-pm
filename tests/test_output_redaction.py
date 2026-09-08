@@ -637,6 +637,128 @@ def test_r1_bare_high_entropy_value_under_non_sensitive_key_survives_in_normal_o
     assert CANARY not in json.dumps(normalize_http_error(500, json.dumps({"description": CANARY})))
 
 
+# ── Codex Q1: an UNTERMINATED quoted value fails closed ─────────────────────
+
+@pytest.mark.parametrize(
+    "text,must_keep",
+    [
+        (f'password: "{PHRASE} and no close', ['password: "']),
+        (f"token='{PHRASE} still open", ["token='"]),
+    ],
+)
+def test_q1_unterminated_quote_extends_to_end_fail_closed(text, must_keep):
+    out = scrub_sensitive_text(text, high_entropy=False)
+    assert PHRASE not in out and "horse" not in out and "no close" not in out and "still open" not in out
+    assert REDACTED in out
+    for k in must_keep:
+        assert k in out
+
+
+def test_q1_terminated_quote_still_stops_at_its_close():
+    out = scrub_sensitive_text(f'password: "{PHRASE}" then tail', high_entropy=False)
+    assert out == f'password: "{REDACTED}" then tail'
+
+
+def test_q1_real_error_path_unterminated_quote_never_reaches_stderr(capsys):
+    body = json.dumps({"detail": f'bad password: "{PHRASE} no close'}).encode()
+    err = urllib.error.HTTPError("https://app.propertymeld.com/x", 403, "err", {}, io.BytesIO(body))
+    with patch("urllib.request.urlopen", side_effect=err):
+        with pytest.raises(SystemExit):
+            http_backend._http_get("/api/x", "sessionid=abc")
+    e = capsys.readouterr().err
+    assert PHRASE not in e and "horse" not in e
+    assert REDACTED in e and "bad password" in e
+
+
+def test_q1_output_json_unterminated_single_quote_redacted(capsys):
+    output_json({"note": f"reset token='{PHRASE} open"})
+    out = capsys.readouterr().out
+    assert PHRASE not in out and "horse" not in out
+    assert json.loads(out)["note"].startswith("reset token='")
+
+
+# ── Codex Q3: an existing but unusable env target refuses BEFORE minting ────
+
+def _rotate_with_env(runner, env_path):
+    with patch.object(http_backend, "rotate_api_key", return_value=dict(ROTATE_RESULT)) as mint, \
+         patch("subprocess.run") as spawn:
+        result = runner.invoke(cli, ["api-keys", "rotate", "--update-env", str(env_path)])
+    return result, mint, spawn
+
+
+def test_q3_unreadable_existing_target_refuses_before_minting(runner, tmp_path):
+    if os.geteuid() == 0:
+        pytest.skip("root can read a 000 file; the permission casualty needs an unprivileged runner")
+    env_path = tmp_path / "locked.env"
+    env_path.write_text("PM_CLIENT_SECRET=old\n")
+    env_path.chmod(0o000)
+    try:
+        result, mint, spawn = _rotate_with_env(runner, env_path)
+    finally:
+        env_path.chmod(0o600)
+    assert result.exit_code == 1, result.output
+    mint.assert_not_called()
+    spawn.assert_not_called()
+    data = json.loads(result.output)
+    assert data["ok"] is False and "Nothing was minted" in data["error"]
+    assert env_path.read_text() == "PM_CLIENT_SECRET=old\n"
+
+
+def test_q3_invalid_utf8_existing_target_refuses_before_minting(runner, tmp_path):
+    env_path = tmp_path / "corrupt.env"
+    original = b"PM_CLIENT_SECRET=old\n\xff\xfe\xfa\n"
+    env_path.write_bytes(original)
+    result, mint, spawn = _rotate_with_env(runner, env_path)
+    assert result.exit_code == 1, result.output
+    mint.assert_not_called()
+    spawn.assert_not_called()
+    data = json.loads(result.output)
+    assert "not valid UTF-8" in data["error"] and "Nothing was minted" in data["error"]
+    assert env_path.read_bytes() == original
+
+
+def test_q3_valid_existing_target_proceeds(runner, tmp_path):
+    env_path = tmp_path / "fine.env"
+    env_path.write_text("BOT_TOKEN=keep\nPM_CLIENT_SECRET=old\n")
+    result, mint, spawn = _rotate_with_env(runner, env_path)
+    assert result.exit_code == 0, result.output
+    mint.assert_called_once()
+    assert f"PM_CLIENT_SECRET={SENTINEL}\n" in env_path.read_text()
+    assert "BOT_TOKEN=keep" in env_path.read_text()
+
+
+# ── Codex Q2: the non-JSON HTTP 200 fallback excerpt is scrubbed ─────────────
+
+def test_q2_plaintext_200_body_fallback_never_prints_secret_to_stderr(capsys):
+    # A non-HTML, non-JSON 200 body has no inferred status, so
+    # _parse_json_body_or_exit takes the fallback branch that builds its own
+    # excerpt. Drive the real function with that body.
+    body = f"gateway notice: client_secret={CANARY} and Authorization: Bearer {CANARY} please retry".encode()
+    with pytest.raises(SystemExit) as exc:
+        http_backend._parse_json_body_or_exit(body)
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert CANARY not in captured.err and CANARY not in captured.out
+    assert REDACTED in captured.err
+    printed = json.loads(captured.err.strip().splitlines()[-1])
+    assert printed["error"] == "Non-JSON response body"
+    assert "gateway notice" in printed["body_excerpt"] and "please retry" in printed["body_excerpt"]
+
+
+def test_q2_fallback_excerpt_is_scrubbed_before_truncation(capsys):
+    # The canary must START inside the 200-char window with at least 16 of its
+    # characters before the cut, so that a truncate-first implementation would
+    # visibly leak its head; a canary placed too close to the cut would leave
+    # fewer characters than the assertion looks for and pass vacuously.
+    prefix = "x " * 79 + "Authorization: Bearer "
+    start = len(" ".join(prefix.split()))
+    assert 150 < start <= 184, start
+    with pytest.raises(SystemExit):
+        http_backend._parse_json_body_or_exit(f"{prefix}{CANARY}".encode())
+    e = capsys.readouterr().err
+    assert CANARY[:16] not in e and CANARY not in e
+
+
 def test_update_env_file_rejects_missing_directory(tmp_path):
     with pytest.raises(FileNotFoundError):
         update_env_file(str(tmp_path / "missing" / "x.env"), {"PM_CLIENT_SECRET": "v"})
