@@ -686,9 +686,11 @@ def _rotate_with_env(runner, env_path):
     return result, mint, spawn
 
 
-def test_q3_unreadable_existing_target_refuses_before_minting(runner, tmp_path):
+def test_q3_unwritable_existing_target_refuses_before_minting(runner, tmp_path):
+    # chmod 000 trips the W_OK check first, so this covers the NOT-WRITABLE
+    # branch of the preflight (the read branch is covered by the 0o200 case).
     if os.geteuid() == 0:
-        pytest.skip("root can read a 000 file; the permission casualty needs an unprivileged runner")
+        pytest.skip("root bypasses mode bits; the permission casualty needs an unprivileged runner")
     env_path = tmp_path / "locked.env"
     env_path.write_text("PM_CLIENT_SECRET=old\n")
     env_path.chmod(0o000)
@@ -701,6 +703,27 @@ def test_q3_unreadable_existing_target_refuses_before_minting(runner, tmp_path):
     spawn.assert_not_called()
     data = json.loads(result.output)
     assert data["ok"] is False and "Nothing was minted" in data["error"]
+    assert "not writable" in data["error"]
+    assert env_path.read_text() == "PM_CLIENT_SECRET=old\n"
+
+
+def test_q3_write_only_existing_target_reaches_read_branch_and_refuses(runner, tmp_path):
+    # 0o200 passes the W_OK check and then fails the read, so this is the
+    # only shipped test that enters the except-OSError READ branch.
+    if os.geteuid() == 0:
+        pytest.skip("root bypasses mode bits; the permission casualty needs an unprivileged runner")
+    env_path = tmp_path / "writeonly.env"
+    env_path.write_text("PM_CLIENT_SECRET=old\n")
+    env_path.chmod(0o200)
+    try:
+        result, mint, spawn = _rotate_with_env(runner, env_path)
+    finally:
+        env_path.chmod(0o600)
+    assert result.exit_code == 1, result.output
+    mint.assert_not_called()
+    spawn.assert_not_called()
+    data = json.loads(result.output)
+    assert "cannot be read" in data["error"] and "Nothing was minted" in data["error"]
     assert env_path.read_text() == "PM_CLIENT_SECRET=old\n"
 
 
@@ -757,6 +780,48 @@ def test_q2_fallback_excerpt_is_scrubbed_before_truncation(capsys):
         http_backend._parse_json_body_or_exit(f"{prefix}{CANARY}".encode())
     e = capsys.readouterr().err
     assert CANARY[:16] not in e and CANARY not in e
+
+
+# ── O1: the scrub-before-truncate ORDER is guarded by a BARE high-entropy value ─
+#
+# A Bearer-labelled canary cannot guard the order: after truncation the label
+# plus a fragment still matches the auth rule, so truncate-then-scrub stays
+# green. A bare high-entropy value straddling the 200-char cut leaves a
+# fragment shorter than the 24-char entropy floor under truncate-first, which
+# leaks, and is scrubbed whole under the shipped scrub-first order.
+
+BARE = "Q7m3kP9zX2vL8nR4tW6yB1cF5hJ0dS3gA9eK2uM7v"  # 41 chars, letters+digits, no label
+assert len(BARE) == 41 and any(c.isdigit() for c in BARE) and any(c.isalpha() for c in BARE)
+
+
+def _straddling(prefix_words: int, lead: str) -> str:
+    prefix = "x " * prefix_words + lead
+    start = len(" ".join(prefix.split()))
+    assert 150 < start <= 184, start  # at least 16 chars of BARE land inside the cut
+    return f"{prefix}{BARE}"
+
+
+def test_o1_q2_fallback_bare_high_entropy_straddle_head_absent(capsys):
+    with pytest.raises(SystemExit):
+        http_backend._parse_json_body_or_exit(_straddling(88, "notice ").encode())
+    e = capsys.readouterr().err
+    assert BARE[:16] not in e and BARE not in e
+
+
+def test_o1_normalizer_html_excerpt_bare_high_entropy_straddle_head_absent():
+    from cli_anything.propertymeld.utils import normalize_http_error
+    html = "<html>" + _straddling(85, "notice ") + "</html>"
+    excerpt = normalize_http_error(403, html)["body_excerpt"]
+    assert BARE[:16] not in excerpt and BARE not in excerpt
+
+
+def test_o1_normalizer_plaintext_detail_bare_high_entropy_straddle_head_absent():
+    from cli_anything.propertymeld.utils import normalize_http_error
+    text = _straddling(88, "notice ")
+    # detail is capped at 300, so position the value across THAT cut.
+    text = "y " * 50 + text
+    detail = normalize_http_error(502, text)["detail"]
+    assert BARE[:16] not in detail and BARE not in detail
 
 
 def test_update_env_file_rejects_missing_directory(tmp_path):
