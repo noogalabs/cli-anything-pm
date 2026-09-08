@@ -27,6 +27,10 @@ from .utils import output_json, print_error, resolve_meld_id, scrub_sensitive_te
 @click.version_option("0.1.0", prog_name="pm")
 def cli():
     """Property Meld CLI — read work orders, properties, vendors; assign techs."""
+    # Stream boundary: any write by any route on stdout/stderr is scrubbed,
+    # including the snapcli harness path which dispatches through this group.
+    from .utils import install_scrubbing_streams
+    install_scrubbing_streams()
     pass
 
 
@@ -1758,7 +1762,8 @@ def main() -> None:
     preserving the exit code. This is the framework-boundary guard for that
     class (successor-11).
     """
-    from .utils import emit_error
+    from .utils import emit_error, install_scrubbing_streams
+    install_scrubbing_streams()
     try:
         cli.main(standalone_mode=False)
     except click.exceptions.Exit as exc:  # --help / ctx.exit()

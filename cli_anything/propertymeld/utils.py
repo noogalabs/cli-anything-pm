@@ -262,17 +262,30 @@ _SENSITIVE_QUERY_PARAM = re.compile(
 )
 
 
+import html as _html
+
+
+def _norm_param(name: str) -> str:
+    # A signed URL embedded in an HTML field arrives with &amp; separators;
+    # even after html.unescape a stray "amp;" prefix can survive a double
+    # encoding, so strip it defensively before matching (successor-12).
+    return name[4:] if name.lower().startswith("amp;") else name
+
+
 def _redact_url_credentials(url: str) -> str:
+    # HTML-escaped separators (&amp;) make parse_qsl read "amp;X-Amz-Signature";
+    # unescape first so the param names match.
+    unescaped = _html.unescape(url)
     try:
-        parts = _urlparse.urlsplit(url)
+        parts = _urlparse.urlsplit(unescaped)
     except ValueError:
         return url
     if not parts.query:
         return url
     pairs = _urlparse.parse_qsl(parts.query, keep_blank_values=True)
-    if not any(_SENSITIVE_QUERY_PARAM.match(k) for k, _ in pairs):
+    if not any(_SENSITIVE_QUERY_PARAM.match(_norm_param(k)) for k, _ in pairs):
         return url
-    redacted = [(k, REDACTED if _SENSITIVE_QUERY_PARAM.match(k) else v) for k, v in pairs]
+    redacted = [(_norm_param(k), REDACTED if _SENSITIVE_QUERY_PARAM.match(_norm_param(k)) else v) for k, v in pairs]
     new_query = _urlparse.urlencode(redacted, safe="[]")
     return _urlparse.urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
 
@@ -411,6 +424,79 @@ def update_env_file(path: str, updates: dict) -> dict:
         raise
     os.chmod(target, 0o600)
     return {"path": target, "keys_written": sorted(updates), "mode": "0600"}
+
+
+class ScrubbingTextStream:
+    """A TextIO wrapper that scrubs every write before it reaches the stream.
+
+    The boundary is the STREAM, not the call sites: any write by any route
+    (print, a local alias of sys.stderr, a logging.StreamHandler, click's own
+    usage errors, a third-party library) passes the scrubber by construction,
+    which an AST allowlist over call sites cannot guarantee. Partial lines are
+    buffered so a credential split across two write() calls is assembled into a
+    full line before scrubbing (scrub on newline / flush). fd-level writes
+    (os.write(2, ...)) bypass this wrapper and are the declared limit.
+    """
+
+    def __init__(self, underlying, scrub):
+        self._underlying = underlying
+        self._scrub = scrub
+        self._buf = ""
+
+    def write(self, text):
+        # Some callers (click under its test runner) write bytes to a stream
+        # they treat as binary; decode, scrub as text, and re-emit in the
+        # underlying stream's own type.
+        if isinstance(text, (bytes, bytearray)):
+            text = bytes(text).decode("utf-8", "replace")
+        self._buf += text
+        if "\n" in self._buf:
+            head, _, tail = self._buf.rpartition("\n")
+            self._emit(self._scrub(head + "\n"))
+            self._buf = tail
+        return len(text)
+
+    def _emit(self, s):
+        try:
+            self._underlying.write(s)
+        except TypeError:
+            self._underlying.write(s.encode("utf-8"))
+
+    def flush(self):
+        try:
+            if self._buf:
+                self._emit(self._scrub(self._buf))
+                self._buf = ""
+            self._underlying.flush()
+        except (ValueError, OSError):
+            # underlying stream closed (e.g. a transient test capture at
+            # interpreter exit); nothing to flush.
+            self._buf = ""
+
+    def __getattr__(self, name):
+        return getattr(self._underlying, name)
+
+
+def install_scrubbing_streams():
+    """Wrap sys.stdout/sys.stderr with the scrubbing stream, once, and flush on exit.
+
+    stderr uses the full scrubber (diagnostics, over-redaction acceptable);
+    stdout uses the narrow scrubber so ordinary identifiers and UUIDs survive
+    while a raw signed URL or key=value credential is still caught. output_json
+    already narrow-scrubs its payload, so the wrapper is idempotent over it.
+    Idempotent: a second call is a no-op.
+    """
+    import atexit
+    changed = False
+    if not isinstance(sys.stderr, ScrubbingTextStream):
+        sys.stderr = ScrubbingTextStream(sys.stderr, scrub_sensitive_text)
+        atexit.register(sys.stderr.flush)
+        changed = True
+    if not isinstance(sys.stdout, ScrubbingTextStream):
+        sys.stdout = ScrubbingTextStream(sys.stdout, scrub_sensitive_text_narrow)
+        atexit.register(sys.stdout.flush)
+        changed = True
+    return changed
 
 
 def emit_error(payload, *, exit_code=None) -> None:

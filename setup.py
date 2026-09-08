@@ -48,6 +48,6 @@ setup(
     ],
     entry_points={
         "console_scripts": ["pm=cli_anything.propertymeld.cli:main"],
-        "snapcli.platforms": ["pm=cli_anything.propertymeld.cli:main"],
+        "snapcli.platforms": ["pm=cli_anything.propertymeld.cli:cli"],
     },
 )
