@@ -1745,3 +1745,31 @@ def link_receipt(receipt_id, estimate_id, as_json):
     """Link a receipt to an invoice."""
     result = http_backend.link_receipt_to_invoice(receipt_id, estimate_id)
     output_json(result)
+
+
+def main() -> None:
+    """Console entry point that scrubs framework-generated error messages.
+
+    Click echoes rejected argument values verbatim in its own usage errors
+    (Invalid value for FILE_PATH: '<value>'), and those never pass through any
+    call the package controls, so the AST census cannot cover them. Running
+    Click with standalone_mode off lets us catch every ClickException and route
+    its message through the scrubbed boundary before it reaches stderr, while
+    preserving the exit code. This is the framework-boundary guard for that
+    class (successor-11).
+    """
+    from .utils import emit_error
+    try:
+        cli.main(standalone_mode=False)
+    except click.exceptions.Exit as exc:  # --help / ctx.exit()
+        sys.exit(exc.exit_code)
+    except click.exceptions.Abort:
+        emit_error("Aborted!")
+        sys.exit(1)
+    except click.ClickException as exc:   # UsageError, BadParameter, etc.
+        emit_error(f"Error: {exc.format_message()}")
+        sys.exit(exc.exit_code)
+
+
+if __name__ == "__main__":
+    main()

@@ -246,6 +246,37 @@ def _kv_redact(m) -> str:
     return f"{key}{sep}{REDACTED}"
 
 
+# Signed-URL credential redaction. A presigned S3 / storage URL carries its
+# credential in query params (X-Amz-Credential holds an AKIA... access key,
+# X-Amz-Signature the signature) that no key name or value shape matches, so
+# a normal files response would print it in the clear. Redact the sensitive
+# query params inside any URL while keeping scheme/host/path and benign params
+# (Expires, filename) so the field stays useful. Runs in BOTH scrub modes.
+import urllib.parse as _urlparse
+
+_URL_RE = re.compile(r"https?://[^\s\"'<>\\]+", re.IGNORECASE)
+_SENSITIVE_QUERY_PARAM = re.compile(
+    r"^(?:x-amz-(?:credential|signature|security-token)|signature|sig|token|"
+    r"awsaccesskeyid|password|secret|api[_-]?key)$",
+    re.IGNORECASE,
+)
+
+
+def _redact_url_credentials(url: str) -> str:
+    try:
+        parts = _urlparse.urlsplit(url)
+    except ValueError:
+        return url
+    if not parts.query:
+        return url
+    pairs = _urlparse.parse_qsl(parts.query, keep_blank_values=True)
+    if not any(_SENSITIVE_QUERY_PARAM.match(k) for k, _ in pairs):
+        return url
+    redacted = [(k, REDACTED if _SENSITIVE_QUERY_PARAM.match(k) else v) for k, v in pairs]
+    new_query = _urlparse.urlencode(redacted, safe="[]")
+    return _urlparse.urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
+
+
 def scrub_sensitive_text(text: str, *, high_entropy: bool = True) -> str:
     """Replace credential-shaped values inside free text with REDACTED.
 
@@ -261,6 +292,7 @@ def scrub_sensitive_text(text: str, *, high_entropy: bool = True) -> str:
     """
     if not text:
         return text
+    text = _URL_RE.sub(lambda m: _redact_url_credentials(m.group(0)), text)
     text = _TEXT_AUTH_RE.sub(lambda m: f"{m.group(1)} {REDACTED}", text)
     text = _TEXT_KV_RE.sub(_kv_redact, text)
     if high_entropy:

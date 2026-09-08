@@ -1467,6 +1467,81 @@ def test_census_every_stderr_write_is_scrubbed_or_proven_constant():
     assert not offenders, "stderr write(s) neither scrubbed nor proven-constant:\n" + "\n".join(offenders)
 
 
+# ── P1-a: signed-URL credentials redacted on stdout ─────────────────────────
+
+SIGNED_URL = (
+    "https://bucket.s3.amazonaws.com/melds/1/receipt.pdf?"
+    "X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260908%2Fus-east-1%2Fs3%2Faws4_request&"
+    "X-Amz-Signature=abcdef1234567890deadbeefcafe&X-Amz-Expires=3600&filename=receipt.pdf"
+)
+
+
+def test_p1a_signed_url_credentials_redacted_on_stdout(runner):
+    fixture = [{"id": 7, "filename": "receipt.pdf", "signed_url": SIGNED_URL, "source": "vendor"}]
+    with patch.object(http_backend, "list_files", return_value=fixture):
+        result = runner.invoke(cli, ["work-orders", "files", "900001"])
+    assert result.exit_code == 0, result.output
+    out = result.output
+    assert "AKIAIOSFODNN7EXAMPLE" not in out       # no access key
+    assert "abcdef1234567890deadbeefcafe" not in out  # no signature bytes
+    data = json.loads(out)
+    url = data[0]["signed_url"]
+    assert url.startswith("https://bucket.s3.amazonaws.com/melds/1/receipt.pdf")  # shape kept
+    assert "X-Amz-Expires=3600" in url and "filename=receipt.pdf" in url          # benign params kept
+    assert "X-Amz-Credential=%5BREDACTED%5D" in url or "X-Amz-Credential=[REDACTED]" in url
+
+
+def test_p1a_url_scrub_keeps_urls_without_credentials(capsys):
+    plain = "https://app.propertymeld.com/melds/1?tab=files&page=2"
+    output_json({"link": plain})
+    assert json.loads(capsys.readouterr().out)["link"] == plain
+
+
+# ── P1-b: Click framework error messages are scrubbed (uncensussable class) ──
+#
+# The AST census CANNOT cover framework-generated messages: Click echoes a
+# rejected argument value verbatim in its own UsageError/BadParameter, and that
+# is not a call the package makes. main() runs Click with standalone_mode off
+# and routes every ClickException through emit_error. These installed-path
+# casualties are the guard for this class.
+
+def _run_main(argv):
+    import io, contextlib
+    from cli_anything.propertymeld import cli as m
+    buf = io.StringIO()
+    code = None
+    with patch("sys.argv", argv), contextlib.redirect_stderr(buf):
+        try:
+            m.main()
+        except SystemExit as e:
+            code = e.code
+    return code, buf.getvalue()
+
+
+def test_p1b_click_bad_path_value_scrubbed(capsys):
+    code, err = _run_main(["pm", "work-orders", "upload-file", "1", f"/missing?token={CANARY}"])
+    assert code == 2                 # click usage exit
+    assert CANARY not in err
+    assert REDACTED in err
+    assert "FILE_PATH" in err        # the message still identifies the bad argument
+
+
+def test_p1b_click_bad_int_value_scrubbed(capsys):
+    code, err = _run_main(["pm", "work-orders", "list", "--assigned-to-tech", f"secret={CANARY}"])
+    assert code == 2
+    assert CANARY not in err
+    assert REDACTED in err
+
+
+def test_p1b_main_passes_through_normal_success(capsys):
+    # A valid read command still runs and exits 0 through main().
+    with patch("cli_anything.propertymeld.api_backend.list_work_orders", return_value=[{"id": 1}]):
+        code, err = _run_main(["pm", "work-orders", "list"])
+    out = capsys.readouterr().out
+    assert code in (None, 0)
+    assert json.loads(out)[0]["id"] == 1
+
+
 def test_s1_literal_backslash_escaped_pairs_in_free_text_redacted():
     # The text-level backstop: escaped quote delimiters around key and value.
     out = scrub_sensitive_text(LITERAL_ESCAPED, high_entropy=False)

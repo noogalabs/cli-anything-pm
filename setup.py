@@ -47,7 +47,7 @@ setup(
         "pyarrow>=25.0,<26",
     ],
     entry_points={
-        "console_scripts": ["pm=cli_anything.propertymeld.cli:cli"],
-        "snapcli.platforms": ["pm=cli_anything.propertymeld.cli:cli"],
+        "console_scripts": ["pm=cli_anything.propertymeld.cli:main"],
+        "snapcli.platforms": ["pm=cli_anything.propertymeld.cli:main"],
     },
 )
