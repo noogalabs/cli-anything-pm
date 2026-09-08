@@ -1616,6 +1616,79 @@ def test_p1b_snapcli_platforms_entry_points_at_the_group_not_main():
     assert isinstance(group, click.Group) and {"work-orders", "properties", "vendors"} <= set(group.commands)
 
 
+# ── successor-13: install timing (plugin path) and write-route bypasses ──────
+
+def test_p1a_unknown_command_error_on_harness_path_is_scrubbed():
+    # Drive the HARNESS way (make_context + invoke, NOT main()), so the test
+    # depends on the install happening BEFORE command resolution. Click resolves
+    # the subcommand inside Group.invoke; an unknown name carrying a credential
+    # raises a UsageError whose message the wrapper must scrub. Moving the
+    # install into the group callback (which runs after resolution) reddens this.
+    import io, sys as _sys, click
+    from cli_anything.propertymeld.cli import cli as group
+    real = _sys.stderr
+    cap = io.StringIO()
+    _sys.stderr = cap
+    try:
+        ctx = group.make_context("pm", [f"https://x/?token={CANARY}"])
+        try:
+            group.invoke(ctx)
+        except click.ClickException as exc:
+            exc.show()                     # Click/harness prints the usage error to stderr
+        except SystemExit:
+            pass
+        _sys.stderr.flush()
+    finally:
+        _sys.stderr = real
+    out = cap.getvalue()
+    assert CANARY not in out
+    assert REDACTED in out
+
+
+def test_p1b_writelines_route_is_scrubbed():
+    import io
+    from cli_anything.propertymeld.utils import ScrubbingTextStream, scrub_sensitive_text
+    real = io.StringIO()
+    w = ScrubbingTextStream(real, scrub_sensitive_text)
+    w.writelines([f"one token={CANARY}\n", "two clean\n"])
+    w.flush()
+    out = real.getvalue()
+    assert CANARY not in out and REDACTED in out and "two clean" in out
+
+
+class _BytesSink:
+    """A minimal binary stream with a .buffer, standing in for sys.stderr."""
+    def __init__(self):
+        self.buffer = io.BytesIO()
+    def flush(self):
+        self.buffer.flush()
+
+
+import io  # noqa: E402  (used by _BytesSink above)
+
+
+def test_p1b_buffer_write_route_is_scrubbed():
+    from cli_anything.propertymeld.utils import ScrubbingTextStream, scrub_sensitive_text
+    sink = _BytesSink()
+    w = ScrubbingTextStream(sink, scrub_sensitive_text)
+    w.buffer.write(f"raw token={CANARY}\n".encode())
+    w.buffer.flush()
+    out = sink.buffer.getvalue().decode()
+    assert CANARY not in out and REDACTED in out
+
+
+def test_p1b_buffer_credential_split_across_two_writes_is_scrubbed():
+    from cli_anything.propertymeld.utils import ScrubbingTextStream, scrub_sensitive_text
+    sink = _BytesSink()
+    w = ScrubbingTextStream(sink, scrub_sensitive_text)
+    b = w.buffer
+    b.write(f"line token={CANARY[:14]}".encode())     # partial, buffered in bytes
+    b.write(f"{CANARY[14:]} tail\n".encode())          # completes the credential + line
+    b.flush()
+    out = sink.buffer.getvalue().decode()
+    assert CANARY not in out and REDACTED in out and "tail" in out
+
+
 # ── Stream boundary: the guard for the uncensussable classes (successor-12) ──
 #
 # The AST census is a LINT (it names sites) but is a spelling allowlist: an
@@ -1623,6 +1696,53 @@ def test_p1b_snapcli_platforms_entry_points_at_the_group_not_main():
 # the STREAM: every write on the wrapped stream is scrubbed by construction,
 # whatever route produced it. fd-level writes (os.write(2, ...)) bypass the
 # wrapper and are the declared limit.
+
+
+
+def test_t3_per_site_click_handler_scrubs_when_stream_wrapper_uninstalled(monkeypatch):
+    # M23 (restore Click's default exc.show()) does NOT redden the framework
+    # casualties: with the stream wrapper installed in production it scrubs Click's
+    # usage errors independently, so the per-site handler is defense-in-depth THERE.
+    # This test pins the handler DIRECTLY: neutralize every stream install and
+    # capture a PLAIN stderr, so the only thing that can scrub the ClickException
+    # message is emit_error in main()'s except. Restoring exc.show() reddens this.
+    import io
+    import sys as _sys
+    from cli_anything.propertymeld import cli as climod
+    from cli_anything.propertymeld import utils as utilsmod
+
+    monkeypatch.setattr(utilsmod, "install_scrubbing_streams", lambda: None)
+    monkeypatch.setattr(_sys, "argv", ["pm", f"https://x/?token={CANARY}"])
+    real = _sys.stderr
+    cap = io.StringIO()
+    _sys.stderr = cap
+    try:
+        try:
+            climod.main()
+        except SystemExit:
+            pass
+    finally:
+        _sys.stderr = real
+    out = cap.getvalue()
+    assert CANARY not in out
+    assert REDACTED in out
+
+
+def test_t4_amp_prefix_strip_pins_url_credential_redaction():
+    # A triple-encoded separator (&amp;amp;) leaves a literal "amp;" glued to the
+    # credential param after ONE html.unescape, so parse_qsl reads the key as
+    # "amp;X-Amz-Signature", which the anchored param regex does NOT match.
+    # _norm_param strips the leftover "amp;" so the signature is recognized and
+    # redacted, keeping scheme/host/path/benign params intact. Pinned at the URL
+    # unit (the strip is the sole guard here); end-to-end there is a downstream
+    # backstop, so this asserts the unit directly. A short, low-entropy sentinel
+    # is used so ONLY the URL-param logic can redact it. Removing the strip reddens.
+    from cli_anything.propertymeld.utils import _redact_url_credentials, REDACTED as R
+    sentinel = "AmpStripSig9z"
+    url = f"https://ex.s3/file?a=1&amp;amp;X-Amz-Signature={sentinel}"
+    out = _redact_url_credentials(url)
+    assert sentinel not in out
+    assert R in out
 
 def test_stream_boundary_scrubs_every_write_route():
     import io, logging, sys as _sys, click

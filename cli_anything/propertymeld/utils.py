@@ -426,6 +426,43 @@ def update_env_file(path: str, updates: dict) -> dict:
     return {"path": target, "keys_written": sorted(updates), "mode": "0600"}
 
 
+class _ScrubbingBinaryBuffer:
+    """A scrubbing binary proxy for a text stream's .buffer.
+
+    Decodes with surrogateescape, line-buffers, scrubs complete lines and
+    re-encodes before delegating, so ``sys.stderr.buffer.write(b"...")`` and a
+    bytes credential split across two buffer writes are both caught.
+    """
+
+    def __init__(self, underlying, scrub):
+        self._u = underlying
+        self._scrub = scrub
+        self._buf = b""
+
+    def write(self, b):
+        b = bytes(b)
+        self._buf += b
+        if b"\n" in self._buf:
+            head, _, tail = self._buf.rpartition(b"\n")
+            text = (head + b"\n").decode("utf-8", "surrogateescape")
+            self._u.write(self._scrub(text).encode("utf-8", "surrogateescape"))
+            self._buf = tail
+        return len(b)
+
+    def flush(self):
+        try:
+            if self._buf:
+                text = self._buf.decode("utf-8", "surrogateescape")
+                self._u.write(self._scrub(text).encode("utf-8", "surrogateescape"))
+                self._buf = b""
+            self._u.flush()
+        except (ValueError, OSError):
+            self._buf = b""
+
+    def __getattr__(self, name):
+        return getattr(self._u, name)
+
+
 class ScrubbingTextStream:
     """A TextIO wrapper that scrubs every write before it reaches the stream.
 
@@ -461,6 +498,23 @@ class ScrubbingTextStream:
             self._underlying.write(s)
         except TypeError:
             self._underlying.write(s.encode("utf-8"))
+
+    def writelines(self, lines):
+        # writelines delegates to the underlying stream on a raw TextIOWrapper,
+        # bypassing write(); route every item through the scrub instead.
+        for line in lines:
+            self.write(line)
+
+    @property
+    def buffer(self):
+        # sys.stderr.buffer.write(...) is a second bypass on a TextIOWrapper.
+        # Expose a scrubbing BINARY proxy over the real buffer, not the raw one.
+        underlying_buffer = getattr(self._underlying, "buffer", None)
+        if underlying_buffer is None:
+            raise AttributeError("buffer")
+        if getattr(self, "_binbuf", None) is None or self._binbuf._u is not underlying_buffer:
+            self._binbuf = _ScrubbingBinaryBuffer(underlying_buffer, self._scrub)
+        return self._binbuf
 
     def flush(self):
         try:

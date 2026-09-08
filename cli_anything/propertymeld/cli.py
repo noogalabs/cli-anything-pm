@@ -23,7 +23,33 @@ from . import api_backend, http_backend, insights_backend
 from .utils import output_json, print_error, resolve_meld_id, scrub_sensitive_text, update_env_file
 
 
-@click.group()
+class _ScrubbingGroup(click.Group):
+    """A Group that installs the scrubbing stream wrapper BEFORE command
+    resolution, so an unknown-top-level-command error whose name carries a
+    credential is scrubbed on every entry path (console main() and the snapcli
+    harness dispatch). make_context runs before Group.invoke resolves the
+    subcommand; main and invoke are overridden too, all idempotent, so whichever
+    hook the harness enters through, the wrapper is up first.
+    """
+
+    def _install(self):
+        from .utils import install_scrubbing_streams
+        install_scrubbing_streams()
+
+    def make_context(self, *args, **kwargs):
+        self._install()
+        return super().make_context(*args, **kwargs)
+
+    def main(self, *args, **kwargs):
+        self._install()
+        return super().main(*args, **kwargs)
+
+    def invoke(self, ctx):
+        self._install()
+        return super().invoke(ctx)
+
+
+@click.group(cls=_ScrubbingGroup)
 @click.version_option("0.1.0", prog_name="pm")
 def cli():
     """Property Meld CLI — read work orders, properties, vendors; assign techs."""
