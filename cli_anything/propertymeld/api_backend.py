@@ -303,8 +303,8 @@ def _list_work_orders_nexus(
             if cutoff.tzinfo is None:
                 # Resolve the offset at the requested date, not today's offset
                 # (which would be wrong across daylight-saving boundaries).
-                zone = os.environ.get("TZ")
-                cutoff = cutoff.replace(tzinfo=ZoneInfo(zone)) if zone else cutoff.astimezone()
+                zone = os.environ.get("TZ") or "America/New_York"
+                cutoff = cutoff.replace(tzinfo=ZoneInfo(zone))
             cutoff = cutoff.astimezone(timezone.utc)
         except (ValueError, KeyError):
             print_error("CREATED_SINCE_INVALID: --created-since requires an ISO timestamp")

@@ -48,6 +48,23 @@ VENDORS_RESPONSE = {"count": 1, "results": [{"id": 10, "name": "Fixture Service"
 
 
 class TestListWorkOrders:
+    @pytest.mark.parametrize("cutoff,expected", [
+        ("2026-07-15", [2, 3]),
+        ("2026-07-15T00:00:00", [2, 3]),
+        ("2026-07-15T00:00:00Z", [1, 2, 3]),
+        ("2026-07-15T00:00:00+02:00", [1, 2, 3]),
+    ])
+    def test_created_since_default_local_and_explicit_offsets(self, monkeypatch, cutoff, expected):
+        monkeypatch.delenv("TZ", raising=False)
+        # Fictional recorded response: id1 was created at 22:00 EDT on
+        # the day before; id2 at local midnight; id3 one second later.
+        rows = [{"id": 1, "created": "2026-07-15T02:00:00Z"},
+                {"id": 2, "created": "2026-07-15T04:00:00Z"},
+                {"id": 3, "created": "2026-07-15T04:00:01Z"}]
+        with patch.object(api_backend, "_api_get", return_value={"results": rows}):
+            result = api_backend.list_work_orders(created_since=cutoff)
+        assert [r["id"] for r in result] == expected
+
     @pytest.mark.parametrize("date,utc_midnight", [
         ("2026-01-15", "2026-01-15T05:00:00Z"),
         ("2026-07-15", "2026-07-15T04:00:00Z"),
