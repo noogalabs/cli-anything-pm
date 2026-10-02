@@ -304,9 +304,13 @@ def _list_work_orders_nexus(
                 # Resolve the offset at the requested date, not today's offset
                 # (which would be wrong across daylight-saving boundaries).
                 zone = os.environ.get("TZ")
-                cutoff = cutoff.replace(tzinfo=ZoneInfo(zone)) if zone else cutoff.astimezone()
+                try:
+                    cutoff = cutoff.replace(tzinfo=ZoneInfo(zone)) if zone else cutoff.astimezone()
+                except (KeyError, ValueError):
+                    print_error("CREATED_SINCE_TZ_INVALID: TZ must name a usable IANA timezone")
+                    sys.exit(2)
             cutoff = cutoff.astimezone(timezone.utc)
-        except (ValueError, KeyError):
+        except ValueError:
             print_error("CREATED_SINCE_INVALID: --created-since requires an ISO timestamp")
             sys.exit(2)
     page_size = max(1, min(limit, 100))

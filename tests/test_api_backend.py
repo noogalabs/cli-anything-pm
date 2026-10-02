@@ -48,6 +48,50 @@ VENDORS_RESPONSE = {"count": 1, "results": [{"id": 10, "name": "Fixture Service"
 
 
 class TestListWorkOrders:
+    @pytest.mark.parametrize("date,utc_midnight", [
+        ("2026-01-15", "2026-01-15T05:00:00Z"),
+        ("2026-07-15", "2026-07-15T04:00:00Z"),
+    ])
+    def test_created_since_unset_tz_fixed_system_zone(self, monkeypatch, date, utc_midnight):
+        from datetime import datetime, timedelta, timezone
+        from zoneinfo import ZoneInfo
+
+        class FixedSystemDateTime(datetime):
+            def astimezone(self, tz=None):
+                if tz is None:
+                    # Test-only system seam: host can be UTC. Date-specific
+                    # NY rules are applied only on the real no-TZ branch.
+                    aware = self.replace(tzinfo=ZoneInfo("America/New_York"))
+                    return datetime.astimezone(aware, timezone(aware.utcoffset()))
+                return datetime.astimezone(self, tz)
+
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 7, 1, 12, tzinfo=timezone.utc).astimezone(tz)
+
+        monkeypatch.delenv("TZ", raising=False)
+        monkeypatch.setattr(api_backend, "datetime", FixedSystemDateTime)
+        boundary = datetime.fromisoformat(utc_midnight.replace("Z", "+00:00"))
+        rows = [{"id": 1, "created": (boundary - timedelta(seconds=1)).isoformat()},
+                {"id": 2, "created": boundary.isoformat()},
+                {"id": 3, "created": (boundary + timedelta(seconds=1)).isoformat()}]
+        with patch.object(api_backend, "_api_get", return_value={"results": rows}) as get:
+            result = api_backend.list_work_orders(created_since=date)
+        get.assert_called_once()
+        assert [r["id"] for r in result] == [2, 3], "system local cutoff must use the requested date's offset"
+
+    @pytest.mark.parametrize("zone", [":America/New_York", "/usr/share/zoneinfo/America/New_York", "Foo/Bar"])
+    def test_created_since_unusable_tz_names_configuration(self, monkeypatch, capsys, zone):
+        monkeypatch.setenv("TZ", zone)
+        with patch.object(api_backend, "_api_get") as get:
+            with pytest.raises(SystemExit) as exc:
+                api_backend.list_work_orders(created_since="2026-07-15")
+        assert exc.value.code == 2
+        get.assert_not_called()
+        error = capsys.readouterr().err
+        assert "CREATED_SINCE_TZ_INVALID" in error
+        assert "ISO timestamp" not in error
+
     @pytest.mark.parametrize("cutoff", [
         "2026-07-15", "2026-07-15T00:00:00",
         "2026-07-15T00:00:00Z", "2026-07-15T00:00:00+02:00",
