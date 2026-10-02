@@ -48,6 +48,36 @@ VENDORS_RESPONSE = {"count": 1, "results": [{"id": 10, "name": "Fixture Service"
 
 
 class TestListWorkOrders:
+    def test_created_since_filters_ignored_server_param_before_limit(self):
+        pages = [
+            {"results": [{"id": 1, "created": "2026-05-17T23:59:59Z"}],
+             "next": "https://nexus.propertymeld.test/api/v2/meld/?cursor=next"},
+            {"results": [
+                {"id": 2, "created": "2026-05-18T02:00:00+02:00"},
+                {"id": 3, "created": "2026-05-18T00:00:01Z"}], "next": None},
+        ]
+        with patch.object(api_backend, "_api_get", side_effect=pages) as get:
+            rows = api_backend.list_work_orders(created_since="2026-05-18T00:00:00Z", limit=2)
+        assert get.call_count == 2, "older rows must not exhaust the matching limit"
+        assert [r["id"] for r in rows] == [2, 3], "cutoff is inclusive and compares instants"
+
+    @pytest.mark.parametrize("created", [None, "bad", 123])
+    def test_created_since_unverifiable_row_refuses(self, created, capsys):
+        with patch.object(api_backend, "_api_get", return_value={"results": [{"id": 1, "created": created}]}):
+            with pytest.raises(SystemExit) as exc:
+                api_backend.list_work_orders(created_since="2026-05-18T00:00:00Z")
+        assert exc.value.code == 2
+        assert "CREATED_SINCE_UNVERIFIABLE" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("cutoff", ["bad", ""])
+    def test_created_since_invalid_refuses_before_fetch(self, cutoff, capsys):
+        with patch.object(api_backend, "_api_get") as get:
+            with pytest.raises(SystemExit) as exc:
+                api_backend.list_work_orders(created_since=cutoff)
+        assert exc.value.code == 2
+        get.assert_not_called()
+        assert "CREATED_SINCE_INVALID" in capsys.readouterr().err
+
     def test_returns_results_list(self):
         with patch("urllib.request.urlopen") as mock_open:
             mock_open.side_effect = [
