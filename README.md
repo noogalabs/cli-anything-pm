@@ -99,3 +99,13 @@ complete `cli_anything/` wheel payload contains exactly the declared Python
 source members with byte-for-byte parity and no extra file type. It then
 installs the wheel in a fresh virtual environment and exercises the public
 `pm insights` command tree.
+<!-- created-since policy -->
+
+`pm work-orders list --created-since DATE_OR_TIME` returns rows whose `created`
+timestamp is at or after the inclusive cutoff. Bare dates mean local midnight;
+naive date-times use the `TZ` IANA zone when set, otherwise the system local timezone.
+Explicit offsets and `Z` are honored as given. Date-specific daylight-saving
+offsets are used; nonexistent or repeated local times on DST days resolve to the earlier offset.
+Filtering is enforced locally before `--limit`, with pagination,
+and composes with `--status`. Invalid cutoffs or unparseable/missing row timestamps
+refuse rather than silently return an unfiltered list.

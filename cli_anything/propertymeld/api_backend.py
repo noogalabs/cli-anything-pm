@@ -10,11 +10,13 @@ Endpoint notes:
   - X-Multitenant-Id header required on all requests.
 """
 import json
+import os
 import time
 import ssl
 import sys
 import urllib.request
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Any, Optional
 
 from .config import require_propertymeld_config
@@ -294,6 +296,23 @@ def _list_work_orders_nexus(
     limit: int = 25,
 ) -> list:
     """List work orders through Nexus only."""
+    cutoff = None
+    if created_since is not None:
+        try:
+            cutoff = datetime.fromisoformat(created_since.replace("Z", "+00:00"))
+            if cutoff.tzinfo is None:
+                # Resolve the offset at the requested date, not today's offset
+                # (which would be wrong across daylight-saving boundaries).
+                zone = os.environ.get("TZ")
+                try:
+                    cutoff = cutoff.replace(tzinfo=ZoneInfo(zone)) if zone else cutoff.astimezone()
+                except (KeyError, ValueError):
+                    print_error("CREATED_SINCE_TZ_INVALID: TZ must name a usable IANA timezone")
+                    sys.exit(2)
+            cutoff = cutoff.astimezone(timezone.utc)
+        except ValueError:
+            print_error("CREATED_SINCE_INVALID: --created-since requires an ISO timestamp")
+            sys.exit(2)
     page_size = max(1, min(limit, 100))
     params: list[tuple[str, str]] = [("limit", str(page_size))]
     if status:
@@ -331,7 +350,18 @@ def _list_work_orders_nexus(
         page_items = data.get("results", data) if isinstance(data, dict) else data
         if not isinstance(page_items, list):
             return []
-        results.extend(page_items)
+        # Nexus may ignore created_since. Enforce it before counting towards
+        # the limit, and continue pagination even when a page has no matches.
+        for item in page_items:
+            if cutoff is not None:
+                try:
+                    created = _parse_pm_datetime(item.get("created") if isinstance(item, dict) else None)
+                except ValueError:
+                    print_error("CREATED_SINCE_UNVERIFIABLE: list row has no valid created timestamp")
+                    sys.exit(2)
+                if created < cutoff:
+                    continue
+            results.append(item)
         if not isinstance(data, dict):
             break
         next_path = _next_api_v2_path(data.get("next"))
