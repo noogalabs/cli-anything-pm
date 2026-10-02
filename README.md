@@ -103,7 +103,7 @@ installs the wheel in a fresh virtual environment and exercises the public
 
 `pm work-orders list --created-since DATE_OR_TIME` returns rows whose `created`
 timestamp is at or after the inclusive cutoff. Bare dates mean local midnight;
-naive date-times use the `TZ` IANA zone, defaulting to `America/New_York`.
+naive date-times use the `TZ` IANA zone when set, otherwise the system local timezone.
 Explicit offsets and `Z` are honored as given. Date-specific daylight-saving
 offsets are used. Filtering is enforced locally before `--limit`, with pagination,
 and composes with `--status`. Invalid cutoffs or unparseable/missing row timestamps

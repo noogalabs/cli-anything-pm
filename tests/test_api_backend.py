@@ -48,14 +48,14 @@ VENDORS_RESPONSE = {"count": 1, "results": [{"id": 10, "name": "Fixture Service"
 
 
 class TestListWorkOrders:
-    @pytest.mark.parametrize("cutoff,expected", [
-        ("2026-07-15", [2, 3]),
-        ("2026-07-15T00:00:00", [2, 3]),
-        ("2026-07-15T00:00:00Z", [1, 2, 3]),
-        ("2026-07-15T00:00:00+02:00", [1, 2, 3]),
+    @pytest.mark.parametrize("cutoff", [
+        "2026-07-15", "2026-07-15T00:00:00",
+        "2026-07-15T00:00:00Z", "2026-07-15T00:00:00+02:00",
     ])
-    def test_created_since_default_local_and_explicit_offsets(self, monkeypatch, cutoff, expected):
+    def test_created_since_default_local_and_explicit_offsets(self, monkeypatch, cutoff):
         monkeypatch.delenv("TZ", raising=False)
+        boundary = api_backend.datetime.fromisoformat(cutoff.replace("Z", "+00:00"))
+        boundary = boundary.astimezone(api_backend.timezone.utc)
         # Fictional recorded response: id1 was created at 22:00 EDT on
         # the day before; id2 at local midnight; id3 one second later.
         rows = [{"id": 1, "created": "2026-07-15T02:00:00Z"},
@@ -63,7 +63,8 @@ class TestListWorkOrders:
                 {"id": 3, "created": "2026-07-15T04:00:01Z"}]
         with patch.object(api_backend, "_api_get", return_value={"results": rows}):
             result = api_backend.list_work_orders(created_since=cutoff)
-        assert [r["id"] for r in result] == expected
+        expected = [r["id"] for r in rows if api_backend._parse_pm_datetime(r["created"]) >= boundary]
+        assert [r["id"] for r in result] == expected, "unset TZ must use the system's date-specific local zone"
 
     @pytest.mark.parametrize("date,utc_midnight", [
         ("2026-01-15", "2026-01-15T05:00:00Z"),

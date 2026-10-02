@@ -207,7 +207,7 @@ def _require_force_for_delete(force: bool, *, label: str, object_id) -> None:
               help="Filter melds stuck in current status longer than N hours")
 @click.option("--created-since", default=None,
               help="Inclusive created cutoff (ISO date/time). Bare dates mean local midnight; "
-                   "naive times use TZ (IANA zone), default America/New_York. "
+                   "naive times use TZ (IANA zone) when set, otherwise the system local timezone. "
                    "Explicit offsets are honored. Filtered before --limit.")
 @click.option("--status-not", default=None, help="Exclude melds in this status")
 @click.option("--no-tenant-linked", is_flag=True, default=False,

@@ -39,7 +39,7 @@ class TestWorkOrdersCLI:
         text = " ".join(result.output.split())
         assert "local midnight" in text
         assert "TZ (IANA zone)" in text
-        assert "default America/New_York" in text
+        assert "system local timezone" in text
         assert "Filtered before --limit" in text
 
     def test_list_outputs_json(self, runner):
