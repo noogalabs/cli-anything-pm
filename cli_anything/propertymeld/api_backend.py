@@ -10,11 +10,13 @@ Endpoint notes:
   - X-Multitenant-Id header required on all requests.
 """
 import json
+import os
 import time
 import ssl
 import sys
 import urllib.request
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Any, Optional
 
 from .config import require_propertymeld_config
@@ -297,8 +299,14 @@ def _list_work_orders_nexus(
     cutoff = None
     if created_since is not None:
         try:
-            cutoff = _parse_pm_datetime(created_since)
-        except ValueError:
+            cutoff = datetime.fromisoformat(created_since.replace("Z", "+00:00"))
+            if cutoff.tzinfo is None:
+                # Resolve the offset at the requested date, not today's offset
+                # (which would be wrong across daylight-saving boundaries).
+                zone = os.environ.get("TZ")
+                cutoff = cutoff.replace(tzinfo=ZoneInfo(zone)) if zone else cutoff.astimezone()
+            cutoff = cutoff.astimezone(timezone.utc)
+        except (ValueError, KeyError):
             print_error("CREATED_SINCE_INVALID: --created-since requires an ISO timestamp")
             sys.exit(2)
     page_size = max(1, min(limit, 100))

@@ -33,6 +33,15 @@ MOCK_VENDORS = [{"id": 10, "name": "Fixture Service"}]
 
 
 class TestWorkOrdersCLI:
+    def test_created_since_help_names_timezone_and_inclusive_limit(self, runner):
+        result = runner.invoke(cli, ["work-orders", "list", "--help"])
+        assert result.exit_code == 0
+        text = " ".join(result.output.split())
+        assert "local midnight" in text
+        assert "TZ (IANA zone)" in text
+        assert "system local timezone" in text
+        assert "Filtered before --limit" in text
+
     def test_list_outputs_json(self, runner):
         with patch("cli_anything.propertymeld.api_backend.list_work_orders",
                    return_value=MOCK_WO_LIST):

@@ -48,6 +48,24 @@ VENDORS_RESPONSE = {"count": 1, "results": [{"id": 10, "name": "Fixture Service"
 
 
 class TestListWorkOrders:
+    @pytest.mark.parametrize("date,utc_midnight", [
+        ("2026-01-15", "2026-01-15T05:00:00Z"),
+        ("2026-07-15", "2026-07-15T04:00:00Z"),
+    ])
+    def test_created_since_date_is_local_midnight_with_status_and_limit(self, monkeypatch, date, utc_midnight):
+        monkeypatch.setenv("TZ", "America/New_York")
+        cutoff = api_backend._parse_pm_datetime(utc_midnight)
+        from datetime import timedelta
+        rows = [
+            {"id": 1, "created": (cutoff - timedelta(seconds=1)).isoformat()},
+            {"id": 2, "created": cutoff.isoformat()},
+            {"id": 3, "created": (cutoff + timedelta(seconds=1)).isoformat()},
+        ]
+        with patch.object(api_backend, "_api_get", return_value={"results": rows}) as get:
+            result = api_backend.list_work_orders(status="completed", created_since=date, limit=1)
+        assert ("status", "COMPLETED") in get.call_args.args[1]
+        assert [r["id"] for r in result] == [2], "local midnight must respect date-specific DST and limit"
+
     def test_created_since_filters_ignored_server_param_before_limit(self):
         pages = [
             {"results": [{"id": 1, "created": "2026-05-17T23:59:59Z"}],
