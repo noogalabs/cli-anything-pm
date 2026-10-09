@@ -5,15 +5,15 @@ A CLI-Anything harness for Property Meld — the first PM work order CLI for AI 
 ## Installation
 
 ```bash
-git clone https://github.com/your-org/cli-anything-propertymeld.git
-cd cli-anything-propertymeld
+git clone https://github.com/noogalabs/cli-anything-pm.git
+cd cli-anything-pm
 pip install -e .
 playwright install chromium  # for browser backend commands
 ```
 
 ### Post-merge install refresh (operator side)
 
-**Person003able pipx installs (`pipx install --editable`) do not auto-update on source pulls.**
+**Editable pipx installs (`pipx install --editable`) do not auto-update on source pulls.**
 After pulling new commits, run:
 
 ```bash

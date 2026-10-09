@@ -316,7 +316,7 @@ def list_work_entries_cmd(meld_id, as_json):
 @click.option("--meld-id", required=True, help="Meld ID")
 @click.option("--agent-id", "agent", required=True, type=int,
               help="Persona ID of the agent who performed the work "
-                   "(e.g. 9036=Person038, 9037=Tech A)")
+                   "(e.g. 9036=Operator, 9037=Tech A)")
 @click.option("--description", required=True, callback=_require_nonempty,
               help="Short summary, shown in the meld feed.")
 @click.option("--long-description", "long_description", default="",
@@ -943,7 +943,7 @@ def get_agent_cmd(agent_id, as_json):
 
     Phone-data caveat (Blue gap #N+3): the ``contact`` field on the agent
     detail endpoint is EITHER ``None`` (no contact record exists in PM —
-    observed on Tech A 9037) OR an integer FK to a Person001 record that is
+    observed on Tech A 9037) OR an integer FK to an account record that is
     NOT exposed via the cookie-path ``/api/contacts/{id}/`` endpoint (404
     on probe). This means cell_phone / business_phone are NOT recoverable
     via this command alone for in-house techs whose contact lives in a
@@ -1541,7 +1541,7 @@ def create_project_cmd(name, project_type, due_date, start_date, coordinators,
 @click.option("--json", "as_json", is_flag=True, default=True)
 def edit_project_cmd(project_id, name, project_type, description, due_date, start_date,
                      coordinators, unit_id, unit_label, meld_location, as_json):
-    """Person003 a top-level project.
+    """The operator edits a top-level project.
 
     PM requires a full-payload echo on PATCH; the backend handles that by
     fetching current state and overlaying only the fields you pass here.

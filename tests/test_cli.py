@@ -215,8 +215,8 @@ class TestAgentsCLI:
     def test_agents_search_filters_by_name(self, runner):
         mock_agents = [
             {"id": 1, "first_name": "Tech A", "last_name": "Example"},
-            {"id": 2, "first_name": "Tech B", "last_name": "Person040"},
-            {"id": 3, "first_name": "Tech C", "last_name": "Person034"},
+            {"id": 2, "first_name": "Tech B", "last_name": "Technician"},
+            {"id": 3, "first_name": "Tech C", "last_name": "Technician"},
         ]
         with patch("cli_anything.propertymeld.http_backend.list_agents",
                    return_value=mock_agents):
@@ -667,7 +667,7 @@ class TestTenantsCLI:
             result = runner.invoke(cli, [
                 "tenants", "invite",
                 "--unit-id", "9000025",
-                "--first-name", "Person038",
+                "--first-name", "Operator",
                 "--last-name", "Example",
                 "--email", "alex@example.com",
                 "--cell", "2025550128",
@@ -680,7 +680,7 @@ class TestTenantsCLI:
         assert data["tenant_id"] == 9000026
         mock_fn.assert_called_once_with(
             unit_id=9000025,
-            first_name="Person038",
+            first_name="Operator",
             last_name="Example",
             email="alex@example.com",
             cell_phone="2025550128",
@@ -696,7 +696,7 @@ class TestTenantsCLI:
             result = runner.invoke(cli, [
                 "tenants", "invite",
                 "--unit-id", "9000025",
-                "--first-name", "Person038",
+                "--first-name", "Operator",
                 "--last-name", "Example",
                 "--email", "alex@example.com",
                 "--cell", "2025550128",
@@ -926,7 +926,7 @@ class TestWorkOrdersScheduleVendorCLI:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-class TestProjectsCreatePerson003CLI:
+class TestProjectsCreateOperatorCLI:
     def test_create_passes_args_shape(self, runner):
         with patch("cli_anything.propertymeld.http_backend.create_project",
                    return_value={"ok": True, "project_id": 900008, "result": {"id": 900008}}) as mock_fn:
@@ -1348,7 +1348,7 @@ class TestP2GapCLICommands:
         mock_fn.assert_not_called()
 
 
-class TestUnitsPerson003NotesCLI:
+class TestUnitsOperatorNotesCLI:
     """pm units edit-notes <unit_id> --notes <text> — closes P3 #8 unit-level."""
 
     def test_passes_unit_id_and_notes_to_backend(self, runner):
@@ -1405,7 +1405,7 @@ class TestUnitsGetCLI:
         mock_fn.assert_not_called()
 
 
-class TestTenantsPerson003NotesCLI:
+class TestTenantsOperatorNotesCLI:
     """pm tenants edit-notes <tenant_id> --notes <text> — resident-level recallable notes."""
 
     def test_passes_tenant_id_and_notes_to_backend(self, runner):
@@ -1448,7 +1448,7 @@ class TestTenantsPerson003NotesCLI:
         mock_fn.assert_called_once_with(9000026, "")
 
 
-class TestTenantsPerson003Person001CLI:
+class TestTenantsOperatorAccountCLI:
     """pm tenants edit-contact <tenant_id> — nested contact edit via full tenant PUT."""
 
     def test_passes_contact_fields_to_backend(self, runner):

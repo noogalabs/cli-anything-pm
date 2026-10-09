@@ -24,7 +24,7 @@ Default (headless/auto) mode FAILS FAST on an MFA challenge: it exits 2 with
 ``{"error": "mfa_required"}`` so the agent routes to the manual relay. It does
 not block, because the auto caller kills the subprocess at 180s while the relay
 waits up to 360s. The opt-in ``--mfa-relay`` mode runs the file-poll relay
-(agent drops Person038's relayed SMS code into PM_MFA_CODE_FILE) for the manual,
+(agent drops the operator's relayed SMS code into PM_MFA_CODE_FILE) for the manual,
 human-in-the-loop path.
 
 Usage:

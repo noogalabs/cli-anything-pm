@@ -1037,7 +1037,7 @@ _FULL_AGENT_FIXTURE = {
     "id": 9036,
     "type": "ManagementAgent",
     "composite_id": "8-9018",
-    "first_name": "Person038",
+    "first_name": "Operator",
     "last_name": "Example",
     "title": "COORDINATOR",
     "department": "MAINTENANCE",
@@ -1086,7 +1086,7 @@ _TENANT_INVITE_UNIT_FIXTURE = {
 }
 
 
-class TestTenantPerson004:
+class TestTenantContact:
     """POST /api/tenants/ create-with-invite from W2/W3 #19 HAR capture."""
 
     def _patch_io(self):
@@ -1115,7 +1115,7 @@ class TestTenantPerson004:
 
             result = http_backend.invite_tenant(
                 unit_id="9000025",
-                first_name="Person038",
+                first_name="Operator",
                 last_name="Example",
                 email="alex@example.com",
                 cell_phone="2025550128",
@@ -1138,7 +1138,7 @@ class TestTenantPerson004:
                     "home_phone": "2025550130",
                 },
                 "units": [_TENANT_INVITE_UNIT_FIXTURE],
-                "first_name": "Person038",
+                "first_name": "Operator",
                 "last_name": "Example",
                 "notes": "notes section",
                 "should_invite": True,
@@ -1154,7 +1154,7 @@ class TestTenantPerson004:
             mp.return_value = {"id": 9000026, "contact": {}, "invited": False}
 
             result = http_backend.invite_tenant(
-                9000025, "Person038", "Example", "alex@example.com", "2025550128",
+                9000025, "Operator", "Example", "alex@example.com", "2025550128",
                 should_invite=False,
             )
 
@@ -1183,7 +1183,7 @@ class TestTenantPerson004:
             }
 
             result = http_backend.invite_tenant(
-                9000025, "Person038", "Example", "alex@example.com", "2025550132"
+                9000025, "Operator", "Example", "alex@example.com", "2025550132"
             )
 
             assert result["ok"] is False
@@ -1195,7 +1195,7 @@ class TestTenantPerson004:
         with patch("cli_anything.propertymeld.http_backend.get_unit", return_value="bad"):
             with pytest.raises(RuntimeError, match="non-dict"):
                 http_backend.invite_tenant(
-                    9000025, "Person038", "Example", "alex@example.com", "2025550128"
+                    9000025, "Operator", "Example", "alex@example.com", "2025550128"
                 )
 
 
@@ -1337,7 +1337,7 @@ class TestCreateMeldInProject:
                 work_type="TURN",
                 due_date="2026-05-16T00:00:00.000Z",
                 unit=_FULL_UNIT_FIXTURE,
-                maintenance=[{"id": 9036, "first_name": "Person038"}],
+                maintenance=[{"id": 9036, "first_name": "Operator"}],
             )
 
     def test_partial_tenant_raises_with_missing_keys(self):
@@ -1777,7 +1777,7 @@ class TestUpdateProjectLiveShape:
         "description": "old description",
         "due_date": "2026-05-30T04:00:00Z",
         "start_date": "2026-05-14T03:00:00Z",
-        "coordinators": [{"id": 9036, "first_name": "Person038"}],
+        "coordinators": [{"id": 9036, "first_name": "Operator"}],
         "meld_location": "Unit",
         "prop": None,
         "unit": {"id": 9000025, "label": "123 Main St"},
@@ -2196,7 +2196,7 @@ _TENANT_CONTACT_FIXTURE = {
     "user": {
         "id": 9000001,
         "email": "alex@example.com",
-        "first_name": "Person038",
+        "first_name": "Operator",
         "last_name": "Example",
         "last_active_at": "2026-05-31T03:00:11.803163Z",
         "last_active_channel": "DIGITAL",
@@ -2230,7 +2230,7 @@ _TENANT_CONTACT_FIXTURE = {
     "updated": "2026-05-31T02:59:10.803742Z",
     "update_by": {"org_type": "m", "persona_id": 9036},
     "is_active": True,
-    "first_name": "Person038",
+    "first_name": "Operator",
     "middle_name": "",
     "last_name": "Example",
     "notes": "notes section",
@@ -2356,7 +2356,7 @@ class TestUpdateTenantNotes:
             assert mp.call_count == 0
 
 
-class TestUpdateTenantPerson001:
+class TestUpdateTenantAccount:
     """PUT /api/tenants/{id}/ with full body, mutating nested contact fields.
 
     Covers NEW-2 / tenant-PUT-contact-edit-200 from the 2026-05-31 HAR capture.
@@ -2399,7 +2399,7 @@ class TestUpdateTenantPerson001:
             assert put_path == "tenants/9000026/"
             assert mpatch.call_count == 0
             assert put_payload["id"] == 9000026
-            assert put_payload["first_name"] == "Person038"
+            assert put_payload["first_name"] == "Operator"
             assert put_payload["notes"] == "notes section"
             assert put_payload["user"]["email"] == "alex@example.com"
             assert put_payload["contact"]["cell_phone"] == "(202) 555-0129"

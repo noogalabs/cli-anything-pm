@@ -49,7 +49,7 @@ class TestExitNonZeroOnBackendFailure:
             result = runner.invoke(cli, [
                 "tenants", "invite",
                 "--unit-id", "9000025",
-                "--first-name", "Person038",
+                "--first-name", "Operator",
                 "--last-name", "Example",
                 "--email", "alex@example.com",
                 "--cell", "2025550128",

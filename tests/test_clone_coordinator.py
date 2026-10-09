@@ -24,7 +24,7 @@ SOURCE_MELD = {
     "work_location": "kitchen",
     "work_type": "REPAIR",
     "priority": "MEDIUM",
-    "coordinator": {"id": 9036, "user": {"id": 1, "first_name": "Person038"}},
+    "coordinator": {"id": 9036, "user": {"id": 1, "first_name": "Operator"}},
     "unit": {"id": 222},
 }
 

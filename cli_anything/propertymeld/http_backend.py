@@ -1363,7 +1363,7 @@ def complete_meld(
             raise ValueError("completion_date required when side='vendor'")
     meld_id = _validate_meld_id(meld_id)
     if side != "vendor":
-        # Person038's invariant is absolute: our tooling must never write a
+        # The operator's invariant is absolute: our tooling must never write a
         # could-not-complete state. A preflight GET cannot hold custody through
         # the third-party PATCH, so it cannot make that invariant atomic. When
         # custody cannot be held through a mutation, do not mutate.
@@ -1711,7 +1711,7 @@ def update_work_entry(
     hours: Optional[float] = None,
     agent: Optional[int] = None,
 ) -> dict:
-    """Person003 an existing work entry (top-level path, not nested).
+    """The operator edits an existing work entry (top-level path, not nested).
 
     PATCH /api/melds/work-entries/{entry_id}/ — verified capture
     2026-05-16 25132Z. PM exposes the EDIT/DELETE paths at the top-level
@@ -2816,7 +2816,7 @@ def update_project(
     prop: Optional[dict] = None,
     unit: Optional[dict] = None,
 ) -> dict:
-    """Person003 a top-level project.
+    """The operator edits a top-level project.
 
     PATCH /api/projects/{project_id}/ — verified shape from pm-capture
     2026-05-13 (2nd session) AND live re-smoke 2026-05-14.

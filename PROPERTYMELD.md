@@ -33,7 +33,7 @@ Property Meld uses OAuth2 client credentials (Nexus API).
 
 Comments, tech assignment, vendor assignment, vendor invites, tenant invites, and tenant contact edits require a browser session. The session file is selected by `credentials_path` in the private `PROPERTYMELD_CONFIG` JSON (with `username`, `password`, `cookies` fields). Cookies are refreshed automatically on session expiry.
 
-## Vendor Person004 (CLI)
+## Vendor Contact (CLI)
 
 Create the vendor and send the portal invite in one manager-side call:
 
@@ -56,7 +56,7 @@ Captured request shape:
 
 PM returns HTTP 400 when the invite email already exists; the CLI surfaces that as `ok: false` with `already_exists` / `already_invited`.
 
-## Tenant Person004 (CLI)
+## Tenant Contact (CLI)
 
 Create a tenant on a unit and send the portal invite:
 
@@ -73,9 +73,9 @@ Use `--no-invite` to create the tenant record without sending the invite email.
 The CLI hydrates the full unit object before posting to PM because the captured
 manager UI request sends `units: [<full unit>]`, not a stripped id-only unit.
 
-## Tenant Person001 Person003 (CLI)
+## Tenant Account (operator CLI)
 
-Person003 tenant contact fields through the manager-side full-echo tenant PUT:
+The operator edits tenant contact fields through the manager-side full-echo tenant PUT:
 
 ```bash
 pm tenants edit-contact 9000026 \

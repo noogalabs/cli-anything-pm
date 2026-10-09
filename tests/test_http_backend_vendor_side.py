@@ -208,7 +208,7 @@ class TestVendorSubmitInvoice:
         assert body == {"submit_to_manager": True}
 
 
-class TestVendorPerson004:
+class TestVendorContact:
     def test_posts_captured_payload_to_manager_invite_endpoint(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
         cap = _capture_urlopen(monkeypatch, response_body=b"")
@@ -268,7 +268,7 @@ class TestVendorPerson004:
         assert result["detail"]["status_code"] == 400
 
 
-class TestTenantPerson004:
+class TestTenantContact:
     def test_posts_captured_payload_to_manager_tenants_endpoint(self, monkeypatch):
         unit = {"id": 9000025, "name": "Unit A", "property": {"id": 1000}}
         monkeypatch.setattr(hb, "get_unit", lambda unit_id: unit)
@@ -280,7 +280,7 @@ class TestTenantPerson004:
 
         result = hb.invite_tenant(
             unit_id=9000025,
-            first_name="Person038",
+            first_name="Operator",
             last_name="Example",
             email="alex@example.com",
             cell_phone="2025550128",
@@ -299,7 +299,7 @@ class TestTenantPerson004:
                 "home_phone": "",
             },
             "units": [unit],
-            "first_name": "Person038",
+            "first_name": "Operator",
             "last_name": "Example",
             "notes": "notes section",
             "should_invite": True,
@@ -319,7 +319,7 @@ class TestTenantPerson004:
 
         result = hb.invite_tenant(
             9000025,
-            "Person038",
+            "Operator",
             "Example",
             "alex@example.com",
             "2025550128",
@@ -350,7 +350,7 @@ class TestTenantPerson004:
         monkeypatch.setattr(hb.urllib.request, "urlopen", boom)
         result = hb.invite_tenant(
             9000025,
-            "Person038",
+            "Operator",
             "Example",
             "alex@example.com",
             "bad-phone",
@@ -368,7 +368,7 @@ def _tenant_contact_fixture():
         "user": {
             "id": 9000001,
             "email": "alex@example.com",
-            "first_name": "Person038",
+            "first_name": "Operator",
             "last_name": "Example",
         },
         "contact": {
@@ -383,7 +383,7 @@ def _tenant_contact_fixture():
         },
         "invited": True,
         "last_invite": {"id": 90000019, "email": "alex@example.com"},
-        "first_name": "Person038",
+        "first_name": "Operator",
         "middle_name": "",
         "last_name": "Example",
         "notes": "notes section",
@@ -396,7 +396,7 @@ def _tenant_contact_fixture():
     }
 
 
-class TestTenantPerson001Person003:
+class TestTenantAccountOperator:
     def test_get_then_puts_full_tenant_object_with_only_contact_updates(self, monkeypatch):
         _patch_creds_csrf(monkeypatch)
         original = _tenant_contact_fixture()
