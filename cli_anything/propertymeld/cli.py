@@ -23,6 +23,15 @@ from . import api_backend, http_backend, insights_backend
 from .utils import output_json, print_error, resolve_meld_id, scrub_sensitive_text, update_env_file
 
 
+def _read_call(function, *args, **kwargs):
+    from .pagination import PaginationError
+    from .utils import emit_error
+    try:
+        return function(*args, **kwargs)
+    except PaginationError as error:
+        emit_error(dict(ok=False, error="Read completeness could not be verified", code=error.code), exit_code=1)
+
+
 class _ScrubbingGroup(click.Group):
     """A Group that installs the scrubbing stream wrapper BEFORE command
     resolution, so an unknown-top-level-command error whose name carries a
@@ -212,6 +221,7 @@ def _require_force_for_delete(force: bool, *, label: str, object_id) -> None:
 @click.option("--include-tech", is_flag=True, default=False,
               help="Include in-house technician fields; vendor data is separate")
 @click.option("--limit", default=25, show_default=True, help="Maximum results")
+@click.option("--complete", "complete_read", is_flag=True, help="Exhaust all pages; ignores --limit and certifies the meld list only")
 @click.option("--json", "as_json", is_flag=True, default=True, help="Output as JSON (default)")
 def list_work_orders(
     status,
@@ -225,12 +235,13 @@ def list_work_orders(
     include_tech,
     limit,
     as_json,
+    complete_read,
 ):
     """List work orders."""
     if status and status_raw:
         raise click.UsageError("--status and --status-raw cannot be combined")
 
-    results = api_backend.list_work_orders(
+    options = dict(
         status=status,
         status_raw=status_raw,
         assigned_to_tech=assigned_to_tech,
@@ -242,6 +253,9 @@ def list_work_orders(
         include_tech=include_tech,
         limit=limit,
     )
+    if complete_read:
+        options["complete"] = True
+    results = _read_call(api_backend.list_work_orders, **options)
     output_json(results)
 
 
@@ -250,31 +264,45 @@ def list_work_orders(
 @click.option("--include-tech", is_flag=True, default=False,
               help="Include in-house technician fields; vendor data is separate")
 @click.option("--json", "as_json", is_flag=True, default=True)
-def get_work_order(meld_id, include_tech, as_json):
+@click.option("--complete", "complete_read", is_flag=True, help="Read meld, notes, comments, files and work entries with individual completeness metadata")
+def get_work_order(meld_id, include_tech, as_json, complete_read):
     """Get a single work order by ID."""
     meld_id = _normalize_meld_id(meld_id)
-    result = api_backend.get_work_order(meld_id, include_tech=include_tech)
+    function = api_backend.get_work_order_complete if complete_read else api_backend.get_work_order
+    result = _read_call(function, meld_id, include_tech=include_tech)
     output_json(result)
 
 
 @work_orders.command("comments")
 @click.argument("meld_id")
 @click.option("--json", "as_json", is_flag=True, default=True)
-def get_comments(meld_id, as_json):
+@click.option("--complete", "complete_read", is_flag=True, help="Require an exhaustive comments envelope")
+def get_comments(meld_id, as_json, complete_read):
     """Get comments/notes for a work order (plain HTTP, no Playwright)."""
     meld_id = _normalize_meld_id(meld_id)
-    results = http_backend.get_comments(meld_id)
+    results = _read_call(http_backend.get_comments, meld_id, **({"complete": True} if complete_read else {}))
     output_json(results)
 
 
 @work_orders.command("files")
 @click.argument("meld_id")
 @click.option("--json", "as_json", is_flag=True, default=True)
-def get_files(meld_id, as_json):
+@click.option("--complete", "complete_read", is_flag=True, help="Require every uploader-role page and preserve individual source counts")
+def get_files(meld_id, as_json, complete_read):
     """List files attached to a work order (manager + tenant + vendor uploads)."""
     meld_id = _normalize_meld_id(meld_id)
-    results = http_backend.list_files(meld_id)
+    results = _read_call(http_backend.list_files, meld_id, **({"complete": True} if complete_read else {}))
     output_json(results)
+
+
+@work_orders.command("notes")
+@click.argument("meld_id")
+@click.option("--complete", "complete_read", is_flag=True, help="Require exhaustive comments/work entries and known meld note fields")
+@click.option("--json", "as_json", is_flag=True, default=True)
+def get_notes(meld_id, complete_read, as_json):
+    """Read existing maintenance/completion notes, comments and work-entry text."""
+    meld_id = _normalize_meld_id(meld_id)
+    output_json(_read_call(http_backend.get_notes, meld_id, complete=complete_read))
 
 
 class _WorkEntriesGroup(click.Group):
@@ -305,10 +333,11 @@ def work_entries():
 @work_entries.command("list")
 @click.argument("meld_id")
 @click.option("--json", "as_json", is_flag=True, default=True)
-def list_work_entries_cmd(meld_id, as_json):
+@click.option("--complete", "complete_read", is_flag=True, help="Require an exhaustive work-entry envelope")
+def list_work_entries_cmd(meld_id, as_json, complete_read):
     """List per-visit work-entries (checkin/checkout/hours/agent/notes) for a meld."""
     meld_id = _normalize_meld_id(meld_id)
-    results = http_backend.list_work_entries(meld_id)
+    results = _read_call(http_backend.list_work_entries, meld_id, **({"complete": True} if complete_read else {}))
     output_json(results)
 
 

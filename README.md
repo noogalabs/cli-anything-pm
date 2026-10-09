@@ -74,6 +74,59 @@ the source name and reports `resolved`, `unresolved`, `ambiguous`, or
 `not_applicable`; unresolved and ambiguous rows are never discarded. Session
 expiry fails closed instead of invoking the write-capable recapture path.
 
+### Exhaustive work-order reads
+
+`--complete` is an opt-in read protocol. Existing list/get output shapes stay
+unchanged without it. Comments, work entries and each uploader-role file source
+now follow their pagination chains even for legacy list output.
+
+```bash
+pm work-orders list --complete --limit 1
+pm work-orders get 900001 --complete
+pm work-orders comments 900001 --complete
+pm work-orders files 900001 --complete
+pm work-orders work-entries list 900001 --complete
+pm work-orders notes 900001 --complete
+```
+
+The first command explicitly **ignores `--limit`** and exhausts the list. Its
+scope is the meld roster, not every child resource on every meld. A per-row
+work-entry marker still directs callers to the dedicated read. Cookie-path
+client filters run after source exhaustion; `source_count` and `source_returned`
+describe the pre-filter source, while `count` describes the filtered result.
+Existing unsupported filter combinations still refuse. This change adds no
+`updated-since` option and makes no claim that such a server filter works.
+
+Collection envelopes use `schema_version: 1`, `results`, `count`, `next`,
+`complete`, `pages`, `returned`, `basis`, and `resource`. Resource identity binds
+the backend, endpoint, meld ID where applicable, and query filters. An absent
+server count remains `null`; a terminal declared chain can still be certified.
+A plain array or a payload lacking both a count and an explicit terminal `next`
+does not prove completion and is refused in `--complete` mode. Provenance is
+reported rather than assuming an undocumented array pagination convention.
+
+Malformed links, changed filter scope, cross-origin/other-endpoint links,
+cycles, repeated pages/IDs, a 50-page safety cap, inconsistent counts and a
+terminal row count mismatch fail with a structured nonzero error. Next links
+are checked before another authenticated GET. Only `cursor`, `offset`, `page`
+and `limit` may change between pages; other filters, including repeated status
+values and the comments meld ID, remain bound. No partial result is certified.
+
+`get --complete` returns `result` (the meld, with `work_entries`), `comments`,
+`files`, `notes`, and individual `resources` metadata for meld/notes/comments/
+files/work_entries. All requested resources must succeed. Files preserve role
+identity and per-role counts; identical numeric IDs in different uploader-role
+tables remain separate files. `notes` reads existing `maintenance_notes` and
+`completion_notes` fields plus comments and work-entry text, not a new notes
+endpoint. Reuse these fields from `get --complete` instead of fetching notes
+again. Missing note fields or unreadable child pages refuse completeness.
+
+Completion means the reported endpoint chain was exhausted consistently. It
+does not claim a transactionally frozen snapshot while remote records change.
+All regression fixtures are synthetic; no live response bodies are test data.
+Opt-in complete reads fail closed on session expiry without invoking session
+recapture, a browser or an authentication helper; legacy auth behavior stays.
+
 ## Architecture
 
 Dual backend:

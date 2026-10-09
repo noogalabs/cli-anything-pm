@@ -166,6 +166,27 @@ def with_recapture_retry(fn: Callable[..., Any]) -> Callable[..., Any]:
     return wrapper
 
 
+def _complete_read(function, *args, **kwargs):
+    """Complete reads never launch the write-capable session recapture helper."""
+    from .pagination import PaginationError
+    try:
+        return function(*args, **kwargs)
+    except SessionExpired:
+        raise PaginationError("session_expired") from None
+
+
+def with_complete_read_guard(function):
+    legacy = with_recapture_retry(function)
+
+    @functools.wraps(function)
+    def wrapper(*args, **kwargs):
+        if kwargs.get("complete", False):
+            return _complete_read(function, *args, **kwargs)
+        return legacy(*args, **kwargs)
+
+    return wrapper
+
+
 def _load_creds() -> dict:
     if not os.path.exists(_creds_path()):
         emit_error({"error": f"Credentials file not found: {_creds_path()}"})
@@ -930,14 +951,30 @@ def _http_get_optional_results(path: str, cookie_hdr: str, note_label: str) -> t
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
-@with_recapture_retry
-def get_comments(meld_id: str) -> list:
+@with_complete_read_guard
+def get_comments(meld_id: str, *, complete: bool = False):
     """Fetch comments/notes for a meld via cookie-based HTTP (no Playwright)."""
     meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
-    data = _http_get(f"comments/?meld={meld_id}&limit=100", cookie_hdr)
-    return data.get("results", data) if isinstance(data, dict) else data
+    envelope = _read_collection(f"comments/?meld={meld_id}&limit=100", cookie_hdr, complete)
+    return envelope if complete else envelope["results"]
+
+
+def _read_collection(path, cookie_hdr, complete):
+    from .pagination import collect
+    envelope = collect(path, lambda next_path: _http_get(next_path, cookie_hdr),
+                       base=_build_url(""), require_complete=complete)
+    parsed = urllib.parse.urlsplit(path)
+    filters = [(key, value) for key, value in urllib.parse.parse_qsl(parsed.query) if key not in ("cursor", "offset", "page", "limit")]
+    identity = dict(backend="cookie", endpoint=parsed.path, filters=filters)
+    parts = parsed.path.strip("/").split("/")
+    if len(parts) >= 2 and parts[0] == "melds" and parts[1].isdigit():
+        identity["meld_id"] = int(parts[1])
+    elif parts == ["comments"]:
+        identity["meld_id"] = int(dict(filters)["meld"])
+    envelope["resource"] = identity
+    return envelope
 
 
 @with_recapture_retry
@@ -2338,8 +2375,8 @@ def edit_tenant_contact(
 update_tenant_contact = edit_tenant_contact
 
 
-@with_recapture_retry
-def list_files(meld_id: str) -> list:
+@with_complete_read_guard
+def list_files(meld_id: str, *, complete: bool = False):
     """List files (photos, attachments) on a meld via cookie HTTP.
 
     Fetches all 3 photo endpoints in parallel and merges into a single list:
@@ -2370,16 +2407,28 @@ def list_files(meld_id: str) -> list:
         ("vendor",  f"melds/{meld_id}/vendor-files/?limit=100"),
     ]
 
+    from .pagination import metadata
     merged: list = []
+    resources = {}
     for role, path in sources:
-        for item in _paginate_all(path, cookie_hdr):
-            if isinstance(item, dict):
-                item["uploader_role"] = role
-            merged.append(item)
+        envelope = _read_collection(path, cookie_hdr, complete)
+        envelope["resource"]["role"] = role
+        resources[role] = metadata(envelope)
+        for item in envelope["results"]:
+            # IDs can collide between role-specific endpoints; never deduplicate
+            # the merged collection by a bare ID.
+            merged.append(dict(item, uploader_role=role))
+    if complete:
+        counts = [value["count"] for value in resources.values()]
+        return dict(schema_version=1, results=merged, count=sum(counts) if all(value is not None for value in counts) else None,
+                    next=None, complete=True, returned=len(merged),
+                    pages=sum(value["pages"] for value in resources.values()),
+                    basis="role_scoped_collections", resources=resources,
+                    resource=dict(backend="cookie", endpoint="role_scoped_files", meld_id=meld_id))
     return merged
 
 
-def list_work_entries(meld_id: str) -> list:
+def list_work_entries(meld_id: str, *, complete: bool = False):
     """List per-visit work-entries on a meld via cookie HTTP.
 
     GET /api/melds/{id}/work-entries/ — endpoint verified by Blue 5/04.
@@ -2391,10 +2440,12 @@ def list_work_entries(meld_id: str) -> list:
     Used to inspect tech work logs for completion-quality auditing and
     when comparing against completion_notes / maintenance_notes.
     """
+    meld_id = _validate_meld_id(meld_id)
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
-    data = _http_get(f"melds/{meld_id}/work-entries/", cookie_hdr)
-    return data.get("results", data) if isinstance(data, dict) else data
+    path = f"melds/{meld_id}/work-entries/"
+    envelope = _complete_read(_read_collection, path, cookie_hdr, True) if complete else _read_collection(path, cookie_hdr, False)
+    return envelope if complete else envelope["results"]
 
 
 def _list_photo_source(meld_id: str, endpoint: str, role: str, optional: bool = False) -> tuple[list, Optional[str]]:
@@ -3276,13 +3327,49 @@ def list_work_orders_rich(limit: int = 25, status: Optional[str] = None) -> list
     return result.get("results", [])
 
 
-@with_recapture_retry
-def get_work_order_rich(meld_id: str) -> dict:
+@with_complete_read_guard
+def get_work_order_rich(meld_id: str, *, complete: bool = False) -> dict:
     """GET /api/melds/{id}/ via cookie-auth for rich assignment fields."""
     creds = _load_creds()
     cookie_hdr = _cookie_header(creds)
     result = _http_get(f"melds/{meld_id}/", cookie_hdr)
     return result if isinstance(result, dict) else {}
+
+
+def list_work_orders_rich_complete(status=None):
+    """Exhaust the existing cookie meld-list endpoint before client filtering."""
+    params = [("limit", "100")]
+    if status:
+        states = {"open": ["PENDING_ASSIGNMENT", "PENDING_VENDOR", "PENDING_MORE_MANAGEMENT_AVAILABILITY"],
+                  "pending": ["PENDING_VENDOR"], "completed": ["COMPLETED"], "canceled": ["MANAGER_CANCELED"]}
+        params += [("status", value) for value in states.get(status.lower(), [status])]
+    cookie_hdr = _cookie_header(_load_creds())
+    return _complete_read(_read_collection, "melds/?" + urllib.parse.urlencode(params), cookie_hdr, True)
+
+
+def notes_from_detail(detail, meld_id):
+    """Two known detail fields, with explicit provenance; no notes endpoint."""
+    from .pagination import PaginationError
+    fields = ("maintenance_notes", "completion_notes")
+    if (not isinstance(detail, dict) or str(detail.get("id")) != str(meld_id)
+            or not all(field in detail and (detail[field] is None or isinstance(detail[field], str)) for field in fields)):
+        raise PaginationError("notes_fields_unavailable")
+    return dict(schema_version=1, results={field: detail[field] for field in fields}, count=2, returned=2,
+                next=None, complete=True, pages=1, basis="meld_detail_fields",
+                resource=dict(backend="cookie", endpoint=f"melds/{meld_id}/", meld_id=int(meld_id), fields=list(fields)))
+
+
+def get_notes(meld_id, *, complete=False):
+    from .pagination import metadata
+    meld_id = str(_validate_meld_id(meld_id))
+    notes = notes_from_detail(get_work_order_rich(meld_id, **({"complete": True} if complete else {})), meld_id)
+    comments = get_comments(meld_id, complete=complete)
+    entries = list_work_entries(meld_id, complete=complete)
+    if not complete:
+        return dict(notes=notes["results"], comments=comments, work_entries=entries)
+    return dict(schema_version=1, notes=notes["results"], comments=comments["results"], work_entries=entries["results"],
+                complete=True, basis="existing_detail_fields_and_child_chains", resources=dict(
+                    notes=metadata(notes), comments=metadata(comments), work_entries=metadata(entries)))
 
 
 @with_recapture_retry
