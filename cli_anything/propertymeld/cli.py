@@ -316,7 +316,7 @@ def list_work_entries_cmd(meld_id, as_json):
 @click.option("--meld-id", required=True, help="Meld ID")
 @click.option("--agent-id", "agent", required=True, type=int,
               help="Persona ID of the agent who performed the work "
-                   "(e.g. 9036=Operator, 9037=Tech A)")
+                   "(e.g. 9000036=Operator, 9000037=Tech A)")
 @click.option("--description", required=True, callback=_require_nonempty,
               help="Short summary, shown in the meld feed.")
 @click.option("--long-description", "long_description", default="",
@@ -943,7 +943,7 @@ def get_agent_cmd(agent_id, as_json):
 
     Phone-data caveat (Blue gap #N+3): the ``contact`` field on the agent
     detail endpoint is EITHER ``None`` (no contact record exists in PM —
-    observed on Tech A 9037) OR an integer FK to an account record that is
+    observed on Tech A) OR an integer FK to an account record that is
     NOT exposed via the cookie-path ``/api/contacts/{id}/`` endpoint (404
     on probe). This means cell_phone / business_phone are NOT recoverable
     via this command alone for in-house techs whose contact lives in a
