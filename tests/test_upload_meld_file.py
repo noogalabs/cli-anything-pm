@@ -84,9 +84,9 @@ _PRESIGN_BODY = json.dumps({
         "acl": "public-read",
         "success_action_status": "201",
         "key": "media/meld/files/2026-05-25 18:50:16.900010+00:00-test.jpg",
-        "AWSAccessKeyId": "AKIA5QE6ARYYVZKQYUIT",
-        "policy": "eyJleHBpcmF0aW9uIjogIjIwMjYtMDUtMjVUMTk6NTA6MTZaIn0=",
-        "signature": "I9pxdFT94RThSSuMUV5bsv4wSas=",
+        "AWSAccessKeyId": "AKIAIOSFODNN7EXAMPLE",
+        "policy": "eyJleHBpcmF0aW9uIjoiMjAwMC0wMS0wMVQwMDowMDowMFoiLCJjb25kaXRpb25zIjpbXX0=",
+        "signature": "synthetic-signature-for-tests",
     },
 }).encode()
 
