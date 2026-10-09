@@ -89,6 +89,7 @@ def list_work_orders(
     no_tenant_linked: bool = False,
     include_tech: bool = False,
     limit: int = 25,
+    complete: bool = False,
 ) -> list:
     """List work orders, optionally filtered by status.
 
@@ -129,6 +130,13 @@ def list_work_orders(
             "or wait for the gated detail-fetch/server-param follow-up."
         )
         sys.exit(2)
+
+    if complete:
+        return _list_work_orders_complete(
+            status=status, status_raw=status_raw, assigned_to_vendor=assigned_to_vendor,
+            stuck_hours=stuck_hours, created_since=created_since, status_not=status_not,
+            no_tenant_linked=no_tenant_linked, include_tech=include_tech,
+        )
 
     needs_cookie_filter = (
         no_tenant_linked
@@ -292,9 +300,10 @@ def _list_work_orders_nexus(
     created_since: Optional[str] = None,
     status_not: Optional[str] = None,
     limit: int = 25,
+    complete: bool = False,
 ) -> list:
     """List work orders through Nexus only."""
-    page_size = max(1, min(limit, 100))
+    page_size = 100 if complete else max(1, min(limit, 100))
     params: list[tuple[str, str]] = [("limit", str(page_size))]
     if status:
         slug_to_states = {
@@ -323,6 +332,14 @@ def _list_work_orders_nexus(
     if status_not:
         params.append(("status_not", status_not))
 
+    if complete:
+        from urllib.parse import urlencode
+        from .pagination import collect
+        envelope = collect("meld/?" + urlencode(params), lambda path: _api_get("/" + path),
+                           base=API_BASE.rstrip("/") + "/", require_complete=True)
+        envelope["resource"] = dict(backend="nexus", endpoint="meld/", filters=[(key, value) for key, value in params if key != "limit"])
+        return envelope
+
     results: list = []
     next_path: Optional[str] = "/meld/"
     next_params: Optional[list[tuple[str, str]]] = params
@@ -337,6 +354,76 @@ def _list_work_orders_nexus(
         next_path = _next_api_v2_path(data.get("next"))
         next_params = None
     return results[:limit]
+
+
+def _list_work_orders_complete(*, status, status_raw, assigned_to_vendor, stuck_hours,
+                               created_since, status_not, no_tenant_linked, include_tech):
+    from . import http_backend
+    from .pagination import PaginationError
+    import math
+    if stuck_hours is not None and (not math.isfinite(stuck_hours) or stuck_hours < 0):
+        raise PaginationError("invalid_stuck_hours")
+    cookie_filter = no_tenant_linked or assigned_to_vendor is not None or stuck_hours is not None
+    if cookie_filter:
+        if any(value is not None for value in (created_since, status_raw, status_not)):
+            raise PaginationError("unsupported_filter_combination")
+        envelope = http_backend.list_work_orders_rich_complete(status=status)
+        source_count = envelope["count"]
+        source_returned = envelope["returned"]
+        if no_tenant_linked and any("tenants" not in row or not isinstance(row["tenants"], list) for row in envelope["results"]):
+            raise PaginationError("tenant_filter_data_missing")
+        if assigned_to_vendor is not None and any(not isinstance(row.get("vendor_assignment_requests"), list) for row in envelope["results"]):
+            raise PaginationError("vendor_filter_data_missing")
+        envelope["results"] = _filter_work_orders_rich(envelope["results"], assigned_to_vendor=assigned_to_vendor,
+            stuck_hours=stuck_hours, no_tenant_linked=no_tenant_linked)
+        envelope.update(source_count=source_count, source_returned=source_returned,
+                        count=len(envelope["results"]), returned=len(envelope["results"]),
+                        basis="client_filter_after_exhaustion")
+        envelope["resource"]["client_filters"] = dict(no_tenant_linked=no_tenant_linked,
+            assigned_to_vendor=assigned_to_vendor, stuck_hours=stuck_hours)
+    else:
+        envelope = _list_work_orders_nexus(status=status, status_raw=status_raw,
+            created_since=created_since, status_not=status_not, complete=True)
+    if include_tech:
+        for row in envelope["results"]:
+            rich = http_backend.get_work_order_rich(str(row["id"]), complete=True) if not cookie_filter else row
+            if (str(rich.get("id")) != str(row["id"])
+                    or not all(field in rich and isinstance(rich[field], list) for field in _ASSIGNMENT_FIELDS)):
+                raise PaginationError("assignment_data_missing")
+            for field in _ASSIGNMENT_FIELDS:
+                row[field] = rich[field]
+    from .markers import not_carried
+    for row in envelope["results"]:
+        row["work_entries"] = not_carried("work_entries", "work-orders list",
+            "use `pm work-orders work-entries list <meld_id> --complete` or `get <meld_id> --complete`")
+    envelope["scope"] = "meld_list_only"
+    return envelope
+
+
+def get_work_order_complete(meld_id, include_tech=False):
+    """An exhaustive read envelope; no failed child is converted to a marker."""
+    from . import http_backend
+    from .pagination import PaginationError, metadata
+    meld_id = str(_validate_meld_id(meld_id))
+    result = _api_get(f"/meld/{meld_id}/")
+    if not isinstance(result, dict) or str(result.get("id")) != meld_id:
+        raise PaginationError("invalid_meld_detail")
+    rich = http_backend.get_work_order_rich(meld_id, complete=True)
+    notes = http_backend.notes_from_detail(rich, meld_id)
+    comments = http_backend.get_comments(meld_id, complete=True)
+    files = http_backend.list_files(meld_id, complete=True)
+    entries = http_backend.list_work_entries(meld_id, complete=True)
+    if include_tech:
+        if not all(field in rich and isinstance(rich[field], list) for field in _ASSIGNMENT_FIELDS):
+            raise PaginationError("assignment_data_missing")
+        for field in _ASSIGNMENT_FIELDS:
+            result[field] = rich[field]
+    result["work_entries"] = entries["results"]
+    return dict(schema_version=1, result=result, comments=comments["results"], files=files["results"], notes=notes["results"],
+                complete=True, basis="detail_and_declared_child_chains", resources=dict(
+                    meld=dict(schema_version=1, count=1, returned=1, next=None, complete=True, pages=1, basis="detail_response",
+                              resource=dict(backend="nexus", endpoint=f"meld/{meld_id}/", meld_id=int(meld_id))),
+                    notes=metadata(notes), comments=metadata(comments), files=metadata(files), work_entries=metadata(entries)))
 
 
 _ASSIGNMENT_FIELDS = (
