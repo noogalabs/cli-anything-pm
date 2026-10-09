@@ -6,7 +6,7 @@ import pytest
 from cli_anything.propertymeld import api_backend as api, http_backend as hb
 from cli_anything.propertymeld.pagination import PaginationError, collect
 
-BASE = "https://app.propertymeld.com/1000/m/1000/api/"
+BASE = "https://synthetic.invalid/9000001/m/9000001/api/"
 MELD = "900001"
 
 
@@ -15,6 +15,7 @@ def no_wire(monkeypatch):
     monkeypatch.setattr(hb.urllib.request, "urlopen", lambda *a, **kw: pytest.fail("unexpected network"))
     monkeypatch.setattr(hb, "_load_creds", lambda: {"cookies": []})
     monkeypatch.setattr(hb, "_cookie_header", lambda _: "fake-session")
+    monkeypatch.setattr(hb, "_build_url", lambda path: BASE + path)
 
 
 def page(items, count=None, next=None):
@@ -38,7 +39,7 @@ def test_three_pages_provenance_and_missing_count():
     ("https://outside.invalid/1000/m/1000/api/comments/?cursor=secret", "unsafe_next"),
     ("//outside.invalid/1000/m/1000/api/comments/", "unsafe_next"),
     (BASE + "melds/?cursor=second", "unsafe_next"),
-    ("https://user:password@app.propertymeld.com/1000/m/1000/api/comments/", "unsafe_next"),
+    ("https://user:password@synthetic.invalid/9000001/m/9000001/api/comments/", "unsafe_next"),
     (BASE + "comments/#fragment", "unsafe_next"),
     ("https://[bad/", "invalid_next"),
     (7, "invalid_next"), (False, "invalid_next"), ("", "invalid_next"),
